@@ -367,6 +367,48 @@ browser outright; `1 + f()` overflows properly and is what the suite uses.
 This is the sharpest argument yet for moving the kernel into a Worker: it
 would not make the loop interruptible, but it would keep the page alive.
 
+### Bytecode viewer ✅ done
+
+Not a numbered stage. `src/analysis/` reads compiled Diluvium and shows it,
+per cell, next to the code it came from.
+
+**The container is Lua 5.4's with one deliberate difference: `LUAC_FORMAT`
+is `0x44` (`'D'`), where stock Lua writes `0` and refuses anything else.**
+So Diluvium bytecode and PUC-Rio bytecode are not interchangeable by
+design, even though the layout is otherwise identical.
+
+Two things about nested functions were reverse engineered from the
+artifact, because no document was available:
+
+- **Every function is prefixed by one byte stock Lua does not write.** The
+  main function carries 0, and so does every sibling after the first; the
+  first child at each nesting level carries 1.
+- **When that byte is 1, the instruction words and the string constants are
+  stored XORed with `0xbe`,** and those constants store their exact length
+  rather than length + 1. The debug section of the same function is *not*
+  transformed — local and upvalue names read plainly.
+
+The evidence: `function(a) return a end` as a nested function stores
+`f6 be bc be 79 be bf be`, which XORs to `RETURN1 0 2` / `RETURN0 0 1` —
+exactly what the same source produces at the top level, where the flag is 0
+and the bytes are plain. `04 85 ce cc d7 d0 ca` is a short-string constant
+whose five content bytes XOR to `print`. A 31-sample corpus parses
+stripped and unstripped, 64/64, and the disassembly agrees with
+`diluvium_generate_report` on function count, parameter counts and which
+call sites are tail calls — two completely different routes to the same
+facts.
+
+**What the flag byte means is still unknown here, and it is worth someone
+who owns the compiler saying so.** The rule above fits every sample and
+explains nothing, which is exactly the kind of model that quietly stops
+being true. `readChunk` therefore verifies its own output — the parse must
+consume every byte and every opcode must exist — and throws rather than
+producing a plausible disassembly of a format it has misread.
+
+Compiling is not running: the panel loads and dumps the chunk and executes
+nothing, which is what makes "paste bytecode someone sent you" a safe thing
+to offer.
+
 ### Stage 2 — Version switching ✅ done
 
 The dropdown, and more valuable than it looks: running one notebook

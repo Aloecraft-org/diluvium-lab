@@ -10,6 +10,7 @@ import { renderMarkdown } from './markdown.js';
 import { outputText } from './ipynb.js';
 import { HighlightedEditor } from './editor.js';
 import { hintFor, tipForOutput } from './hints.js';
+import { BytecodeView } from './bytecode-view.js';
 
 /**
  * Display caps. The kernel's ceiling is far higher (see wasi.js): these
@@ -141,6 +142,8 @@ export class NotebookView {
     this.handlers = handlers;
     this.expanded = new Set();
     this.editingMarkdown = new Set();
+    this.showingBytecode = new Set();
+    this.bytecodeViews = new Map();
     // Highlighting follows the *running* kernel's language, so a version
     // switch re-colours without a table in this repo being edited.
     this.languageInfo = handlers.languageInfo ?? (() => ({}));
@@ -172,6 +175,7 @@ export class NotebookView {
     const caret = active?.selectionStart ?? null;
 
     this.editors.clear();   // the old nodes, and their listeners, go with them
+    this.bytecodeViews.clear();
     this.root.replaceChildren(...this.model.cells.map((cell, i) => this._renderCell(cell, i)));
 
     if (focusedCell) {
@@ -219,6 +223,7 @@ export class NotebookView {
 
     const tools = el('div', { class: 'cell-tools' }, [
       isCode ? button('run', 'Run', 'Run this cell (Ctrl+Enter)') : button('run', 'Render', 'Render (Ctrl+Enter)'),
+      isCode ? button('bytecode', 'Bytecode', 'Compile this cell and read the bytecode — nothing runs') : null,
       button('to-code', 'Code', 'Turn into a code cell'),
       button('to-markdown', 'Markdown', 'Turn into a markdown cell'),
       button('move-up', '↑', 'Move up'),
@@ -237,6 +242,9 @@ export class NotebookView {
 
     if (isCode) {
       kids.push(renderOutputs(cell, this.expanded));
+      const panel = el('div', { class: 'bytecode', 'data-bytecode': cell.id });
+      panel.hidden = !this.showingBytecode.has(cell.id);
+      kids.push(panel);
     } else {
       const rendered = el('div', { class: 'rendered', 'data-rendered': true });
       rendered.innerHTML = renderMarkdown(cell.source);
@@ -283,6 +291,7 @@ export class NotebookView {
 
     switch (action) {
       case 'run': this.handlers.onRun?.(cellId); break;
+      case 'bytecode': this.toggleBytecode(cellId); break;
       case 'delete': this.model.deleteCell(cellId); break;
       case 'move-up': this.model.moveCell(cellId, -1); break;
       case 'move-down': this.model.moveCell(cellId, +1); break;
@@ -291,6 +300,24 @@ export class NotebookView {
       case 'to-markdown': this._toType(cellId, 'markdown'); break;
       default: break;
     }
+  }
+
+  /** Show or hide the bytecode panel, compiling the first time it opens. */
+  toggleBytecode(cellId) {
+    const panel = this.cellNode(cellId)?.querySelector('[data-bytecode]');
+    if (!panel) return;
+    if (this.showingBytecode.has(cellId)) {
+      this.showingBytecode.delete(cellId);
+      this.bytecodeViews.delete(cellId);
+      panel.hidden = true;
+      panel.replaceChildren();
+      return;
+    }
+    this.showingBytecode.add(cellId);
+    panel.hidden = false;
+    const view = new BytecodeView(panel, () => this.handlers.compile(this.model.get(cellId)?.source ?? ''));
+    this.bytecodeViews.set(cellId, view);
+    view.refreshFromCell();
   }
 
   _toType(cellId, type) {

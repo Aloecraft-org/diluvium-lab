@@ -53,6 +53,27 @@ stops being true in the terminal.
 Errors keep the runtime's own message and add a plain-English hint beneath
 it where there is something useful to say.
 
+## Reading bytecode
+
+Every code cell has a **Bytecode** button. It compiles the cell without
+running it and shows the disassembly, with constants, upvalues and jump
+targets resolved rather than left as numbers — `GETTABUP 1 0 0` is a fact,
+`GETTABUP 1 0 0  ; _ENV "print"` is an explanation.
+
+Two other tabs make it a converter as well as a viewer: **Hex** shows the
+bytes and downloads them as a `.luac`, and **Read hex** takes a paste and
+disassembles it. So a compiled chunk someone sends you can be read in a
+browser with nothing installed — and since it is only compiled and read,
+never run, that is safe to do with a blob you have not vetted.
+
+The container is Lua 5.4's, with Diluvium's own `LUAC_FORMAT` byte of
+`0x44` — stock Lua writes `0` there and refuses anything else, so the two
+are deliberately not interchangeable. `src/analysis/luac.js` was derived
+from the shipped artifact rather than from a specification, and it verifies
+its own output: the parse must consume every byte and every opcode must
+exist, or it refuses. A disassembly that looks right and is not would be
+worse than none.
+
 ## Running against another Diluvium build
 
 The **Runtime** dropdown switches which Diluvium the notebook runs on,

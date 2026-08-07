@@ -46,6 +46,8 @@ export class Kernel {
       restart: true,
       complete: true,
       isComplete: true,
+      /** Compile without running, and hand back the bytecode. */
+      bytecode: false,
     };
   }
 
@@ -97,6 +99,14 @@ export class Kernel {
 
   /** @returns {Promise<object>} is_complete_reply */
   async isComplete(code) { throw new Error('not implemented'); }
+
+  /**
+   * Compile `code` and return its bytecode as a hex string, without
+   * running it. Optional: a backend that cannot do this says so through
+   * `capabilities.bytecode`.
+   * @returns {Promise<string>} hex
+   */
+  async dumpBytecode(code, options) { throw new Error('not implemented'); }
 }
 
 /**

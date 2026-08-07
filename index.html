@@ -182,6 +182,39 @@
   }
   .output-error .hint { border-left: 3px solid color-mix(in srgb, var(--bad) 45%, transparent); }
 
+  /* --- bytecode panel --- */
+  .bytecode { margin: .4rem 0 0 5.5rem; border: 1px solid var(--edge); border-radius: 8px; overflow: hidden; }
+  .bc-tabs { display: flex; align-items: center; gap: .25rem; padding: .3rem .45rem; background: var(--sunk); }
+  .bc-tab {
+    font: inherit; font-size: .78rem; padding: .15rem .5rem; cursor: pointer;
+    border: 1px solid transparent; border-radius: 5px; background: transparent; color: inherit;
+  }
+  .bc-tab[data-active="true"] { border-color: var(--edge); background: Canvas; }
+  .bc-summary { margin-left: auto; font-family: var(--mono); font-size: .74rem; color: var(--quiet); }
+  .bc-body { padding: .5rem .6rem; overflow-x: auto; }
+  .bc-fn { margin: .5rem 0 .3rem; font-size: .8rem; font-weight: 600; color: var(--quiet); }
+  .bc-proto:first-child .bc-fn { margin-top: 0; }
+  .bc-table { border-collapse: collapse; font-family: var(--mono); font-size: .8rem; width: 100%; }
+  .bc-table td { padding: .05rem .5rem .05rem 0; vertical-align: top; white-space: nowrap; }
+  .bc-pc { color: var(--quiet); text-align: right; }
+  .bc-line { color: var(--quiet); }
+  .bc-op { color: #8250df; font-weight: 600; }
+  .bc-comment { color: var(--quiet); white-space: pre-wrap; }
+  .bc-aside { font-family: var(--mono); font-size: .76rem; color: var(--quiet); margin-top: .25rem; }
+  .bc-const { margin-right: .5rem; }
+  .bc-hex { font-family: var(--mono); font-size: .76rem; margin: 0; white-space: pre; overflow-x: auto; }
+  .bc-actions { display: flex; gap: .4rem; margin-top: .5rem; }
+  .bc-action {
+    font: inherit; font-size: .78rem; padding: .2rem .5rem; cursor: pointer;
+    border: 1px solid var(--edge); border-radius: 6px; background: transparent; color: inherit;
+  }
+  .bc-paste { width: 100%; font-family: var(--mono); font-size: .78rem; padding: .4rem;
+              border: 1px solid var(--edge); border-radius: 6px; background: var(--sunk); color: inherit; }
+  .bc-note { font-size: .8rem; color: var(--quiet); margin: .2rem 0 .4rem; }
+  .bc-error { padding: .5rem .6rem; color: var(--bad); font-size: .85rem; }
+  .bc-error .bc-note { color: var(--quiet); }
+  @media (prefers-color-scheme: dark) { .bc-op { color: #d2a8ff; } }
+
   /* --- completion --- */
   .completions {
     position: absolute; z-index: 5; left: .55rem; top: 100%;

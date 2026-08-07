@@ -9,7 +9,7 @@ import { Kernel, STATUS } from './kernel.js';
 import { createWasi, unshimmedImports } from './wasi.js';
 import {
   RECORD, KEYWORD_CANDIDATES, makeNonce, executeChunk, isCompleteChunk,
-  completeChunk, languageInfoChunk, parseRecord, splitPayload, splitTraceback,
+  completeChunk, languageInfoChunk, dumpChunk, parseRecord, splitPayload, splitTraceback,
 } from './lua-harness.js';
 import {
   executeReply, stream, executeResult, errorMsg, completeReply, isCompleteReply,
@@ -93,7 +93,7 @@ export class WasmKernel extends Kernel {
   }
 
   get capabilities() {
-    return { ...super.capabilities, interrupt: false, restart: true };
+    return { ...super.capabilities, interrupt: false, restart: true, bytecode: true };
   }
 
   // --- lifecycle ----------------------------------------------------
@@ -282,6 +282,28 @@ export class WasmKernel extends Kernel {
     if (run.thrown) { this._die(run.thrown); return isCompleteReply('unknown'); }
     if (!run.record || run.record.kind !== RECORD.IS_COMPLETE) return isCompleteReply('unknown');
     return isCompleteReply(run.record.payload);
+  }
+
+  /**
+   * Compile `code` and return its bytecode, without running it.
+   *
+   * Compiling is not running: the chunk is loaded and dumped, and nothing
+   * in it executes. That is what makes it safe to point at code you have
+   * been sent and have not read.
+   */
+  async dumpBytecode(code, options = {}) {
+    this._requireAlive();
+    const nonce = makeNonce();
+    const run = this._runHarness(dumpChunk(code, nonce, options), nonce);
+    if (run.thrown) { this._die(run.thrown); throw new Error('the kernel stopped while compiling'); }
+    if (!run.record) throw new Error('the kernel did not answer with bytecode');
+    if (run.record.kind === RECORD.COMPILE_ERROR) {
+      const error = new Error(run.record.payload);
+      error.isCompileError = true;
+      throw error;
+    }
+    if (run.record.kind !== RECORD.BYTECODE) throw new Error('unexpected reply while compiling');
+    return run.record.payload;
   }
 
   async languageInfo() {

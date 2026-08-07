@@ -84,6 +84,7 @@ export class App {
       onRun: (cellId, opts) => this.runCell(cellId, opts),
       languageInfo,
       complete: (code, cursor) => this.completeAt(code, cursor),
+      compile: (code) => this.kernel.dumpBytecode(code),
     });
 
     this.console = new ConsoleView(document_.querySelector('[data-console]'), {

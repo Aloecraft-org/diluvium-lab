@@ -30,6 +30,7 @@ export const RECORD = {
   IS_COMPLETE: 'I',
   MATCHES: 'M',
   LANGUAGE: 'L',
+  BYTECODE: 'B',
 };
 
 /**
@@ -335,6 +336,42 @@ end
 table.sort(__out)
 local __s = table.concat(__out, "\\n")
 ${emit(RECORD.MATCHES, '__s')}
+`;
+}
+
+/**
+ * Compile a cell and hand back its bytecode, as hex.
+ *
+ * Hex rather than the raw bytes, for a reason that is not squeamishness:
+ * the harness reports through stdout, which the shim decodes as UTF-8, and
+ * compiled Lua is full of bytes that are not valid UTF-8. They would be
+ * replaced with U+FFFD somewhere in the middle and the chunk would be
+ * quietly corrupt. Hex doubles the size of something that is a few hundred
+ * bytes, and it is also the format people paste around, so it earns its
+ * place twice.
+ *
+ * `strip` drops line numbers, local names and upvalue names -- the thing to
+ * toggle when the question is "what does the debug information cost".
+ */
+export function dumpChunk(code, nonce, { strip = false } = {}) {
+  return `local __N = "${nonce}"
+local __src = ${luaLongString(code)}
+local __f, __e = load(__src, "=cell", "t")
+if not __f then
+  local __m = tostring(__e)
+  ${emit(RECORD.COMPILE_ERROR, '__m')}
+  return
+end
+local __ok, __dump = pcall(string.dump, __f, ${strip ? 'true' : 'false'})
+if not __ok then
+  local __m = tostring(__dump)
+  ${emit(RECORD.RUNTIME_ERROR, '__m')}
+  return
+end
+local __hex = {}
+for __i = 1, #__dump do __hex[__i] = string.format("%02x", __dump:byte(__i)) end
+local __s = table.concat(__hex)
+${emit(RECORD.BYTECODE, '__s')}
 `;
 }
 
