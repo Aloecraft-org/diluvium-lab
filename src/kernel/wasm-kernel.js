@@ -8,8 +8,8 @@
 import { Kernel, STATUS } from './kernel.js';
 import { createWasi, unshimmedImports } from './wasi.js';
 import {
-  RECORD, makeNonce, executeChunk, isCompleteChunk, completeChunk,
-  parseRecord, splitTraceback,
+  RECORD, KEYWORD_CANDIDATES, makeNonce, executeChunk, isCompleteChunk,
+  completeChunk, languageInfoChunk, parseRecord, splitPayload, splitTraceback,
 } from './lua-harness.js';
 import {
   executeReply, stream, executeResult, errorMsg, completeReply, isCompleteReply,
@@ -224,6 +224,20 @@ export class WasmKernel extends Kernel {
     if (run.thrown) { this._die(run.thrown); return isCompleteReply('unknown'); }
     if (!run.record || run.record.kind !== RECORD.IS_COMPLETE) return isCompleteReply('unknown');
     return isCompleteReply(run.record.payload);
+  }
+
+  async languageInfo() {
+    this._requireAlive();
+    const nonce = makeNonce();
+    const run = this._runHarness(languageInfoChunk(KEYWORD_CANDIDATES, nonce), nonce);
+    if (run.thrown) { this._die(run.thrown); return null; }
+    if (!run.record || run.record.kind !== RECORD.LANGUAGE) return null;
+    const [version, keywords, globals] = splitPayload(run.record.payload);
+    return {
+      version,
+      keywords: keywords ? keywords.split(' ') : [],
+      globals: globals ? globals.split(' ') : [],
+    };
   }
 
   async complete(code, cursorPos = code.length) {

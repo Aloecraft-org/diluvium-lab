@@ -13,6 +13,7 @@ import { toIpynb, fromIpynb, messageToOutput, IpynbError } from './notebook/ipyn
 import { NotebookView } from './notebook/ui.js';
 import { ConsoleView } from './notebook/console.js';
 import { saveAutosave, loadAutosave, debounceSave } from './notebook/storage.js';
+import { FALLBACK_KEYWORDS, FALLBACK_GLOBALS } from './notebook/highlight.js';
 
 /**
  * The notebook a first-time visitor gets. Embedded rather than fetched: the
@@ -63,12 +64,19 @@ export class App {
     this.toastNode = document_.querySelector('[data-toast]');
     this.filenameNode = document_.querySelector('[data-filename]');
 
+    // Filled in from the running kernel once it starts. Until then the
+    // highlighter falls back to stock Lua 5.4, which is what 5.4.7 is.
+    this.language = { keywords: FALLBACK_KEYWORDS, globals: FALLBACK_GLOBALS, version: null };
+    const languageInfo = () => this.language;
+
     this.view = new NotebookView(document_.querySelector('[data-cells]'), this.model, {
       onRun: (cellId, opts) => this.runCell(cellId, opts),
+      languageInfo,
     });
 
     this.console = new ConsoleView(document_.querySelector('[data-console]'), {
       onExecute: (code) => this.executeCollectMessages(code),
+      languageInfo,
       onIsComplete: async (code) => {
         if (this.kernel.status === STATUS.DEAD) return 'complete';
         return (await this.kernel.isComplete(code)).content.status;
@@ -94,6 +102,7 @@ export class App {
 
     try {
       await this.kernel.start();
+      await this.refreshLanguage();
       this.console.note('Kernel ready. Cells and this console share it.');
     } catch (err) {
       this._renderStatus(STATUS.DEAD);
@@ -101,6 +110,26 @@ export class App {
       this.console.note(err.message);
     }
     this.document.body.dataset.ready = 'true';
+  }
+
+  /**
+   * Ask the kernel which words *it* reserves, and re-colour.
+   *
+   * The same discipline as reading the WASI import list off the binary
+   * rather than guessing: a build that adds `switch` gets `switch`
+   * highlighted, without anything in this repository being edited.
+   */
+  async refreshLanguage() {
+    if (typeof this.kernel.languageInfo !== 'function') return;
+    try {
+      const info = await this.kernel.languageInfo();
+      if (!info?.keywords?.length) return;
+      this.language = info;
+      this.view.repaintHighlights();
+      this.console.repaintHighlight();
+    } catch (err) {
+      console.warn('could not read the kernel language info', err);
+    }
   }
 
   async _restore() {
@@ -215,6 +244,7 @@ export class App {
   async restartKernel() {
     try {
       await this.kernel.restart();
+      await this.refreshLanguage();
       this.model.resetExecutionCounts();
       this.console.note('Kernel restarted. Every variable is gone.');
       this._toast('Kernel restarted.');

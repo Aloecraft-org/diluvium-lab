@@ -1,0 +1,63 @@
+// A highlighted editor that is still a <textarea>.
+//
+// The textarea keeps its text transparent and its caret visible, and a <pre>
+// carrying the highlighted copy sits exactly underneath. Native editing
+// survives intact: undo, selection, spellcheck, IME, mobile keyboards,
+// screen readers, Cmd+arrow -- all the things a contenteditable or a
+// hand-rolled editor quietly breaks.
+//
+// The cost is that the two boxes must lay text out identically, to the
+// pixel. Every property that affects layout is set once, on a shared class,
+// and `test/highlight.spec.js` asserts the two boxes measure the same.
+
+import { highlightToHtml } from './highlight.js';
+
+export class HighlightedEditor {
+  /**
+   * @param {HTMLTextAreaElement} textarea already in the document
+   * @param {() => object} getOptions supplies { keywords, globals }, read at
+   *   paint time so a kernel swap re-colours without rebuilding anything
+   */
+  constructor(textarea, getOptions = () => ({})) {
+    this.textarea = textarea;
+    this.getOptions = getOptions;
+
+    this.wrap = document.createElement('div');
+    this.wrap.className = 'editor-wrap';
+    textarea.parentNode.insertBefore(this.wrap, textarea);
+
+    this.pre = document.createElement('pre');
+    this.pre.className = 'editor-highlight';
+    this.pre.setAttribute('aria-hidden', 'true');
+    this.code = document.createElement('code');
+    this.pre.appendChild(this.code);
+
+    this.wrap.appendChild(this.pre);
+    this.wrap.appendChild(textarea);
+
+    this._onInput = () => this.paint();
+    this._onScroll = () => this.syncScroll();
+    textarea.addEventListener('input', this._onInput);
+    textarea.addEventListener('scroll', this._onScroll);
+
+    this.paint();
+  }
+
+  paint() {
+    this.code.innerHTML = highlightToHtml(this.textarea.value, this.getOptions());
+    this.syncScroll();
+  }
+
+  syncScroll() {
+    this.pre.scrollTop = this.textarea.scrollTop;
+    this.pre.scrollLeft = this.textarea.scrollLeft;
+  }
+
+  destroy() {
+    this.textarea.removeEventListener('input', this._onInput);
+    this.textarea.removeEventListener('scroll', this._onScroll);
+    // put the textarea back where it was, so a re-render can re-wrap it
+    this.wrap.parentNode?.insertBefore(this.textarea, this.wrap);
+    this.wrap.remove();
+  }
+}

@@ -8,6 +8,7 @@
 
 import { renderMarkdown } from './markdown.js';
 import { outputText } from './ipynb.js';
+import { HighlightedEditor } from './editor.js';
 
 /**
  * Display caps. The kernel's ceiling is far higher (see wasi.js): these
@@ -120,6 +121,10 @@ export class NotebookView {
     this.handlers = handlers;
     this.expanded = new Set();
     this.editingMarkdown = new Set();
+    // Highlighting follows the *running* kernel's language, so a version
+    // switch re-colours without a table in this repo being edited.
+    this.languageInfo = handlers.languageInfo ?? (() => ({}));
+    this.editors = new Map();
 
     this.root.addEventListener('click', (event) => this._onClick(event));
     this.root.addEventListener('input', (event) => this._onInput(event));
@@ -136,11 +141,17 @@ export class NotebookView {
 
   cellNode(cellId) { return this.root.querySelector(`[data-cell-id="${cellId}"]`); }
 
+  /** Repaint every editor -- after a kernel swap changes the keyword set. */
+  repaintHighlights() {
+    for (const editor of this.editors.values()) editor.paint();
+  }
+
   render() {
     const active = document.activeElement;
     const focusedCell = active?.closest?.('[data-cell-id]')?.dataset.cellId ?? null;
     const caret = active?.selectionStart ?? null;
 
+    this.editors.clear();   // the old nodes, and their listeners, go with them
     this.root.replaceChildren(...this.model.cells.map((cell, i) => this._renderCell(cell, i)));
 
     if (focusedCell) {
@@ -213,7 +224,7 @@ export class NotebookView {
       kids.push(rendered);
     }
 
-    return el('section', {
+    const node = el('section', {
       class: 'cell',
       'data-cell-id': cell.id,
       'data-cell-type': cell.cell_type,
@@ -221,6 +232,13 @@ export class NotebookView {
       'data-editing': editing ? 'true' : 'false',
       'data-busy': 'false',
     }, kids);
+
+    // Only code cells get highlighted -- running a Lua tokenizer over prose
+    // would colour the word "for" in an English sentence.
+    if (isCode) {
+      this.editors.set(cell.id, new HighlightedEditor(editor, this.languageInfo));
+    }
+    return node;
   }
 
   // --- events -------------------------------------------------------

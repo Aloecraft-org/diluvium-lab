@@ -67,11 +67,56 @@
   .cell-tools { display: flex; gap: .25rem; margin-left: auto; opacity: .3; transition: opacity .12s; }
   .cell:hover .cell-tools, .cell:focus-within .cell-tools { opacity: 1; }
 
+  /* Every property here affects where a glyph lands, and the highlight
+     overlay must land on exactly the same pixels as the textarea. Change
+     one, change both -- test/highlight.spec.js measures that they agree. */
+  textarea[data-editor], [data-console-input], .editor-highlight {
+    font-family: var(--mono); font-size: .88rem; line-height: 1.45;
+    letter-spacing: normal; tab-size: 2;
+    padding: .45rem .55rem;
+    border: 1px solid var(--edge); border-radius: 6px;
+    white-space: pre-wrap; overflow-wrap: break-word; word-break: normal;
+    margin: 0;
+  }
   textarea[data-editor], [data-console-input] {
     display: block; width: 100%; resize: vertical;
-    font-family: var(--mono); font-size: .88rem; line-height: 1.45;
-    padding: .45rem .55rem; border: 1px solid var(--edge); border-radius: 6px;
     background: var(--sunk); color: inherit;
+  }
+
+  /* --- highlighted editor --- */
+  .editor-wrap { position: relative; }
+  .editor-wrap > textarea[data-editor], .editor-wrap > [data-console-input] {
+    position: relative; z-index: 1;
+    background: transparent;
+    /* the glyphs come from the <pre> underneath; the caret is still ours */
+    color: transparent; caret-color: currentColor;
+  }
+  /* Opaque selection would hide the coloured text behind it. */
+  .editor-wrap textarea::selection { background: color-mix(in srgb, currentColor 25%, transparent); }
+  .editor-highlight {
+    position: absolute; inset: 0; z-index: 0;
+    overflow: hidden; pointer-events: none;
+    border-color: transparent; background: var(--sunk);
+  }
+  .editor-highlight code { font: inherit; }
+
+  .tok-keyword  { color: #8250df; font-weight: 600; }
+  .tok-builtin  { color: #0550ae; }
+  .tok-constant { color: #6639ba; }
+  .tok-string   { color: #0a7c42; }
+  .tok-string-prefix { color: #0a7c42; font-weight: 700; }
+  .tok-interp-brace  { color: #bc4c00; font-weight: 700; }
+  .tok-number   { color: #0550ae; }
+  .tok-comment  { color: color-mix(in srgb, currentColor 55%, transparent); font-style: italic; }
+  .tok-operator { color: color-mix(in srgb, currentColor 75%, transparent); }
+  @media (prefers-color-scheme: dark) {
+    .tok-keyword  { color: #d2a8ff; }
+    .tok-builtin  { color: #79c0ff; }
+    .tok-constant { color: #d2a8ff; }
+    .tok-string   { color: #7ee787; }
+    .tok-string-prefix { color: #7ee787; }
+    .tok-interp-brace  { color: #ffa657; }
+    .tok-number   { color: #79c0ff; }
   }
   .cell[data-cell-type="markdown"][data-editing="false"] .rendered { padding: 0 .1rem; }
   .rendered h1 { font-size: 1.5rem; } .rendered h2 { font-size: 1.25rem; }

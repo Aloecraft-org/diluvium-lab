@@ -29,7 +29,26 @@ export const RECORD = {
   OK: 'K',
   IS_COMPLETE: 'I',
   MATCHES: 'M',
+  LANGUAGE: 'L',
 };
+
+/**
+ * Words offered to the kernel's reserved-word probe. A superset on purpose:
+ * anything not reserved by the running build is simply reported back as an
+ * ordinary identifier, so guessing wide costs nothing and guessing narrow
+ * would miss a keyword a newer build added.
+ */
+export const KEYWORD_CANDIDATES = [
+  // stock Lua 5.4
+  'and', 'break', 'do', 'else', 'elseif', 'end', 'false', 'for', 'function',
+  'goto', 'if', 'in', 'local', 'nil', 'not', 'or', 'repeat', 'return',
+  'then', 'true', 'until', 'while',
+  // the 5.5 language work, and neighbours worth asking about
+  'switch', 'case', 'default', 'continue', 'fallthrough', 'when', 'match',
+  'defer', 'const', 'global', 'let', 'var', 'class', 'new', 'struct', 'enum',
+  'import', 'export', 'try', 'catch', 'finally', 'async', 'await', 'yield',
+  'unless', 'loop', 'each', 'with', 'where', 'type',
+];
 
 const SEP = '\u0001';
 
@@ -211,6 +230,36 @@ ${emit(RECORD.MATCHES, '__s')}
 }
 
 /**
+ * Ask the kernel what its own language looks like, so the highlighter
+ * colours the build that is actually running.
+ *
+ * Reserved words cannot be probed by enumeration -- Lua exposes no list --
+ * so a candidate superset is offered and each one is tested by trying to
+ * use it as an identifier. 5.4.7 reserves exactly stock Lua's 22; a 5.5
+ * build that adds `switch` answers with 23 and the editor follows without
+ * anyone editing a table. Globals need no candidates: `_G` enumerates.
+ */
+export function languageInfoChunk(candidates, nonce) {
+  const list = candidates.map((w) => `"${w}"`).join(', ');
+  return `local __N = "${nonce}"
+local __reserved = {}
+for _, __w in ipairs({ ${list} }) do
+  if not load("local " .. __w .. " = 1", "=probe", "t") then
+    __reserved[#__reserved + 1] = __w
+  end
+end
+local __globals = {}
+for __k in pairs(_G) do
+  if type(__k) == "string" then __globals[#__globals + 1] = __k end
+end
+table.sort(__reserved)
+table.sort(__globals)
+local __s = _VERSION .. "\\1" .. table.concat(__reserved, " ") .. "\\1" .. table.concat(__globals, " ")
+${emit(RECORD.LANGUAGE, '__s')}
+`;
+}
+
+/**
  * Split raw stdout into the user's output and the harness record.
  *
  * A missing record is not a parse failure -- it means the harness never got
@@ -239,6 +288,11 @@ export function parseRecord(stdout, nonce) {
 }
 
 /** Runtime-error payloads carry `message  traceback`. */
+export function splitPayload(payload) {
+  return payload.split(SEP);
+}
+
+/** Runtime-error payloads carry `message` then the traceback. */
 export function splitTraceback(payload) {
   const at = payload.indexOf(SEP);
   if (at === -1) return { message: payload, traceback: '' };

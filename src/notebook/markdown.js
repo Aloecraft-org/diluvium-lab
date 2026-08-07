@@ -10,11 +10,8 @@
 // inserts un-escaped input. Notebooks arrive from files and from other
 // people's repositories, so a markdown cell is untrusted input by default.
 
-const ESCAPES = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
+import { escapeHtml } from './escape.js';
 
-export function escapeHtml(text) {
-  return String(text).replace(/[&<>"']/g, (c) => ESCAPES[c]);
-}
 
 /** Inline spans, applied to already-escaped text. */
 function inline(escaped) {

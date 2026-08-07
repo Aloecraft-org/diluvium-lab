@@ -6,6 +6,7 @@
 
 import { el } from './ui.js';
 import { outputText } from './ipynb.js';
+import { HighlightedEditor } from './editor.js';
 import { MSG } from '../kernel/protocol.js';
 
 export class ConsoleView {
@@ -23,10 +24,26 @@ export class ConsoleView {
     this.historyAt = 0;
     this.busy = false;
 
+    this.editor = new HighlightedEditor(this.input, handlers.languageInfo ?? (() => ({})));
+
     this.input.addEventListener('keydown', (event) => this._onKeydown(event));
     this.input.addEventListener('input', () => {
       this.input.rows = Math.max(1, this.input.value.split('\n').length);
     });
+  }
+
+  /** Keep the input's colours in step after a kernel swap. */
+  repaintHighlight() { this.editor.paint(); }
+
+  /**
+   * Setting `.value` fires no `input` event, so the highlight underneath
+   * would keep showing the previous text. Every programmatic write goes
+   * through here.
+   */
+  _setInput(value) {
+    this.input.value = value;
+    this.input.rows = Math.max(1, value.split('\n').length);
+    this.editor.paint();
   }
 
   async _onKeydown(event) {
@@ -40,14 +57,14 @@ export class ConsoleView {
     if (event.key === 'ArrowUp' && this.input.selectionStart === 0 && this.history.length) {
       event.preventDefault();
       this.historyAt = Math.max(0, this.historyAt - 1);
-      this.input.value = this.history[this.historyAt] ?? '';
+      this._setInput(this.history[this.historyAt] ?? '');
       return;
     }
     if (event.key === 'ArrowDown' && this.input.selectionStart === this.input.value.length) {
       if (this.historyAt >= this.history.length) return;
       event.preventDefault();
       this.historyAt = Math.min(this.history.length, this.historyAt + 1);
-      this.input.value = this.history[this.historyAt] ?? '';
+      this._setInput(this.history[this.historyAt] ?? '');
     }
   }
 
@@ -62,15 +79,13 @@ export class ConsoleView {
 
     const status = await this.handlers.onIsComplete(code);
     if (status === 'incomplete') {
-      this.input.value += '\n';
-      this.input.rows = Math.max(1, this.input.value.split('\n').length);
+      this._setInput(`${this.input.value}\n`);
       return;
     }
 
     this.busy = true;
     this.root.dataset.busy = 'true';
-    this.input.value = '';
-    this.input.rows = 1;
+    this._setInput('');
     this.history.push(code);
     this.historyAt = this.history.length;
 
