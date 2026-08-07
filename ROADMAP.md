@@ -58,9 +58,14 @@ sections. These are facts about the shipped artifact, not expectations:
 - **`_initialize` is absent; `__wasm_call_ctors` is exported.** So this is
   *not* a canonical WASI reactor, and nothing initialises libc on your
   behalf. **Call `__wasm_call_ctors()` once, before `init_lua()`.**
-  Skipping it leaves libc stdio uninitialised and `init_lua`'s `setvbuf`
-  is the first thing to touch it. This is the single most likely way to
-  lose an afternoon in Stage 0.
+  *Stage 0 correction:* the warning that used to sit here — that skipping
+  it leaves libc stdio uninitialised and costs an afternoon — **is not
+  true of this artifact.** All four combinations of skipping
+  `__wasm_call_ctors` and skipping `init_lua` were measured, and every one
+  of them printed, kept state across calls, and caught errors identically:
+  `run_lua` initialises what it needs on its own. Keep calling both anyway
+  — it is the documented contract, it is idempotent, and it costs nothing
+  — but do not go hunting there when something else breaks.
 - **`diluvium_generate_report` is exported from this same module**, so the
   analysis-report and determinism-verdict panel needs no second module and
   no `diluvium_compiler_wasi.wasm`. That makes it much cheaper than
@@ -69,8 +74,9 @@ sections. These are facts about the shipped artifact, not expectations:
   kernel could create and destroy states directly instead of
   re-instantiating the module for a restart.
 - **stdout and stderr arrive as `fd_write` on fd 1 and 2**, so output
-  capture and the stream split come free from the shim rather than
-  needing anything from the runtime.
+  capture comes free from the shim rather than needing anything from the
+  runtime. The *stream split* is another matter: Stage 0 never saw a
+  single write to fd 2, errors included. See below.
 - `SHA256SUMS.txt` lists `libdiluvium_wasi.wasm` and the published hash
   matches the downloaded bytes, so the Stage 2 integrity check works
   against releases as they exist today.
@@ -80,12 +86,57 @@ sections. These are facts about the shipped artifact, not expectations:
 | Need | Today |
 | :--- | :--- |
 | Persistent state across cells | free — `global_L` |
-| Output, with streams separated | WASI `fd_write` on fd 1 and 2 |
-| Expression echo (`1+1` → `2`) | `run_lua` uses `luaL_dostring`, which does not echo. Do the REPL's "retry with `return` prepended" trick host-side |
-| Restart kernel | re-instantiate the module — cleaner than a reset export, and a true restart |
+| Output, with streams separated | WASI `fd_write`. **Measured: this build only ever writes fd 1.** See below |
+| Expression echo (`1+1` → `2`) | `run_lua` uses `luaL_dostring`, which does not echo. The "retry with `return` prepended" trick alone is **not enough** — see below |
+| Restart kernel | re-instantiate the module. Not optional: **`init_lua()` is not a reset**, see below |
 | Completion | inject a Lua completion function and call it through `run_lua`; matches the handoff's "completion logic is written in Lua and embedded" |
 | Errors | `run_lua` prints `Error: ...` to stdout and returns non-zero. Parse host-side for now; structured errors when the real protocol lands |
 | **Interrupt** | **not possible.** `run_lua` is a synchronous WASM call and nothing can preempt it. See §6 |
+
+### What Stage 0 measured
+
+Stage 0 shipped (`index.html`, `test/stage0.spec.js`). It answers the
+go/no-go below; these are the other things it turned up on the way, in
+Chromium 141 against the pinned 5.4.7 artifact. Each one changes a plan
+that was written on an assumption.
+
+- **Lua errors go to stdout, and fd 2 is never touched.** `error("boom")`
+  produces `Error: [string "…"]:1: boom` on **fd 1**, with `run_lua`
+  returning 1. Nothing in the probe suite ever wrote to fd 2. So the
+  stream split is real in the shim but decorative in practice: Stage 1
+  cannot colour errors red by watching stderr, and must key off the
+  non-zero status instead.
+- **`init_lua()` is not a reset.** Calling it a second time leaves
+  `global_L` and every global intact — a variable set before the second
+  call is still readable after it. Confirms restart-by-re-instantiation as
+  the only true restart, so the "drop module and instance references"
+  gotcha is load-bearing rather than hygiene.
+- **`return `-prefixing does not produce an echo by itself.** It compiles
+  (`return 1+1` gives status 0), but `run_lua` discards the chunk's
+  results, so nothing is printed. The prefix only classifies a chunk as an
+  expression. Getting `1+1` → `2` needs the value *printed* inside Lua.
+  Stage 1 does that in `src/kernel/lua-harness.js`; see the note there on
+  the trailing-expression case, which is where the difficulty actually
+  is.
+- **`print` emits one `fd_write` per argument and separator.** Output
+  arrives in many small writes, so a `TextDecoder` with `{stream: true}`
+  is required or a multi-byte character split across two writes decodes to
+  U+FFFD.
+- **Memory grows during execution and detaches every view.** One probe
+  took linear memory from 128 KB to 16 MB. Any `Uint8Array`/`DataView`
+  taken before a `run_lua` call is dead after it; re-derive from
+  `memory.buffer` every time.
+- **Nothing has to be flushed.** Output is readable the moment `run_lua`
+  returns, with no `fflush` call — the shim answers `fd_fdstat_get` with
+  `character_device` and *withholds* the `fd_seek`/`fd_tell` rights bits,
+  which is the combination wasi-libc's `isatty()` tests for. That is the
+  configuration Stage 0 ran under and the one to keep; whether a shim that
+  reported stdio as a regular file would end up block-buffered was not
+  measured, so do not change it casually.
+- **The page needs a server.** Opened as `file://` it renders but cannot
+  load the kernel — Chromium refuses `fetch` on the `file:` scheme. See
+  §8: a genuinely standalone single file has to carry the 896 KB module
+  inline, which is a real decision and not a detail.
 
 ---
 
@@ -141,29 +192,70 @@ notebook can give, and it is exactly the playground artifact's pitch.
 Each stage is independently usable. Stopping after any of them leaves
 something worth having.
 
-### Stage 0 — Spike
+### Stage 0 — Spike ✅ done — **GO**
 
 One HTML file. Load `libdiluvium_wasi.wasm`, instantiate with a WASI
 shim, run one hard-coded snippet, show its output.
 
 Not the product — a **go/no-go on one remaining unknown**.
 
-The import question is already answered (§1): 45 standard
-`wasi_snapshot_preview1` imports, so a stock preview1 shim suffices.
-What is left is the one that can invalidate the approach:
+The import question was already answered (§1): 45 standard
+`wasi_snapshot_preview1` imports, so a stock preview1 shim suffices. What
+was left was the one that could invalidate the approach:
 
-- **Does `setjmp`/`longjmp` work in the browser?** See §6. Test it
-  first, with a `pcall` that actually catches an error — a happy path
-  proves nothing here.
+- **Does `setjmp`/`longjmp` work in the browser?**
+
+**Yes. The approach holds; build Stage 1 on it.**
+
+`pcall` catches, in a real browser, and the kernel is unharmed afterwards.
+Measured in Chromium 141 against the pinned 5.4.7 `libdiluvium_wasi.wasm`,
+by `index.html`, asserted by `test/stage0.spec.js`:
+
+| Probe | Result |
+| :--- | :--- |
+| `print(pcall(function() error("caught") end))` | `false  …:1: caught` — status 0, ~1 ms |
+| `pcall` around a VM-raised fault (`nil + 1`) | `false  …attempt to perform arithmetic on a nil value` |
+| 1000 caught errors in one chunk | `caught  1000`, status 0, ~13 ms |
+| uncaught `error("boom")` | status 1, `Error: …: boom` on stdout, nothing thrown into JS |
+| after all of the above | `alive  diluvium (lua) 5.4`, globals intact |
+
+Two things make this a real answer rather than a hopeful one. The
+thousand-catch probe rules out a lucky single unwind — that is 1000 round
+trips through the unwinder with no leak, no trap and no corrupted stack,
+in 13 ms. And the harness was mutation-checked: breaking `pcall`,
+miscounting the unwinder, removing the artifact, and denying exception
+handling each flip the verdict to NO-GO, so the green is load-bearing.
+
+The mechanism, for the record: the module carries a **tag section
+exporting `__c_longjmp`**, and its `target_features` declares
+`+exception-handling` — WASM SJLJ, exactly as the build flags promise.
+That it is the *final* opcodes and not the legacy ones was verified rather
+than assumed: with V8's legacy encoding switched off
+(`--no-experimental-wasm-legacy-eh`), a hand-built legacy `try`/`catch`
+module stops validating while `libdiluvium_wasi.wasm` still validates.
+
+That distinction matters for the probe. Chromium 141 accepts *both*
+encodings, so a probe built from legacy opcodes would pass on browsers
+that cannot run the kernel at all. The page's 33-byte probe therefore uses
+`try_table`/`throw`, so an unsupported browser gets a sentence instead of
+a `CompileError`.
 
 Order of operations, which is not guessable from the outside:
-instantiate → `__wasm_call_ctors()` → `init_lua()` → `run_lua(ptr)`,
-with the code string written into `memory` via the exported `malloc`.
+instantiate → `__wasm_call_ctors()` → `init_lua()` → `run_lua(ptr)`, with
+the code string written into `memory` via the exported `malloc`. Keep that
+order — though see §1 for what it turns out actually to depend on.
 
 Ends with a Playwright test that loads the page, runs the snippet, and
 asserts on the output. That test is the harness every later stage reuses.
+It asserts on the text the kernel actually printed, never on the page's
+own verdict alone, which would only prove the page agrees with itself.
 
-### Stage 1 — The usable notebook
+One repo mechanic learned here: `@playwright/test` is **pinned** to
+`~1.56`, not floated. Each Playwright release demands one exact Chromium
+revision, and 1.56 is the one that asks for the preinstalled 1194. A wider
+range resolves to something newer and then refuses to launch.
+
+### Stage 1 — The usable notebook ✅ done
 
 **The target to reach and then live with for a while.** Everything here
 works against today's releases.
@@ -177,6 +269,51 @@ works against today's releases.
 
 This is genuinely pleasant for prototyping Diluvium and asks nothing of
 the runtime.
+
+**What shipped, and the parts that were not obvious.**
+
+`src/kernel/` is the interface and the one implementation behind it —
+`protocol.js` (Jupyter-shaped messages), `kernel.js` (the interface and its
+`capabilities`), `wasi.js`, `lua-harness.js`, `wasm-kernel.js`.
+`src/notebook/` is the document, and neither half knows about the other.
+
+- **Everything the kernel does happens inside a Lua harness chunk**, not by
+  handing user code to `run_lua` directly. Stage 0 forced this: echo has to
+  print from inside Lua. Having paid for the wrapper, the error path came
+  free *and* came structured — an `xpcall` handler yields message and
+  traceback as data, which is strictly better than scraping the `Error:`
+  line back out of stdout and breaking the first time the runtime rewords
+  itself. Results return through a length-prefixed record tagged with a
+  per-request nonce, so a payload can contain newlines, tabs, or the
+  separator itself.
+- **The trailing-expression case is the whole difficulty of echo.** A cell
+  of statements ending in a bare `counter` is the ordinary notebook idiom
+  and plain Lua rejects it, since an expression is not a statement. The fix
+  is to compile the *whole* cell with `return ` spliced in before the last
+  expression — never to run the two halves separately, or a `local`
+  declared earlier goes out of scope. The guard is that the prefix must
+  itself be a complete chunk: without it, `for i = 1, 3 do / print(i) /
+  end` splits inside the loop body and turns the first iteration into an
+  early return, printing `1` instead of `1, 2, 3`. That bug reached a
+  screenshot before it reached a test, which is the argument for looking at
+  the thing you built.
+- **Two output ceilings, not one.** The shim caps at 4 MB / 100k lines to
+  protect the tab; the UI shows 200 lines behind a "show all". A single cap
+  cannot do both jobs — truncating in the shim would leave "show all"
+  nothing to show.
+- **Restart keeps the compiled `WebAssembly.Module` and drops the
+  instance.** A Module is code and owns no memory; an Instance owns a
+  linear memory, and holding one is exactly how restarts leak. A test runs
+  20 restarts and asserts each instance starts from a fresh memory. This
+  refines the §6 gotcha, which said to drop both.
+- **Markdown is rendered by ~100 lines in `markdown.js`, escaping first.**
+  A notebook is untrusted input — it arrives from files and other people's
+  repositories — so HTML is escaped before anything else happens and only
+  `http(s)`/relative links survive. A real markdown library would be the
+  project's first vendored dependency; that trade can be made when someone
+  wants tables.
+
+95 tests, all driving the real page and the real kernel.
 
 ### Stage 2 — Version switching
 
@@ -230,6 +367,24 @@ way, and the choice can be made on evidence instead of prediction.
   single highest-leverage structural choice in the project
 - On-page WASM is the default backend
 - `libdiluvium_wasi.wasm` is the kernel artifact
+- **The served page is the source of truth; the single file is a build
+  output.** Decided at Stage 1, once Stage 0 had priced it. The page uses
+  ES modules and fetches the kernel, so it needs a static server — any
+  static server, including `npm start`. `npm run bake` emits
+  `dist/diluvium-lab.html` with every module flattened and the kernel
+  inlined as base64, for the double-click case.
+
+  This amends the "openable directly" constraint rather than ignoring it,
+  and the constraint's own escape clause is the reason it survives: the
+  un-bundled page keeps working, and it is the thing being developed. The
+  alternative — inlining from the start — would put 1.2 MB of base64 in
+  git, add a re-vendoring step to every version bump, and collide head-on
+  with Stage 2, since a dropdown that downloads releases cannot work from
+  `file://` at all. `bake.mjs` is deliberately not a bundler: it resolves
+  the module graph, concatenates it, strips the import/export syntax, and
+  **stops** rather than guessing at anything it does not understand.
+  `test/bake.spec.js` opens the output over `file://` and runs a cell,
+  which is the only proof that counts
 
 ## 6. Risks and gotchas
 
@@ -246,16 +401,23 @@ confusingly on first run. When a 5.5 artifact publishes, add a *second*
 notebook that uses the new constructs: switching between the two is then
 the natural Stage 2 demo.
 
-**`setjmp`/`longjmp` is the real Stage 0 risk.** Lua implements error
-handling with `longjmp`, and the WASM builds use LLVM's WASM SJLJ
-(`-mllvm -wasm-enable-sjlj -mllvm -wasm-use-legacy-eh=false`), which
-lowers onto the WebAssembly exception-handling proposal — and specifically
-the *final* opcodes, not the legacy ones. Browser support for final EH is
-more recent than for legacy. If it does not work, `pcall` and every error
-message break, and the options are a rebuild with legacy EH, a browser
-floor, or the `wasm32-unknown-unknown` target getting a real linked
-artifact. **Test this before anything else, with an error that must be
-caught, not just a happy path.**
+**~~`setjmp`/`longjmp` is the real Stage 0 risk.~~ Retired — it works.**
+Lua implements error handling with `longjmp`, and the WASM builds use
+LLVM's WASM SJLJ (`-mllvm -wasm-enable-sjlj -mllvm
+-wasm-use-legacy-eh=false`), which lowers onto the WebAssembly
+exception-handling proposal — and specifically the *final* opcodes, not
+the legacy ones. Browser support for final EH is more recent than for
+legacy, so this was the risk that could have invalidated the whole
+approach. **Stage 0 measured it: `pcall` catches, 1000 times in a row,
+with the kernel intact afterwards.** The contingencies — a rebuild with
+legacy EH, a browser floor, or getting a real linked artifact out of the
+`wasm32-unknown-unknown` target — are not needed.
+
+What survives is a **browser floor**, and it is higher than the usual one:
+final EH is only in Chromium 137+ and comparably recent Firefox and
+Safari. The page must therefore say so rather than fail obscurely, which
+is why Stage 0's EH probe stays in the page. This is the same shape as
+Stage 2's capability probe and should end up sharing its code.
 
 **Interrupt has three tiers, and the middle one conflicts with a goal.**
 - *No interrupt* (Stage 1). Honest, and fine to start.
@@ -280,8 +442,11 @@ ruins a demo.
 **IndexedDB, not localStorage.** 5 MB dies quickly once notebooks carry
 saved output.
 
-**Kernel restart leaks** unless module and instance references are
-dropped. Each restart allocates a fresh linear memory.
+**Kernel restart leaks** unless instance references are dropped. Each
+instance allocates its own linear memory, so one held reference is one
+leaked memory. *Refined at Stage 1:* the compiled `WebAssembly.Module` is
+the exception and is deliberately cached — it is code, owns no memory, and
+recompiling ~900 KB per restart is latency for nothing.
 
 ## 7. Non-goals
 
@@ -294,9 +459,9 @@ dropped. Each restart allocates a fresh linear memory.
 ## 8. Open
 
 - Repository name, and where it is hosted
-- Whether the standalone single-file page is a hard requirement or a
-  nice-to-have — it is the single biggest constraint, since it rules out
-  SAB-based interrupt and points at the fuel-stepped path
+- ~~Whether the standalone single-file page is a hard requirement~~
+  **Decided at Stage 1 — see §5.** The served page is the source of truth;
+  `npm run bake` emits a single double-click-able file alongside it
 - Editor: a plain `<textarea>` is enough for Stage 1; CodeMirror is the
   obvious upgrade but is the first real dependency. Diluvium syntax
   highlighting exists in the browser REPL's PrismJS setup and could be

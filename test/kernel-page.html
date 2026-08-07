@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>kernel test surface</title>
+</head>
+<body>
+<p>A driving surface for <code>test/kernel.spec.js</code>. Not part of the app.</p>
+
+<script type="module">
+// This imports the real kernel modules and drives the real WASM instance --
+// nothing here is mocked. What it replaces is the *UI*, so that kernel
+// behaviour with no natural button (is_complete, completion, restart
+// semantics, harness edge cases) can be asserted directly instead of
+// through six layers of DOM.
+//
+// The notebook's own tests drive the real page and the real buttons.
+import { WasmKernel, splitCompletionToken } from '../src/kernel/wasm-kernel.js';
+import { executeCollected } from '../src/kernel/kernel.js';
+import { luaLongString, parseRecord, makeNonce } from '../src/kernel/lua-harness.js';
+
+const kernel = new WasmKernel({ wasmUrl: '../vendor/libdiluvium_wasi.wasm' });
+const statuses = [];
+kernel.onMessage((msg) => statuses.push(msg.content.execution_state));
+
+window.lab = {
+  kernel,
+  statuses,
+  splitCompletionToken,
+  luaLongString,
+  parseRecord,
+  makeNonce,
+  run: (code) => executeCollected(kernel, code),
+};
+
+kernel.start().then(
+  () => { document.body.dataset.ready = 'true'; },
+  (err) => { document.body.dataset.error = err.message; },
+);
+</script>
+</body>
+</html>

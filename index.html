@@ -1,0 +1,187 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Diluvium Lab</title>
+<style>
+  :root {
+    color-scheme: light dark;
+    --edge: color-mix(in srgb, currentColor 18%, transparent);
+    --sunk: color-mix(in srgb, currentColor 5%, transparent);
+    --quiet: color-mix(in srgb, currentColor 60%, transparent);
+    --ok: #1a7f37;
+    --bad: #b91c1c;
+    --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  /* Several rules below set `display`, which would otherwise beat the UA
+     stylesheet's [hidden] rule and leave "hidden" elements on screen. */
+  [hidden] { display: none !important; }
+  body {
+    margin: 0;
+    font: 15px/1.5 ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+    display: grid;
+    grid-template-rows: auto 1fr auto;
+    height: 100vh;
+  }
+
+  /* --- toolbar --- */
+  .toolbar {
+    display: flex; align-items: center; gap: .4rem; flex-wrap: wrap;
+    padding: .5rem .75rem; border-bottom: 1px solid var(--edge);
+  }
+  .toolbar .title { font-weight: 650; margin-right: .5rem; }
+  .toolbar .spacer { flex: 1; }
+  .toolbar button, .cell-tools button, .show-all {
+    font: inherit; font-size: .85rem; padding: .25rem .55rem;
+    border: 1px solid var(--edge); border-radius: 6px;
+    background: transparent; color: inherit; cursor: pointer;
+  }
+  .toolbar button:hover, .cell-tools button:hover, .show-all:hover { background: var(--sunk); }
+  .sep { width: 1px; height: 1.4rem; background: var(--edge); margin: 0 .25rem; }
+  [data-filename] { font-family: var(--mono); font-size: .82rem; color: var(--quiet); }
+
+  .status {
+    font-size: .8rem; font-family: var(--mono);
+    padding: .15rem .5rem; border-radius: 999px; border: 1px solid var(--edge);
+  }
+  .status[data-status="idle"] { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 40%, transparent); }
+  .status[data-status="busy"] { color: #b45309; }
+  .status[data-status="dead"] { color: var(--bad); border-color: color-mix(in srgb, var(--bad) 40%, transparent); }
+
+  /* --- cells --- */
+  .sheet { overflow: auto; padding: 1rem .75rem 4rem; }
+  .cells { max-width: 62rem; margin: 0 auto; display: flex; flex-direction: column; gap: .5rem; }
+
+  .cell { border: 1px solid transparent; border-radius: 8px; padding: .35rem .5rem; }
+  .cell:focus-within { border-color: var(--edge); background: var(--sunk); }
+  .cell[data-busy="true"] { border-color: color-mix(in srgb, #b45309 45%, transparent); }
+  .cell-head { display: flex; align-items: center; gap: .5rem; min-height: 1.6rem; }
+  .prompt {
+    font-family: var(--mono); font-size: .78rem; color: var(--quiet);
+    min-width: 5.5rem; user-select: none;
+  }
+  /* Dimmed rather than hidden: a hover-only toolbar does not exist on a
+     touch screen, and cannot be reached by keyboard at all. */
+  .cell-tools { display: flex; gap: .25rem; margin-left: auto; opacity: .3; transition: opacity .12s; }
+  .cell:hover .cell-tools, .cell:focus-within .cell-tools { opacity: 1; }
+
+  textarea[data-editor], [data-console-input] {
+    display: block; width: 100%; resize: vertical;
+    font-family: var(--mono); font-size: .88rem; line-height: 1.45;
+    padding: .45rem .55rem; border: 1px solid var(--edge); border-radius: 6px;
+    background: var(--sunk); color: inherit;
+  }
+  .cell[data-cell-type="markdown"][data-editing="false"] .rendered { padding: 0 .1rem; }
+  .rendered h1 { font-size: 1.5rem; } .rendered h2 { font-size: 1.25rem; }
+  .rendered h3 { font-size: 1.05rem; }
+  .rendered pre { background: var(--sunk); padding: .5rem .6rem; border-radius: 6px; overflow-x: auto; }
+  .rendered code { font-family: var(--mono); font-size: .88em; }
+  .rendered blockquote { margin: 0; padding-left: .8rem; border-left: 3px solid var(--edge); color: var(--quiet); }
+
+  /* --- outputs --- */
+  .outputs { display: flex; flex-direction: column; gap: .25rem; margin: .3rem 0 0 5.5rem; }
+  .outputs:empty { margin: 0; }
+  .output pre {
+    margin: 0; font-family: var(--mono); font-size: .84rem;
+    white-space: pre-wrap; word-break: break-word;
+  }
+  .output-stream[data-stream="stderr"] pre { color: #b45309; }
+  .output-execute_result { display: flex; gap: .5rem; align-items: baseline; }
+  .result-prompt { font-family: var(--mono); font-size: .78rem; color: var(--quiet); }
+  .output-error {
+    border-left: 3px solid var(--bad); padding-left: .55rem;
+  }
+  .error-name { color: var(--bad); font-family: var(--mono); font-size: .84rem; font-weight: 600; }
+  .traceback { color: var(--quiet); }
+  .show-all { align-self: flex-start; font-size: .78rem; margin-top: .15rem; }
+
+  /* --- console --- */
+  .console {
+    border-top: 1px solid var(--edge); display: grid; grid-template-rows: auto 1fr auto;
+    max-height: 38vh; min-height: 8.5rem;
+  }
+  .console-head {
+    display: flex; align-items: center; gap: .5rem;
+    padding: .3rem .75rem; font-size: .78rem; color: var(--quiet);
+    border-bottom: 1px solid var(--edge);
+  }
+  [data-console-log] { overflow: auto; padding: .5rem .75rem; font-size: .84rem; }
+  [data-console-log] pre { margin: 0; font-family: var(--mono); white-space: pre-wrap; word-break: break-word; }
+  .console-entry { display: flex; gap: .4rem; color: var(--quiet); }
+  .console-caret { font-family: var(--mono); }
+  .console-result { color: var(--ok); }
+  .console-error { color: var(--bad); }
+  .console-note { color: var(--quiet); font-style: italic; }
+  .console-input-row { padding: .4rem .75rem .6rem; }
+
+  [data-toast] {
+    position: fixed; left: 50%; bottom: 1rem; transform: translateX(-50%);
+    padding: .5rem .9rem; border-radius: 8px; border: 1px solid var(--edge);
+    background: Canvas; font-size: .86rem; z-index: 10;
+  }
+  [data-toast][data-kind="error"] { border-color: var(--bad); color: var(--bad); }
+</style>
+</head>
+<body>
+
+<header class="toolbar">
+  <span class="title">Diluvium Lab</span>
+  <button type="button" data-toolbar="add-code">+ Code</button>
+  <button type="button" data-toolbar="add-markdown">+ Markdown</button>
+  <span class="sep"></span>
+  <button type="button" data-toolbar="run-all">Run all</button>
+  <button type="button" data-toolbar="clear-outputs">Clear outputs</button>
+  <span class="sep"></span>
+  <button type="button" data-toolbar="open">Open…</button>
+  <button type="button" data-toolbar="save">Save .ipynb</button>
+  <input type="file" data-file-input accept=".ipynb,application/json" hidden>
+  <span data-filename></span>
+  <span class="spacer"></span>
+  <button type="button" data-toolbar="restart" title="Discard every variable and start the kernel again">Restart kernel</button>
+  <span class="status" data-kernel-status>starting</span>
+</header>
+
+<main class="sheet">
+  <div class="cells" data-cells></div>
+</main>
+
+<section class="console" data-console>
+  <div class="console-head">
+    <strong>Console</strong>
+    <span>— shares the kernel with the notebook. Enter runs; Shift+Enter adds a line.</span>
+    <span class="spacer"></span>
+    <span data-kernel-backend></span>
+  </div>
+  <div data-console-log></div>
+  <div class="console-input-row">
+    <textarea data-console-input rows="1" spellcheck="false" aria-label="console input"></textarea>
+  </div>
+</section>
+
+<div data-toast hidden></div>
+
+<script type="module">
+import { App } from './src/app.js';
+
+// `npm run bake` produces a single double-click-able file and defines this
+// global with the kernel inlined, because browsers refuse to fetch over
+// file://. Served normally it is undefined and the kernel is fetched.
+const inlined = window.DILUVIUM_KERNEL_BASE64;
+const app = new App(document, inlined ? { moduleBytes: base64ToBytes(inlined) } : {});
+
+function base64ToBytes(base64) {
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  return bytes;
+}
+
+window.lab = app;          // the test harness drives the real UI; this is
+                           // only for reaching the model in assertions
+app.start();
+</script>
+
+</body>
+</html>

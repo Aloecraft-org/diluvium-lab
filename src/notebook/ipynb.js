@@ -1,0 +1,136 @@
+// `.ipynb` in and out.
+//
+// A hard constraint, and an easy one to honour: nbformat 4 is JSON with a
+// published schema, so storing it buys GitHub rendering, nbconvert, and
+// round-tripping with real Jupyter. Inventing a format would buy nothing.
+//
+// The one thing worth knowing about the format: multi-line strings are
+// stored as arrays of lines *with* their trailing newlines, last line
+// exempt. Jupyter accepts a plain string too, so reading tolerates both and
+// writing always produces the array form.
+
+import { NotebookModel, newCell } from './model.js';
+import { MSG } from '../kernel/protocol.js';
+
+const NBFORMAT = 4;
+const NBFORMAT_MINOR = 5;
+
+/** nbformat's multiline string: ["a\n", "b"] */
+export function splitLines(text) {
+  if (text === '') return [];
+  const lines = text.split('\n');
+  return lines.map((line, i) => (i === lines.length - 1 ? line : `${line}\n`))
+    .filter((line, i) => !(i === lines.length - 1 && line === ''));
+}
+
+export function joinLines(value) {
+  if (typeof value === 'string') return value;
+  if (Array.isArray(value)) return value.join('');
+  return '';
+}
+
+/** Kernel messages -> nbformat output objects. */
+export function messageToOutput(msg) {
+  switch (msg.msg_type) {
+    case MSG.STREAM:
+      return { output_type: 'stream', name: msg.content.name, text: splitLines(msg.content.text) };
+    case MSG.EXECUTE_RESULT:
+      return {
+        output_type: 'execute_result',
+        execution_count: msg.content.execution_count,
+        data: { 'text/plain': splitLines(msg.content.data['text/plain']) },
+        metadata: {},
+      };
+    case MSG.ERROR:
+      return {
+        output_type: 'error',
+        ename: msg.content.ename,
+        evalue: msg.content.evalue,
+        traceback: msg.content.traceback,
+      };
+    default:
+      return null;
+  }
+}
+
+/** The text an output renders as, whichever kind it is. */
+export function outputText(output) {
+  switch (output.output_type) {
+    case 'stream':
+      return joinLines(output.text);
+    case 'execute_result':
+    case 'display_data':
+      return joinLines(output.data?.['text/plain'] ?? '');
+    case 'error': {
+      const traceback = (output.traceback ?? []).join('\n');
+      return traceback || `${output.ename}: ${output.evalue}`;
+    }
+    default:
+      return '';
+  }
+}
+
+export function toIpynb(model, metadata = {}) {
+  return {
+    cells: model.cells.map((cell) => {
+      const base = {
+        cell_type: cell.cell_type,
+        metadata: {},
+        source: splitLines(cell.source),
+      };
+      if (cell.cell_type !== 'code') return base;
+      return {
+        ...base,
+        execution_count: cell.execution_count,
+        outputs: cell.outputs ?? [],
+      };
+    }),
+    metadata: {
+      kernelspec: { display_name: 'Diluvium', language: 'lua', name: 'diluvium' },
+      language_info: { name: 'lua', file_extension: '.lua' },
+      ...metadata,
+    },
+    nbformat: NBFORMAT,
+    nbformat_minor: NBFORMAT_MINOR,
+  };
+}
+
+export class IpynbError extends Error {}
+
+/**
+ * Read a notebook. Strict enough to reject something that is not a notebook,
+ * lenient about the things Jupyter itself is lenient about.
+ */
+export function fromIpynb(json) {
+  const doc = typeof json === 'string' ? parseJson(json) : json;
+  if (!doc || typeof doc !== 'object') throw new IpynbError('this file is not a notebook');
+  if (!Array.isArray(doc.cells)) throw new IpynbError('this file has no cells array, so it is not a notebook');
+  if (doc.nbformat !== undefined && doc.nbformat !== NBFORMAT) {
+    throw new IpynbError(`nbformat ${doc.nbformat} is not supported; this reads nbformat ${NBFORMAT}`);
+  }
+
+  const cells = doc.cells.map((raw) => {
+    const type = raw.cell_type === 'markdown' || raw.cell_type === 'raw' ? raw.cell_type : 'code';
+    const cell = newCell(type, joinLines(raw.source));
+    if (type === 'code') {
+      cell.execution_count = typeof raw.execution_count === 'number' ? raw.execution_count : null;
+      cell.outputs = Array.isArray(raw.outputs) ? raw.outputs.filter(isKnownOutput) : [];
+    }
+    return cell;
+  });
+
+  return new NotebookModel(cells);
+}
+
+function parseJson(text) {
+  try {
+    return JSON.parse(text);
+  } catch (cause) {
+    throw new IpynbError(`this file is not valid JSON: ${cause.message}`);
+  }
+}
+
+function isKnownOutput(output) {
+  return output && typeof output === 'object'
+    && ['stream', 'execute_result', 'display_data', 'error'].includes(output.output_type);
+}
