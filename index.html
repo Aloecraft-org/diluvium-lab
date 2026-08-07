@@ -1,0 +1,524 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Diluvium Lab — Stage 0 spike</title>
+<style>
+  :root { color-scheme: light dark; }
+  body {
+    margin: 0 auto; padding: 2rem 1.25rem; max-width: 60rem;
+    font: 15px/1.55 ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+  }
+  h1 { font-size: 1.35rem; margin: 0 0 .25rem; }
+  .sub { margin: 0 0 1.5rem; opacity: .7; }
+  code, pre, .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+
+  #verdict {
+    display: flex; gap: .75rem; align-items: baseline; flex-wrap: wrap;
+    padding: .85rem 1rem; border-radius: 8px; margin-bottom: 1.5rem;
+    border: 1px solid; font-weight: 600;
+  }
+  #verdict[data-state="pending"] { border-color: #9994; background: #8881; }
+  #verdict[data-state="go"]      { border-color: #1a7f37; background: #1a7f371a; color: #1a7f37; }
+  #verdict[data-state="no-go"]   { border-color: #b91c1c; background: #b91c1c1a; color: #b91c1c; }
+  #verdict .label { font-size: 1.1rem; letter-spacing: .04em; }
+  #verdict .why { font-weight: 400; opacity: .85; }
+
+  dl.env { display: grid; grid-template-columns: max-content 1fr; gap: .2rem 1rem; margin: 0 0 1.75rem; }
+  dl.env dt { opacity: .65; }
+  dl.env dd { margin: 0; }
+
+  .probe { border: 1px solid #8884; border-radius: 8px; margin-bottom: .75rem; overflow: hidden; }
+  .probe > header {
+    display: flex; gap: .6rem; align-items: baseline;
+    padding: .55rem .8rem; background: #8881;
+  }
+  .probe .tag {
+    flex: none; font-size: .7rem; font-weight: 700; letter-spacing: .06em;
+    padding: .1rem .45rem; border-radius: 4px; border: 1px solid currentColor;
+  }
+  .probe[data-status="pass"] .tag { color: #1a7f37; }
+  .probe[data-status="fail"] .tag { color: #b91c1c; }
+  .probe[data-status="pending"] .tag { opacity: .6; }
+  .probe .title { font-weight: 600; }
+  .probe .note { opacity: .7; font-size: .88rem; }
+  .probe pre {
+    margin: 0; padding: .6rem .8rem; white-space: pre-wrap; word-break: break-word;
+    font-size: .86rem; border-top: 1px solid #8883;
+  }
+  .probe pre.src { opacity: .75; }
+  .probe .expected { padding: .5rem .8rem; font-size: .82rem; opacity: .7; border-top: 1px solid #8883; }
+  .fd { display: inline-block; min-width: 3.2rem; opacity: .55; user-select: none; }
+</style>
+</head>
+<body>
+
+<h1>Diluvium Lab — Stage 0 spike</h1>
+<p class="sub">
+  Not the product. A go/no-go on one question: does Lua error handling —
+  <code>setjmp</code>/<code>longjmp</code> lowered onto WebAssembly exception
+  handling — survive in a browser? A happy path proves nothing; every probe
+  below that matters is an error that must be <em>caught</em>.
+</p>
+
+<div id="verdict" data-state="pending">
+  <span class="label">…</span>
+  <span class="why">loading the kernel</span>
+</div>
+
+<dl class="env" id="env"></dl>
+
+<div id="probes"></div>
+
+<script>
+'use strict';
+// One file, no modules, no imports, no build step. Stage 0 is a spike:
+// everything it needs is here, and the shim below is thrown away the
+// moment Stage 1 gives the kernel a real home.
+
+// ---------------------------------------------------------------- WASI
+
+// preview1 errno values used below.
+var E = { SUCCESS: 0, BADF: 8, INVAL: 28, NOSYS: 52, NOTSUP: 58 };
+
+// Output is capped so a runaway probe cannot take the tab with it.
+var MAX_BYTES = 256 * 1024;
+var MAX_LINES = 2000;
+
+// A preview1 shim, only as much of one as this module actually asks for.
+// The 45 imports are all `wasi_snapshot_preview1` (see the env table on the
+// page, which reads them off the binary rather than trusting this comment).
+// Everything the kernel does not need answers ENOSYS honestly instead of
+// pretending to succeed.
+function createWasi() {
+  var memory = null;                     // bound after instantiation
+  var decoders = { 1: new TextDecoder(), 2: new TextDecoder() };
+  var streams = { 1: mkStream(), 2: mkStream() };
+
+  function mkStream() { return { text: '', bytes: 0, lines: 0, truncated: false }; }
+  function dv() { return new DataView(memory.buffer); }
+  function bytes() { return new Uint8Array(memory.buffer); }
+
+  function emit(fd, chunk) {
+    var s = streams[fd];
+    if (s.truncated) return;
+    s.bytes += chunk.length;
+    s.lines += (chunk.match(/\n/g) || []).length;
+    if (s.bytes > MAX_BYTES || s.lines > MAX_LINES) {
+      s.truncated = true;
+      s.text += '\n[output truncated]';
+      return;
+    }
+    s.text += chunk;
+  }
+
+  var wasi = {
+    // The only import that carries real data: stdout is fd 1, stderr fd 2.
+    fd_write: function (fd, iovs, iovsLen, nwrittenPtr) {
+      if (fd !== 1 && fd !== 2) return E.BADF;
+      var d = dv(), total = 0;
+      for (var i = 0; i < iovsLen; i++) {
+        var ptr = d.getUint32(iovs + i * 8, true);
+        var len = d.getUint32(iovs + i * 8 + 4, true);
+        // decode with stream:true so a multi-byte char split across two
+        // writes does not come out as U+FFFD
+        emit(fd, decoders[fd].decode(bytes().subarray(ptr, ptr + len), { stream: true }));
+        total += len;
+      }
+      d.setUint32(nwrittenPtr, total, true);
+      return E.SUCCESS;
+    },
+    // There is no stdin in a notebook. Report EOF rather than blocking.
+    fd_read: function (fd, iovs, iovsLen, nreadPtr) {
+      if (fd !== 0) return E.BADF;
+      dv().setUint32(nreadPtr, 0, true);
+      return E.SUCCESS;
+    },
+    fd_fdstat_get: function (fd, ptr) {
+      if (fd > 2) return E.BADF;
+      var d = dv();
+      d.setUint8(ptr, 2);                  // filetype: character_device
+      d.setUint16(ptr + 2, 0, true);       // fdflags
+      // Withhold fd_seek (bit 2) and fd_tell (bit 5): that combination with
+      // character_device is what makes wasi-libc's isatty() true, which is
+      // what keeps stdio line-buffered instead of block-buffered. Without
+      // it, output would not appear until a buffer filled.
+      var rights = 0xffffffffn & ~((1n << 2n) | (1n << 5n));
+      d.setBigUint64(ptr + 8, rights, true);
+      d.setBigUint64(ptr + 16, rights, true);
+      return E.SUCCESS;
+    },
+    fd_close: function () { return E.SUCCESS; },
+    fd_sync: function () { return E.SUCCESS; },
+    fd_datasync: function () { return E.SUCCESS; },
+    fd_fdstat_set_flags: function () { return E.SUCCESS; },
+    fd_fdstat_set_rights: function () { return E.SUCCESS; },
+    fd_seek: function () { return E.NOTSUP; },
+    fd_tell: function () { return E.NOTSUP; },
+    // No preopened directories: end libc's scan immediately.
+    fd_prestat_get: function () { return E.BADF; },
+    fd_prestat_dir_name: function () { return E.BADF; },
+    args_sizes_get: function (c, s) { var d = dv(); d.setUint32(c, 0, true); d.setUint32(s, 0, true); return E.SUCCESS; },
+    args_get: function () { return E.SUCCESS; },
+    environ_sizes_get: function (c, s) { var d = dv(); d.setUint32(c, 0, true); d.setUint32(s, 0, true); return E.SUCCESS; },
+    environ_get: function () { return E.SUCCESS; },
+    clock_res_get: function (id, ptr) { dv().setBigUint64(ptr, 1000000n, true); return E.SUCCESS; },
+    clock_time_get: function (id, precision, ptr) {
+      dv().setBigUint64(ptr, BigInt(Math.round(performance.timeOrigin + performance.now())) * 1000000n, true);
+      return E.SUCCESS;
+    },
+    random_get: function (ptr, len) { crypto.getRandomValues(bytes().subarray(ptr, ptr + len)); return E.SUCCESS; },
+    sched_yield: function () { return E.SUCCESS; },
+    // run_lua is a synchronous call with no way back to the event loop, so
+    // there is nothing to poll and nothing to exit to. Both are faults.
+    poll_oneoff: function () { return E.NOSYS; },
+    proc_exit: function (code) { throw new Error('kernel called proc_exit(' + code + ')'); },
+  };
+
+  // No filesystem and no sockets in v1. These exist so the module links,
+  // and they say so rather than lying about success.
+  ['fd_advise', 'fd_allocate', 'fd_filestat_get', 'fd_filestat_set_size',
+   'fd_filestat_set_times', 'fd_pread', 'fd_pwrite', 'fd_readdir', 'fd_renumber',
+   'path_create_directory', 'path_filestat_get', 'path_filestat_set_times',
+   'path_link', 'path_open', 'path_readlink', 'path_remove_directory',
+   'path_rename', 'path_symlink', 'path_unlink_file'
+  ].forEach(function (name) { wasi[name] = function () { return E.NOSYS; }; });
+
+  ['sock_accept', 'sock_recv', 'sock_send', 'sock_shutdown']
+    .forEach(function (name) { wasi[name] = function () { return E.NOTSUP; }; });
+
+  return {
+    exports: wasi,
+    bind: function (m) { memory = m; },
+    take: function () {
+      var o = { stdout: streams[1].text, stderr: streams[2].text,
+                truncated: streams[1].truncated || streams[2].truncated };
+      streams[1] = mkStream(); streams[2] = mkStream();
+      return o;
+    },
+  };
+}
+
+// -------------------------------------------------------------- kernel
+
+var WASM_URL = 'vendor/libdiluvium_wasi.wasm';
+
+function bootKernel(bytes) {
+  var module = new WebAssembly.Module(bytes);
+
+  // CLAUDE.md: discover the import list from the binary, never guess. The
+  // module is linked --allow-undefined, so only the binary is authoritative.
+  var declared = WebAssembly.Module.imports(module);
+  var wasi = createWasi();
+  var missing = declared.filter(function (i) {
+    return i.module !== 'wasi_snapshot_preview1' || typeof wasi.exports[i.name] !== 'function';
+  });
+  if (missing.length) {
+    throw new Error('unshimmed imports: ' +
+      missing.map(function (i) { return i.module + '.' + i.name; }).join(', '));
+  }
+
+  var instance = new WebAssembly.Instance(module, { wasi_snapshot_preview1: wasi.exports });
+  var ex = instance.exports;
+  wasi.bind(ex.memory);
+
+  // Order of operations, and it is not guessable from outside:
+  //   __wasm_call_ctors -> init_lua -> run_lua
+  // `_initialize` is absent from this build and `_start` must never be
+  // called (it runs the REPL against a stdin that does not exist).
+  ex.__wasm_call_ctors();
+  ex.init_lua();
+
+  var encoder = new TextEncoder();
+
+  return {
+    module: module,
+    instance: instance,
+    imports: declared,
+    exports: ex,
+    // Synchronous, by nature: run_lua cannot be interrupted. Nothing in this
+    // page may imply otherwise.
+    run: function (code) {
+      var src = encoder.encode(code);
+      var ptr = ex.malloc(src.length + 1);
+      if (!ptr) throw new Error('malloc failed for ' + (src.length + 1) + ' bytes');
+      // Re-derive the view every time: run_lua can grow memory, which
+      // detaches every ArrayBuffer taken before the call.
+      new Uint8Array(ex.memory.buffer).set(src, ptr);
+      new Uint8Array(ex.memory.buffer)[ptr + src.length] = 0;
+
+      var status = 0, thrown = null;
+      var started = performance.now();
+      try {
+        status = ex.run_lua(ptr);
+      } catch (err) {
+        thrown = err;
+      } finally {
+        ex.free(ptr);
+      }
+      var io = wasi.take();
+      return {
+        status: status, thrown: thrown, ms: performance.now() - started,
+        stdout: io.stdout, stderr: io.stderr, truncated: io.truncated,
+      };
+    },
+  };
+}
+
+// --------------------------------------------------------------- probes
+
+// Hard-coded, in order. Each `check` returns null to pass or a reason to
+// fail. The three that decide the verdict are marked `decisive`: they are
+// the ones that exercise longjmp.
+var PROBES = [
+  {
+    id: 'print',
+    title: 'The kernel runs and writes to stdout',
+    note: 'Baseline. Proves the WASI shim, not the unknown.',
+    code: 'print("hello from diluvium")',
+    expected: 'stdout is exactly "hello from diluvium\\n", status 0',
+    check: function (r) {
+      if (r.status !== 0) return 'status ' + r.status;
+      if (r.stdout !== 'hello from diluvium\n') return 'stdout was ' + JSON.stringify(r.stdout);
+      return null;
+    },
+  },
+  {
+    id: 'pcall-catch',
+    decisive: true,
+    title: 'pcall catches an explicit error — the Stage 0 question',
+    note: 'error() longjmps out of a protected call. If WASM exception ' +
+          'handling is not lowering correctly this traps, or returns true, ' +
+          'or takes the whole instance down.',
+    code: 'print(pcall(function() error("caught") end))',
+    expected: 'status 0, control returns to Lua, stdout begins "false" and carries the message',
+    check: function (r) {
+      if (r.thrown) return 'the WASM call threw: ' + r.thrown.message;
+      if (r.status !== 0) return 'status ' + r.status + ' — pcall did not contain the error';
+      if (r.stdout.indexOf('false') !== 0) return 'stdout did not begin "false": ' + JSON.stringify(r.stdout);
+      if (r.stdout.indexOf('caught') === -1) return 'the error message did not survive: ' + JSON.stringify(r.stdout);
+      return null;
+    },
+  },
+  {
+    id: 'pcall-runtime',
+    decisive: true,
+    title: 'pcall catches a runtime fault raised inside the VM',
+    note: 'A different longjmp origin: raised by the interpreter, not by ' +
+          'a Lua-level error() call.',
+    code: 'local ok, err = pcall(function() return nil + 1 end)\nprint(ok, err)',
+    expected: 'status 0, stdout begins "false", message mentions the nil arithmetic',
+    check: function (r) {
+      if (r.thrown) return 'the WASM call threw: ' + r.thrown.message;
+      if (r.status !== 0) return 'status ' + r.status;
+      if (r.stdout.indexOf('false') !== 0) return 'stdout did not begin "false": ' + JSON.stringify(r.stdout);
+      if (r.stdout.indexOf('nil value') === -1) return 'unexpected message: ' + JSON.stringify(r.stdout);
+      return null;
+    },
+  },
+  {
+    id: 'error-uncaught',
+    title: 'An uncaught error unwinds to the host without killing the kernel',
+    note: 'run_lua reports failure as a non-zero status. Note it prints ' +
+          'the message to stdout, not stderr.',
+    code: 'error("boom")',
+    expected: 'status 1, stdout begins "Error:", nothing thrown into JS',
+    check: function (r) {
+      if (r.thrown) return 'the WASM call threw: ' + r.thrown.message;
+      if (r.status === 0) return 'status 0 — the failure was not reported';
+      if (r.stdout.indexOf('Error:') !== 0) return 'stdout did not begin "Error:": ' + JSON.stringify(r.stdout);
+      if (r.stdout.indexOf('boom') === -1) return 'the message did not survive';
+      return null;
+    },
+  },
+  {
+    id: 'unwind-1000',
+    decisive: true,
+    title: 'A thousand caught errors in a row',
+    note: 'One catch could be luck. A thousand round trips through the ' +
+          'unwinder is the test that would surface a leak or a corrupted ' +
+          'stack, and it must stay fast.',
+    code: 'local caught = 0\n' +
+          'for i = 1, 1000 do\n' +
+          '  local ok = pcall(function() error("e" .. i) end)\n' +
+          '  if not ok then caught = caught + 1 end\n' +
+          'end\n' +
+          'print("caught", caught)',
+    expected: 'status 0, stdout is "caught\\t1000\\n"',
+    check: function (r) {
+      if (r.thrown) return 'the WASM call threw: ' + r.thrown.message;
+      if (r.status !== 0) return 'status ' + r.status;
+      if (r.stdout !== 'caught\t1000\n') return 'stdout was ' + JSON.stringify(r.stdout);
+      return null;
+    },
+  },
+  {
+    id: 'alive',
+    title: 'The kernel is still healthy afterwards',
+    note: 'Run last. Everything above threw at least one error through the ' +
+          'unwinder; state must be intact and the counter must have survived ' +
+          'across separate run_lua calls.',
+    code: 'runs = (runs or 0) + 1\nprint("alive", _VERSION, runs)',
+    expected: 'status 0, stdout begins "alive" and reports the Diluvium version',
+    check: function (r) {
+      if (r.status !== 0) return 'status ' + r.status;
+      if (r.stdout.indexOf('alive') !== 0) return 'stdout was ' + JSON.stringify(r.stdout);
+      if (r.stdout.indexOf('diluvium') === -1) return '_VERSION did not mention diluvium: ' + JSON.stringify(r.stdout);
+      return null;
+    },
+  },
+];
+
+// ------------------------------------------------------------ rendering
+
+function el(tag, attrs, kids) {
+  var node = document.createElement(tag);
+  if (attrs) Object.keys(attrs).forEach(function (k) { node.setAttribute(k, attrs[k]); });
+  (kids || []).forEach(function (k) {
+    node.appendChild(typeof k === 'string' ? document.createTextNode(k) : k);
+  });
+  return node;
+}
+
+function setVerdict(state, label, why) {
+  var v = document.getElementById('verdict');
+  v.setAttribute('data-state', state);
+  v.innerHTML = '';
+  v.appendChild(el('span', { class: 'label' }, [label]));
+  v.appendChild(el('span', { class: 'why' }, [why]));
+}
+
+function renderEnv(rows) {
+  var dl = document.getElementById('env');
+  dl.innerHTML = '';
+  rows.forEach(function (row) {
+    dl.appendChild(el('dt', null, [row[0]]));
+    dl.appendChild(el('dd', { class: 'mono', 'data-env': row[2] || row[0] }, [row[1]]));
+  });
+}
+
+function renderProbe(probe, result, status, reason) {
+  var node = el('div', { class: 'probe', 'data-probe': probe.id, 'data-status': status });
+  if (probe.decisive) node.setAttribute('data-decisive', 'true');
+
+  node.appendChild(el('header', null, [
+    el('span', { class: 'tag' }, [status.toUpperCase()]),
+    el('span', { class: 'title' }, [probe.title]),
+  ]));
+  node.appendChild(el('div', { class: 'expected' }, [probe.note]));
+  node.appendChild(el('pre', { class: 'src' }, [probe.code]));
+
+  if (result) {
+    var out = el('pre', { 'data-output': probe.id });
+    if (result.stdout) out.appendChild(el('span', null, [result.stdout]));
+    if (result.stderr) {
+      out.appendChild(el('span', { class: 'fd' }, ['stderr ']));
+      out.appendChild(el('span', { 'data-stderr': probe.id }, [result.stderr]));
+    }
+    if (!result.stdout && !result.stderr) out.appendChild(el('span', null, ['(no output)']));
+    node.appendChild(out);
+    node.appendChild(el('div', { class: 'expected', 'data-meta': probe.id }, [
+      'status ' + result.status + ' · ' + result.ms.toFixed(1) + ' ms' +
+      (result.thrown ? ' · threw into JS: ' + result.thrown.message : ''),
+    ]));
+  }
+  if (reason) node.appendChild(el('div', { class: 'expected', 'data-reason': probe.id }, ['failed: ' + reason]));
+
+  document.getElementById('probes').appendChild(node);
+  return node;
+}
+
+// ------------------------------------------------------------------ run
+
+// Does this browser accept the *final* exception-handling opcodes? The
+// Diluvium WASM builds lower setjmp/longjmp onto them (try_table/throw, not
+// the legacy try/catch), so a browser without them cannot load the kernel
+// at all. Checking separately turns "CompileError" into a sentence.
+function supportsFinalEH() {
+  try {
+    return WebAssembly.validate(Uint8Array.from([
+      0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00,
+      0x01, 0x04, 0x01, 0x60, 0x00, 0x00,        // type: () -> ()
+      0x03, 0x02, 0x01, 0x00,                    // func 0 of type 0
+      0x0d, 0x03, 0x01, 0x00, 0x00,              // tag 0 of type 0
+      0x0a, 0x0f, 0x01, 0x0d, 0x00,              // code
+      0x02, 0x40,                                //   block
+      0x1f, 0x40, 0x01, 0x02, 0x00,              //     try_table (catch_all -> 0)
+      0x08, 0x00,                                //       throw 0
+      0x0b, 0x0b, 0x0b,                          //     end, end, end
+    ]));
+  } catch (err) {
+    return false;
+  }
+}
+
+function fail(why, detail) {
+  setVerdict('no-go', 'NO-GO', why);
+  if (detail) document.getElementById('probes').appendChild(el('pre', { 'data-fatal': 'true' }, [detail]));
+  document.body.setAttribute('data-done', 'true');
+}
+
+(function main() {
+  var envRows = [
+    ['Exception handling (final opcodes)', supportsFinalEH() ? 'supported' : 'NOT SUPPORTED', 'eh'],
+    ['Kernel artifact', WASM_URL, 'artifact'],
+  ];
+  renderEnv(envRows);
+
+  if (!supportsFinalEH()) {
+    fail('this browser does not accept the WASM exception-handling opcodes the kernel is built with');
+    return;
+  }
+
+  fetch(WASM_URL)
+    .then(function (res) {
+      if (!res.ok) throw new Error(res.status + ' ' + res.statusText + ' fetching ' + WASM_URL);
+      return res.arrayBuffer();
+    })
+    .then(function (buf) {
+      var kernel = bootKernel(new Uint8Array(buf));
+      var modules = {};
+      kernel.imports.forEach(function (i) { modules[i.module] = (modules[i.module] || 0) + 1; });
+
+      renderEnv(envRows.concat([
+        ['Module size', buf.byteLength.toLocaleString() + ' bytes', 'size'],
+        ['Imports (read off the binary)', Object.keys(modules).map(function (m) {
+          return modules[m] + ' × ' + m;
+        }).join(', '), 'imports'],
+        ['Boot sequence', '__wasm_call_ctors() → init_lua()', 'boot'],
+      ]));
+
+      var failures = [];
+      PROBES.forEach(function (probe) {
+        var result, reason;
+        try {
+          result = kernel.run(probe.code);
+          reason = probe.check(result);
+        } catch (err) {
+          reason = 'the harness itself threw: ' + err.message;
+        }
+        renderProbe(probe, result, reason ? 'fail' : 'pass', reason);
+        if (reason) failures.push({ probe: probe, reason: reason });
+      });
+
+      var decisive = failures.filter(function (f) { return f.probe.decisive; });
+      if (!failures.length) {
+        setVerdict('go', 'GO', 'setjmp/longjmp lowers correctly: pcall catches, and the kernel survives it');
+      } else if (decisive.length) {
+        setVerdict('no-go', 'NO-GO', 'error handling is broken in this browser — ' + decisive[0].reason);
+      } else {
+        setVerdict('no-go', 'NO-GO', failures.length + ' probe(s) failed');
+      }
+
+      document.body.setAttribute('data-done', 'true');
+    })
+    .catch(function (err) {
+      fail('the kernel did not load', String(err && err.stack || err));
+      document.body.setAttribute('data-done', 'true');
+    });
+})();
+</script>
+
+</body>
+</html>
