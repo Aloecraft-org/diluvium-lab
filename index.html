@@ -12,6 +12,10 @@
     --quiet: color-mix(in srgb, currentColor 60%, transparent);
     --ok: #1a7f37;
     --bad: #b91c1c;
+    /* The page's real text colour, named so it can be used where
+       `currentColor` has been deliberately set to transparent. */
+    --ink: CanvasText;
+    --accent: Highlight;
     --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   }
   * { box-sizing: border-box; }
@@ -92,16 +96,28 @@
     background: var(--sunk); color: inherit;
   }
 
-  /* --- highlighted editor --- */
+  /* --- highlighted editor ---
+     The textarea sits on top with transparent glyphs; the coloured copy is
+     the <pre> behind it. Two things must therefore be spelled out in a
+     real colour rather than `currentColor`: inside the textarea
+     `currentColor` *is* transparent, which is the whole point, so a caret
+     or a selection defined that way is defined as invisible. --ink is the
+     page's actual text colour, which is what CanvasText means. */
   .editor-wrap { position: relative; }
   .editor-wrap > textarea[data-editor], .editor-wrap > [data-console-input] {
     position: relative; z-index: 1;
     background: transparent;
-    /* the glyphs come from the <pre> underneath; the caret is still ours */
-    color: transparent; caret-color: currentColor;
+    color: transparent;
+    caret-color: var(--ink);
   }
-  /* Opaque selection would hide the coloured text behind it. */
-  .editor-wrap textarea::selection { background: color-mix(in srgb, currentColor 25%, transparent); }
+  /* The selection rectangle is painted by the textarea, above the <pre>, so
+     it has to be translucent or it hides the very text it is selecting.
+     The foreground is pinned transparent too: without it the UA supplies
+     its own selected-text colour and the glyphs double up. */
+  .editor-wrap > textarea::selection {
+    background: color-mix(in srgb, var(--accent) 32%, transparent);
+    color: transparent;
+  }
   .editor-highlight {
     position: absolute; inset: 0; z-index: 0;
     overflow: hidden; pointer-events: none;

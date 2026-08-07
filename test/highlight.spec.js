@@ -221,6 +221,156 @@ test.describe('the overlay lines up with the textarea', () => {
 });
 
 // ---------------------------------------------------------------------
+// The overlay makes the textarea's own text transparent, which means the
+// caret and the selection have to be given real colours explicitly. Both
+// were briefly defined as `currentColor` -- which, inside that textarea, is
+// transparent. The editor looked perfect and could not be typed in.
+//
+// Computed styles catch the definition; pixels catch the result. Both are
+// here because either alone would have missed something.
+// ---------------------------------------------------------------------
+
+/**
+ * Alpha of a computed colour, resolved by the browser rather than parsed.
+ *
+ * getComputedStyle returns `rgb()`, `rgba()` or `color(srgb ... / a)`
+ * depending on the value and the property, and a regex over all three is
+ * how you end up reading the blue channel of `rgb(0, 0, 0)` as the alpha
+ * and calling a perfectly visible caret invisible.
+ */
+const alphaOf = (page, css) => page.evaluate((value) => {
+  const canvas = document.createElement('canvas');
+  canvas.width = canvas.height = 1;
+  const ctx = canvas.getContext('2d');
+  ctx.clearRect(0, 0, 1, 1);
+  ctx.fillStyle = value;
+  ctx.fillRect(0, 0, 1, 1);
+  return ctx.getImageData(0, 0, 1, 1).data[3] / 255;
+}, css);
+
+test.describe('the caret and the selection survive the transparent text', () => {
+  for (const [what, selector] of [
+    ['a code cell', '.cell[data-cell-type="code"] [data-editor]'],
+    ['the console input', '[data-console-input]'],
+  ]) {
+    test(`${what} has a visible caret`, async ({ page }) => {
+      await openLab(page);
+      const styles = await page.locator(selector).first().evaluate((n) => {
+        const cs = getComputedStyle(n);
+        return { color: cs.color, caretColor: cs.caretColor };
+      });
+      // The text is transparent on purpose ...
+      expect(await alphaOf(page, styles.color)).toBe(0);
+      // ... which is exactly why the caret may not inherit from it.
+      expect(await alphaOf(page, styles.caretColor)).toBeGreaterThan(0);
+    });
+
+    test(`${what} has a visible, translucent selection`, async ({ page }) => {
+      await openLab(page);
+      const sel = await page.locator(selector).first().evaluate((n) => {
+        const s = getComputedStyle(n, '::selection');
+        return { background: s.backgroundColor, color: s.color };
+      });
+      const alpha = await alphaOf(page, sel.background);
+      expect(alpha).toBeGreaterThan(0);
+      // Opaque would hide the very text being selected, since the
+      // rectangle is painted above the highlighted <pre>.
+      expect(alpha).toBeLessThan(1);
+      // And the selected glyphs stay transparent, or they double up with
+      // the ones showing through from behind.
+      expect(await alphaOf(page, sel.color)).toBe(0);
+    });
+  }
+
+  test('selecting text visibly tints the region it selects', async ({ page }) => {
+    await openLab(page);
+    const cell = codeCell(page);
+    const editor = cell.locator('[data-editor]');
+    await editor.fill('local greeting = "select me"\nprint(greeting, 42)');
+
+    const box = await cell.boundingBox();
+    const clip = { x: box.x, y: box.y, width: box.width, height: Math.min(box.height, 120) };
+
+    await editor.click();
+    const unselected = await page.screenshot({ clip });
+    await editor.press('Control+a');
+    const selected = await page.screenshot({ clip });
+
+    // "the images differ" is not enough: a transparent selection still
+    // moves some pixels, and that version of this test passed on the
+    // broken build. Counting them separates the two cleanly -- measured
+    // at 10.5% of the clip with the selection working and 2.8% with it
+    // transparent, so the threshold below sits between the two.
+    const diff = await page.evaluate(async ([a, b]) => {
+      const load = (base64) => new Promise((resolve) => {
+        const img = new Image();
+        img.onload = () => resolve(img);
+        img.src = `data:image/png;base64,${base64}`;
+      });
+      const [imageA, imageB] = await Promise.all([load(a), load(b)]);
+      const canvas = document.createElement('canvas');
+      canvas.width = imageA.width;
+      canvas.height = imageA.height;
+      const ctx = canvas.getContext('2d', { willReadFrequently: true });
+      ctx.drawImage(imageA, 0, 0);
+      const pixelsA = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      ctx.drawImage(imageB, 0, 0);
+      const pixelsB = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
+
+      let changed = 0;
+      for (let i = 0; i < pixelsA.length; i += 4) {
+        const delta = Math.abs(pixelsA[i] - pixelsB[i])
+          + Math.abs(pixelsA[i + 1] - pixelsB[i + 1])
+          + Math.abs(pixelsA[i + 2] - pixelsB[i + 2]);
+        if (delta > 12) changed++;
+      }
+      return { changed, total: pixelsA.length / 4 };
+    }, [unselected.toString('base64'), selected.toString('base64')]);
+
+    expect(diff.changed / diff.total).toBeGreaterThan(0.06);
+  });
+
+  test('the caret is actually painted', async ({ page }) => {
+    await openLab(page);
+    const cell = codeCell(page);
+    const editor = cell.locator('[data-editor]');
+    await editor.fill('local x = 1');
+    await editor.click();
+    await editor.press('End');
+
+    const box = await cell.boundingBox();
+    const clip = { x: box.x, y: box.y, width: box.width, height: Math.min(box.height, 100) };
+
+    // caret: 'initial' matters -- Playwright hides the caret by default for
+    // stable screenshots, which would make this pass on a broken editor.
+    const frames = [];
+    for (let i = 0; i < 16; i++) {
+      frames.push((await page.screenshot({ clip, caret: 'initial' })).toString('base64'));
+      await page.waitForTimeout(90);
+    }
+    // A blinking caret means the frames cannot all be identical.
+    expect(new Set(frames).size).toBeGreaterThan(1);
+  });
+
+  test('the caret follows the theme rather than being pinned to black', async ({ page }) => {
+    await openLab(page);
+    const read = () => codeCell(page).locator('[data-editor]')
+      .evaluate((n) => getComputedStyle(n).caretColor);
+
+    await page.emulateMedia({ colorScheme: 'light' });
+    const light = await read();
+    await page.emulateMedia({ colorScheme: 'dark' });
+    const dark = await read();
+
+    expect(await alphaOf(page, light)).toBeGreaterThan(0);
+    expect(await alphaOf(page, dark)).toBeGreaterThan(0);
+    // A hardcoded colour would be invisible in one theme or the other.
+    expect(dark).not.toBe(light);
+  });
+});
+
+// ---------------------------------------------------------------------
 
 test.describe('the keyword set comes from the kernel', () => {
   test('the running build reports its own reserved words', async ({ page }) => {
