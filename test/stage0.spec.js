@@ -15,7 +15,7 @@ async function openSpike(page) {
     if (msg.type() === 'error') problems.push(`console.error: ${msg.text()}`);
   });
 
-  await page.goto('/');
+  await page.goto('/spike.html');
   await page.waitForSelector('body[data-done="true"]', { timeout: 30_000 });
   return problems;
 }

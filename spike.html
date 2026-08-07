@@ -73,9 +73,15 @@
 
 <script>
 'use strict';
-// One file, no modules, no imports, no build step. Stage 0 is a spike:
-// everything it needs is here, and the shim below is thrown away the
-// moment Stage 1 gives the kernel a real home.
+// One file, no modules, no imports. Everything it needs is here.
+//
+// The duplication with src/kernel/ is deliberate and worth keeping. This
+// page tests the *raw* contract the kernel is built on -- run_lua's status
+// codes, its "Error:" line on stdout, longjmp unwinding -- which the real
+// kernel deliberately hides behind a Lua harness. Run this first when a new
+// runtime is pinned: if the artifact stopped honouring that contract, this
+// page says so in one screen and src/kernel/ does not have to be debugged
+// to find it out.
 
 // ---------------------------------------------------------------- WASI
 

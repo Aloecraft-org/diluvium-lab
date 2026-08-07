@@ -23,7 +23,10 @@ export default defineConfig({
   ],
   webServer: {
     command: 'node scripts/serve.mjs',
-    url: 'http://localhost:8080',
+    // A liveness probe, deliberately not the app's entry point: if
+    // index.html breaks, that should surface as failing tests with a stack
+    // trace, not as "webServer timed out" sixty seconds later.
+    url: 'http://localhost:8080/spike.html',
     reuseExistingServer: !process.env.CI,
     stdout: 'ignore',
   },
