@@ -114,11 +114,10 @@ that was written on an assumption.
 - **`return `-prefixing does not produce an echo by itself.** It compiles
   (`return 1+1` gives status 0), but `run_lua` discards the chunk's
   results, so nothing is printed. The prefix only classifies a chunk as an
-  expression. Getting `1+1` → `2` needs the value *printed* inside Lua —
-  `table.pack` the expression, `tostring` each result, `print` them
-  tab-joined — which was verified to echo `1+1` → `2`, `1,2,3` →
-  `1\t2\t3`, and `nil` → `nil` without disturbing statements. Cheap, but
-  it is a transform, not a prefix.
+  expression. Getting `1+1` → `2` needs the value *printed* inside Lua.
+  Stage 1 does that in `src/kernel/lua-harness.js`; see the note there on
+  the trailing-expression case, which is where the difficulty actually
+  is.
 - **`print` emits one `fd_write` per argument and separator.** Output
   arrives in many small writes, so a `TextDecoder` with `{stream: true}`
   is required or a multi-byte character split across two writes decodes to
@@ -256,7 +255,7 @@ One repo mechanic learned here: `@playwright/test` is **pinned** to
 revision, and 1.56 is the one that asks for the preinstalled 1194. A wider
 range resolves to something newer and then refuses to launch.
 
-### Stage 1 — The usable notebook
+### Stage 1 — The usable notebook ✅ done
 
 **The target to reach and then live with for a while.** Everything here
 works against today's releases.
@@ -270,6 +269,51 @@ works against today's releases.
 
 This is genuinely pleasant for prototyping Diluvium and asks nothing of
 the runtime.
+
+**What shipped, and the parts that were not obvious.**
+
+`src/kernel/` is the interface and the one implementation behind it —
+`protocol.js` (Jupyter-shaped messages), `kernel.js` (the interface and its
+`capabilities`), `wasi.js`, `lua-harness.js`, `wasm-kernel.js`.
+`src/notebook/` is the document, and neither half knows about the other.
+
+- **Everything the kernel does happens inside a Lua harness chunk**, not by
+  handing user code to `run_lua` directly. Stage 0 forced this: echo has to
+  print from inside Lua. Having paid for the wrapper, the error path came
+  free *and* came structured — an `xpcall` handler yields message and
+  traceback as data, which is strictly better than scraping the `Error:`
+  line back out of stdout and breaking the first time the runtime rewords
+  itself. Results return through a length-prefixed record tagged with a
+  per-request nonce, so a payload can contain newlines, tabs, or the
+  separator itself.
+- **The trailing-expression case is the whole difficulty of echo.** A cell
+  of statements ending in a bare `counter` is the ordinary notebook idiom
+  and plain Lua rejects it, since an expression is not a statement. The fix
+  is to compile the *whole* cell with `return ` spliced in before the last
+  expression — never to run the two halves separately, or a `local`
+  declared earlier goes out of scope. The guard is that the prefix must
+  itself be a complete chunk: without it, `for i = 1, 3 do / print(i) /
+  end` splits inside the loop body and turns the first iteration into an
+  early return, printing `1` instead of `1, 2, 3`. That bug reached a
+  screenshot before it reached a test, which is the argument for looking at
+  the thing you built.
+- **Two output ceilings, not one.** The shim caps at 4 MB / 100k lines to
+  protect the tab; the UI shows 200 lines behind a "show all". A single cap
+  cannot do both jobs — truncating in the shim would leave "show all"
+  nothing to show.
+- **Restart keeps the compiled `WebAssembly.Module` and drops the
+  instance.** A Module is code and owns no memory; an Instance owns a
+  linear memory, and holding one is exactly how restarts leak. A test runs
+  20 restarts and asserts each instance starts from a fresh memory. This
+  refines the §6 gotcha, which said to drop both.
+- **Markdown is rendered by ~100 lines in `markdown.js`, escaping first.**
+  A notebook is untrusted input — it arrives from files and other people's
+  repositories — so HTML is escaped before anything else happens and only
+  `http(s)`/relative links survive. A real markdown library would be the
+  project's first vendored dependency; that trade can be made when someone
+  wants tables.
+
+95 tests, all driving the real page and the real kernel.
 
 ### Stage 2 — Version switching
 
@@ -323,6 +367,24 @@ way, and the choice can be made on evidence instead of prediction.
   single highest-leverage structural choice in the project
 - On-page WASM is the default backend
 - `libdiluvium_wasi.wasm` is the kernel artifact
+- **The served page is the source of truth; the single file is a build
+  output.** Decided at Stage 1, once Stage 0 had priced it. The page uses
+  ES modules and fetches the kernel, so it needs a static server — any
+  static server, including `npm start`. `npm run bake` emits
+  `dist/diluvium-lab.html` with every module flattened and the kernel
+  inlined as base64, for the double-click case.
+
+  This amends the "openable directly" constraint rather than ignoring it,
+  and the constraint's own escape clause is the reason it survives: the
+  un-bundled page keeps working, and it is the thing being developed. The
+  alternative — inlining from the start — would put 1.2 MB of base64 in
+  git, add a re-vendoring step to every version bump, and collide head-on
+  with Stage 2, since a dropdown that downloads releases cannot work from
+  `file://` at all. `bake.mjs` is deliberately not a bundler: it resolves
+  the module graph, concatenates it, strips the import/export syntax, and
+  **stops** rather than guessing at anything it does not understand.
+  `test/bake.spec.js` opens the output over `file://` and runs a cell,
+  which is the only proof that counts
 
 ## 6. Risks and gotchas
 
@@ -380,8 +442,11 @@ ruins a demo.
 **IndexedDB, not localStorage.** 5 MB dies quickly once notebooks carry
 saved output.
 
-**Kernel restart leaks** unless module and instance references are
-dropped. Each restart allocates a fresh linear memory.
+**Kernel restart leaks** unless instance references are dropped. Each
+instance allocates its own linear memory, so one held reference is one
+leaked memory. *Refined at Stage 1:* the compiled `WebAssembly.Module` is
+the exception and is deliberately cached — it is code, owns no memory, and
+recompiling ~900 KB per restart is latency for nothing.
 
 ## 7. Non-goals
 
@@ -394,15 +459,9 @@ dropped. Each restart allocates a fresh linear memory.
 ## 8. Open
 
 - Repository name, and where it is hosted
-- Whether the standalone single-file page is a hard requirement or a
-  nice-to-have — it is the single biggest constraint, since it rules out
-  SAB-based interrupt and points at the fuel-stepped path. **Stage 0 put a
-  price on it:** the page opens fine from `file://`, but Chromium refuses
-  `fetch` on the `file:` scheme, so the kernel never loads. A page that
-  really works from a double-click has to carry the 896 KB module inline
-  as base64 (≈1.2 MB of HTML, and a re-vendoring step on every version
-  bump) — which also collides head-on with Stage 2's version dropdown.
-  Worth deciding before Stage 1 hardens around either answer
+- ~~Whether the standalone single-file page is a hard requirement~~
+  **Decided at Stage 1 — see §5.** The served page is the source of truth;
+  `npm run bake` emits a single double-click-able file alongside it
 - Editor: a plain `<textarea>` is enough for Stage 1; CodeMirror is the
   obvious upgrade but is the first real dependency. Diluvium syntax
   highlighting exists in the browser REPL's PrismJS setup and could be

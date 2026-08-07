@@ -12,8 +12,17 @@ describes.
 These are decisions, not preferences. Changing one is a conversation, not
 a commit.
 
-- **No build step.** The page must be openable directly. If a bundler
-  ever becomes unavoidable, the un-bundled page keeps working.
+- **No build step for the page you develop.** `index.html` plus `src/` runs
+  as-is from any static server; there is nothing to compile, and the
+  un-bundled page is always the source of truth.
+
+  *Amended at Stage 1, deliberately.* The original wording said "openable
+  directly", which turned out not to be satisfiable: browsers refuse
+  `fetch` over `file://`, so a page opened by double-click renders but
+  never loads its kernel. `npm run bake` emits a single self-contained
+  `dist/diluvium-lab.html` for that case. The intent behind the constraint
+  — modularity, no toolchain between you and the running page — is what is
+  being kept. See ROADMAP §5.
 - **No framework.** No React, Vue, Svelte. Plain modules and the DOM.
 - **No CDN, no external requests at load.** Everything vendored. The only
   network calls are the ones that fetch Diluvium releases, and those are

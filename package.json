@@ -5,7 +5,8 @@
   "type": "module",
   "scripts": {
     "start": "node scripts/serve.mjs",
-    "test": "playwright test"
+    "test": "playwright test",
+    "bake": "node scripts/bake.mjs"
   },
   "devDependencies": {
     "@playwright/test": "~1.56.0"

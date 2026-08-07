@@ -86,6 +86,43 @@ test.describe('expression echo', () => {
     expect(r.stdout).toBe('just output\n');
   });
 
+  test('a cell of statements ending in an expression echoes the last one', async ({ page }) => {
+    await openKernel(page);
+    const r = await run(page, 'tally = (tally or 0) + 1\ntally');
+    expect(r.result).toBe('1');
+    expect(r.status).toBe('ok');
+  });
+
+  test('the trailing expression still sees locals declared above it', async ({ page }) => {
+    await openKernel(page);
+    // Only true if the whole cell compiles as one chunk. Running the halves
+    // separately would put `t` out of scope and blow up.
+    const r = await run(page, 'local t = { 10, 20, 30 }\nlocal n = #t\nt[n]');
+    expect(r.result).toBe('30');
+  });
+
+  test('splitting never breaks out of a loop early', async ({ page }) => {
+    await openKernel(page);
+    // The dangerous case: a naive split puts `return` inside the loop body
+    // and the cell prints 1 instead of 1, 2, 3.
+    const r = await run(page, 'for i = 1, 3 do\n  print(i)\nend');
+    expect(r.stdout).toBe('1\n2\n3\n');
+    expect(r.result).toBeNull();
+  });
+
+  test('nor out of an if block', async ({ page }) => {
+    await openKernel(page);
+    const r = await run(page, 'if true then\n  print("inside")\nend\nprint("after")');
+    expect(r.stdout).toBe('inside\nafter\n');
+  });
+
+  test('a trailing call with no return value echoes nothing', async ({ page }) => {
+    await openKernel(page);
+    const r = await run(page, 'local x = 1\nprint("done")');
+    expect(r.stdout).toBe('done\n');
+    expect(r.result).toBeNull();
+  });
+
   test('output and value both survive, in that order', async ({ page }) => {
     await openKernel(page);
     const r = await run(page, '(function() print("first") return "second" end)()');

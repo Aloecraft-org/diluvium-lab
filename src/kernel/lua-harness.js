@@ -72,7 +72,41 @@ function emit(kind, payloadExpr) {
 export function executeChunk(code, nonce) {
   return `local __N = "${nonce}"
 local __src = ${luaLongString(code)}
+
+-- Finding the value to echo, in three attempts.
+--
+-- 1. The whole cell is one expression -- "1 + 1".
+-- 2. The cell ends in one -- statements, then a bare "counter" on the last
+--    line. This is the ordinary notebook idiom and plain Lua rejects it,
+--    since an expression is not a statement.
+-- 3. Neither, so it is just a chunk and there is nothing to echo.
+--
+-- Attempt 2 is done by compiling the *whole* source with "return " spliced
+-- in before the trailing expression, never by running the two halves
+-- separately: a local declared earlier in the cell has to still be in scope.
+-- The guard is that the prefix must itself be a complete chunk. Without it,
+-- "for i = 1, 3 do / print(i) / end" would split inside the loop body and
+-- turn the first iteration into an early return -- printing 1 instead of
+-- 1, 2, 3. Requiring a valid prefix rejects every split inside a block.
 local __f, __e = load("return " .. __src, "=cell", "t")
+if not __f then
+  local __nl, __i = {}, 0
+  while true do
+    __i = __src:find("\\n", __i + 1, true)
+    if not __i then break end
+    __nl[#__nl + 1] = __i
+  end
+  for __k = #__nl, 1, -1 do
+    local __prefix = __src:sub(1, __nl[__k])
+    local __suffix = __src:sub(__nl[__k] + 1)
+    if __suffix:match("%S") and load(__prefix, "=cell", "t") then
+      -- "return " goes on the suffix's own line, so line numbers in any
+      -- error still point at the line the user wrote.
+      local __cand = load(__prefix .. "return " .. __suffix, "=cell", "t")
+      if __cand then __f = __cand break end
+    end
+  end
+end
 if not __f then
   local __g, __e2 = load(__src, "=cell", "t")
   if __g then
