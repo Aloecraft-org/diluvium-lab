@@ -14,6 +14,7 @@ import { NotebookView } from './notebook/ui.js';
 import { ConsoleView } from './notebook/console.js';
 import { saveAutosave, loadAutosave, debounceSave } from './notebook/storage.js';
 import { FALLBACK_KEYWORDS, FALLBACK_GLOBALS } from './notebook/highlight.js';
+import { RuntimeRegistry, PINNED } from './kernel/runtimes.js';
 
 /**
  * The notebook a first-time visitor gets. Embedded rather than fetched: the
@@ -59,7 +60,17 @@ export class App {
     this.filename = 'notebook.ipynb';
     this.autosave = debounceSave(saveAutosave, options.autosaveDelayMs ?? 400);
 
+    this.registry = options.registry ?? new RuntimeRegistry({
+      mirrorUrl: options.mirrorUrl,
+      pinnedLabel: options.pinnedLabel ?? '5.4.7',
+      bundledBytes: options.moduleBytes ?? null,
+      wasmUrl: options.wasmUrl ?? DEFAULT_WASM_URL,
+    });
+    this.runtimeId = PINNED;
+
     this.statusNode = document_.querySelector('[data-kernel-status]');
+    this.versionNode = document_.querySelector('[data-version-select]');
+    this.checkNode = document_.querySelector('[data-toolbar="check-versions"]');
     this.backendNode = document_.querySelector('[data-kernel-backend]');
     this.toastNode = document_.querySelector('[data-toast]');
     this.filenameNode = document_.querySelector('[data-filename]');
@@ -83,12 +94,18 @@ export class App {
       },
     });
 
-    this.kernel.onMessage((msg) => {
-      if (msg.msg_type === MSG.STATUS) this._renderStatus(msg.content.execution_state);
-    });
+    this._watchKernel();
 
     this._bindToolbar();
     this._bindModel();
+  }
+
+  /** Status messages come from whichever kernel is current. */
+  _watchKernel() {
+    this._unwatchKernel?.();
+    this._unwatchKernel = this.kernel.onMessage((msg) => {
+      if (msg.msg_type === MSG.STATUS) this._renderStatus(msg.content.execution_state);
+    });
   }
 
   // --- boot ---------------------------------------------------------
@@ -109,7 +126,98 @@ export class App {
       this._toast(err.message, 'error');
       this.console.note(err.message);
     }
+    this._renderVersions();
     this.document.body.dataset.ready = 'true';
+  }
+
+  // --- runtimes -----------------------------------------------------
+
+  _renderVersions() {
+    if (!this.versionNode) return;
+    const entries = this.registry.entries();
+    this.versionNode.replaceChildren(...entries.map((entry) => {
+      const option = this.document.createElement('option');
+      option.value = entry.id;
+      option.textContent = entry.label;
+      option.selected = entry.id === this.runtimeId;
+      return option;
+    }));
+
+    const reason = this.registry.unavailableReason;
+    this.versionNode.disabled = entries.length < 2 && !!reason;
+    if (this.checkNode) {
+      this.checkNode.disabled = !this.registry.canSwitch;
+      this.checkNode.title = reason ?? 'Look for other Diluvium builds on the mirror';
+    }
+    this.document.body.dataset.runtime = this.runtimeId;
+    this.versionNode.dataset.count = String(entries.length);
+  }
+
+  /**
+   * Explicitly user-initiated, and the only outbound request the Lab makes
+   * that is not the kernel itself. "No external requests at load" is a hard
+   * constraint; this is a button.
+   */
+  async checkVersions() {
+    if (!this.registry.canSwitch) {
+      this._toast(this.registry.unavailableReason, 'error');
+      return;
+    }
+    this.document.body.dataset.checking = 'true';
+    try {
+      const entries = await this.registry.check();
+      this._renderVersions();
+      const remote = entries.filter((e) => e.remote).length;
+      this._toast(remote
+        ? `Found ${remote} other build${remote === 1 ? '' : 's'} on the mirror.`
+        : 'The mirror lists no other builds yet.');
+    } catch (err) {
+      this._toast(err.message, 'error');
+    } finally {
+      this.document.body.dataset.checking = 'false';
+    }
+  }
+
+  /**
+   * Swap the runtime. Fetch, verify, probe, and only then swap: a build
+   * that fails any step leaves the running kernel exactly as it was, so
+   * trying a version can never be how a session is lost.
+   */
+  async selectRuntime(id) {
+    if (id === this.runtimeId) return;
+    const previous = this.runtimeId;
+    this.document.body.dataset.switching = 'true';
+    this._renderStatus(STATUS.STARTING);
+
+    let loaded;
+    try {
+      loaded = await this.registry.load(id);
+    } catch (err) {
+      this._toast(err.message, 'error');
+      this.console.note(`Could not load ${id}: ${err.message}`);
+      this.runtimeId = previous;
+      this._renderVersions();
+      this._renderStatus(this.kernel.status);
+      this.document.body.dataset.switching = 'false';
+      return;
+    }
+
+    const old = this.kernel;
+    this.kernel = loaded.kernel;
+    this.runtimeId = id;
+    this._watchKernel();
+    // Drop the old instance so its linear memory can go.
+    await old.shutdown().catch(() => {});
+
+    await this.refreshLanguage();
+    this.model.resetExecutionCounts();
+    this._renderVersions();
+    this._renderStatus(this.kernel.status);
+    if (this.backendNode) this.backendNode.textContent = this.kernel.label;
+    this.console.note(
+      `Switched to ${this.registry.entries().find((e) => e.id === id)?.label ?? id}` +
+      `${loaded.fromCache ? ' (from cache)' : ''}. Every variable is gone.`);
+    this.document.body.dataset.switching = 'false';
   }
 
   /**
@@ -295,6 +403,9 @@ export class App {
     on('restart', () => this.restartKernel());
     on('clear-outputs', () => this.model.clearAllOutputs());
     on('save', () => this.saveFile());
+
+    on('check-versions', () => this.checkVersions());
+    this.versionNode?.addEventListener('change', () => this.selectRuntime(this.versionNode.value));
 
     const fileInput = this.document.querySelector('[data-file-input]');
     on('open', () => fileInput?.click());

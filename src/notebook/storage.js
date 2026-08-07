@@ -6,8 +6,14 @@
 // telling you anything useful.
 
 const DB_NAME = 'diluvium-lab';
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 const STORE = 'notebooks';
+/**
+ * Downloaded runtimes, so switching versions costs a megabyte once rather
+ * than once per reload. IndexedDB and not the Cache API: the Cache API is
+ * also secure-context-only, and one store is one thing to clear.
+ */
+const RUNTIME_STORE = 'runtimes';
 const AUTOSAVE_KEY = 'autosave';
 
 function open() {
@@ -16,47 +22,58 @@ function open() {
     request.onupgradeneeded = () => {
       const db = request.result;
       if (!db.objectStoreNames.contains(STORE)) db.createObjectStore(STORE);
+      if (!db.objectStoreNames.contains(RUNTIME_STORE)) db.createObjectStore(RUNTIME_STORE);
     };
     request.onsuccess = () => resolve(request.result);
     request.onerror = () => reject(request.error);
   });
 }
 
-function transact(db, mode, fn) {
+function transact(db, storeName, mode, fn) {
   return new Promise((resolve, reject) => {
-    const tx = db.transaction(STORE, mode);
-    const request = fn(tx.objectStore(STORE));
+    const tx = db.transaction(storeName, mode);
+    const request = fn(tx.objectStore(storeName));
     tx.oncomplete = () => resolve(request?.result);
     tx.onerror = () => reject(tx.error);
     tx.onabort = () => reject(tx.error);
   });
 }
 
-export async function saveAutosave(record) {
+async function withDb(fn) {
   const db = await open();
   try {
-    await transact(db, 'readwrite', (store) => store.put(record, AUTOSAVE_KEY));
+    return await fn(db);
   } finally {
     db.close();
   }
+}
+
+export function saveAutosave(record) {
+  return withDb((db) => transact(db, STORE, 'readwrite', (s) => s.put(record, AUTOSAVE_KEY)));
 }
 
 export async function loadAutosave() {
-  const db = await open();
-  try {
-    return (await transact(db, 'readonly', (store) => store.get(AUTOSAVE_KEY))) ?? null;
-  } finally {
-    db.close();
-  }
+  return (await withDb((db) => transact(db, STORE, 'readonly', (s) => s.get(AUTOSAVE_KEY)))) ?? null;
 }
 
-export async function clearAutosave() {
-  const db = await open();
-  try {
-    await transact(db, 'readwrite', (store) => store.delete(AUTOSAVE_KEY));
-  } finally {
-    db.close();
-  }
+export function clearAutosave() {
+  return withDb((db) => transact(db, STORE, 'readwrite', (s) => s.delete(AUTOSAVE_KEY)));
+}
+
+export function putRuntime(key, record) {
+  return withDb((db) => transact(db, RUNTIME_STORE, 'readwrite', (s) => s.put(record, key)));
+}
+
+export async function getRuntime(key) {
+  return (await withDb((db) => transact(db, RUNTIME_STORE, 'readonly', (s) => s.get(key)))) ?? null;
+}
+
+export async function listRuntimeKeys() {
+  return (await withDb((db) => transact(db, RUNTIME_STORE, 'readonly', (s) => s.getAllKeys()))) ?? [];
+}
+
+export function clearRuntimes() {
+  return withDb((db) => transact(db, RUNTIME_STORE, 'readwrite', (s) => s.clear()));
 }
 
 /**

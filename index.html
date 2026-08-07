@@ -42,6 +42,15 @@
   .sep { width: 1px; height: 1.4rem; background: var(--edge); margin: 0 .25rem; }
   [data-filename] { font-family: var(--mono); font-size: .82rem; color: var(--quiet); }
 
+  .version { display: flex; align-items: center; gap: .35rem; font-size: .8rem; }
+  .version-label { color: var(--quiet); }
+  .version select {
+    font: inherit; font-size: .8rem; font-family: var(--mono);
+    padding: .2rem .3rem; border-radius: 6px;
+    border: 1px solid var(--edge); background: transparent; color: inherit;
+  }
+  body[data-switching="true"] .toolbar, body[data-checking="true"] .toolbar { opacity: .6; }
+
   .status {
     font-size: .8rem; font-family: var(--mono);
     padding: .15rem .5rem; border-radius: 999px; border: 1px solid var(--edge);
@@ -184,6 +193,12 @@
   <input type="file" data-file-input accept=".ipynb,application/json" hidden>
   <span data-filename></span>
   <span class="spacer"></span>
+  <label class="version">
+    <span class="version-label">Runtime</span>
+    <select data-version-select aria-label="Diluvium runtime"></select>
+  </label>
+  <button type="button" data-toolbar="check-versions" title="Look for other Diluvium builds on the mirror">⟳</button>
+  <span class="sep"></span>
   <button type="button" data-toolbar="restart" title="Discard every variable and start the kernel again">Restart kernel</button>
   <span class="status" data-kernel-status>starting</span>
 </header>
@@ -214,7 +229,26 @@ import { App } from './src/app.js';
 // global with the kernel inlined, because browsers refuse to fetch over
 // file://. Served normally it is undefined and the kernel is fetched.
 const inlined = window.DILUVIUM_KERNEL_BASE64;
-const app = new App(document, inlined ? { moduleBytes: base64ToBytes(inlined) } : {});
+const app = new App(document, {
+  ...(inlined ? { moduleBytes: base64ToBytes(inlined) } : {}),
+  ...(devMirrorOverride() ?? {}),
+});
+
+/**
+ * `?mirror=<url>` points the runtime dropdown somewhere else, for testing a
+ * mirror before it is deployed.
+ *
+ * Honoured only on localhost, deliberately. The Lab downloads a binary and
+ * executes it; a query parameter that redirects where that binary comes
+ * from would turn any link into "run this wasm", and the checksum check
+ * cannot help, since a hostile mirror serves its own SHA256SUMS.txt.
+ */
+function devMirrorOverride() {
+  const local = ['localhost', '127.0.0.1', '[::1]', ''].includes(location.hostname);
+  if (!local) return null;
+  const mirrorUrl = new URLSearchParams(location.search).get('mirror');
+  return mirrorUrl ? { mirrorUrl } : null;
+}
 
 function base64ToBytes(base64) {
   const binary = atob(base64);

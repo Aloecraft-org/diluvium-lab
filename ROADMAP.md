@@ -315,23 +315,55 @@ the runtime.
 
 95 tests, all driving the real page and the real kernel.
 
-### Stage 2 — Version switching
+### Stage 2 — Version switching ✅ done
 
 The dropdown, and more valuable than it looks: running one notebook
 against two builds is precisely what a language author wants, and no
 general-purpose notebook offers it.
 
-- GitHub Releases API, with the response cached (60 requests/hour
-  unauthenticated is easy to exhaust on reloads)
-- Downloaded modules cached in Cache API or IndexedDB — not a fresh
-  megabyte per reload
+- ~~GitHub Releases API~~ — **not reachable from a browser, see below**
+- Downloaded modules cached in IndexedDB — not a fresh megabyte per reload
 - **Integrity checked against `SHA256SUMS.txt`**, which the Diluvium build
   already produces. The Lab fetches and executes a binary at runtime; this
   costs little and matters for a tool people paste code into
-- A **capability probe**: builds older than whatever protocol we settle on
-  must fail with a clear "this build is too old", never fail strangely
-- Optionally mirror artifacts on aloecraft.org, which sidesteps the API
-  rate limit and gives a stable fallback if GitHub is unreachable
+- A **capability probe**: builds the adapter cannot drive fail with a clear
+  sentence, never strangely
+- ~~Optionally mirror artifacts on aloecraft.org~~ — **required, not
+  optional**
+
+**The finding that reshaped this stage: GitHub release assets carry no
+CORS header.** `release-assets.githubusercontent.com` serves the bytes with
+no `Access-Control-Allow-Origin` at all — checked against the real
+`v5.4.7_release` asset, full header dump, nothing there. A browser
+therefore cannot read a release asset cross-origin however public it is.
+`scripts/fetch-runtime.sh` keeps working because curl has no origin to
+violate. So the mirror is not a rate-limit convenience; it is the only way
+this dropdown can exist.
+
+That turns out to be the better architecture regardless. A mirror sidesteps
+the 60-requests-per-hour limit, survives GitHub being unreachable, and —
+the part that matters most today — can carry builds that never got a GitHub
+release asset. **Only `v5.4.7_release` publishes `libdiluvium_wasi.wasm`.**
+Nineteen tags exist, `v5.5.0` and `v5.5.1_rc1` among them, and none of the
+others has the artifact attached. Until that changes the dropdown honestly
+shows one entry, and the 5.5 demo this stage was meant to enable is waiting
+on Diluvium's release job rather than on the Lab.
+
+`scripts/build-mirror.sh` builds it: downloads, verifies against the
+published checksums, skips tags with no artifact, writes `index.json`. The
+host has to do exactly one thing — `Access-Control-Allow-Origin: *` — and
+nothing else: no API, no redirects, no auth. The contract is in the README.
+
+Order of operations is the part worth getting right: **fetch, verify,
+probe, and only then swap.** A build that fails any of the first three
+leaves the running kernel exactly where it was, so trying a version can
+never be how a session is lost. Tests cover a flipped bit, a missing
+`SHA256SUMS.txt`, a valid module exporting nothing, bytes that are not wasm
+at all, an unreachable mirror and a mirror serving the wrong shape — each
+asserting the old kernel still runs afterwards.
+
+The page still makes **no request at load**: checking for versions is a
+button, which is what that hard constraint requires.
 
 ### Stage 3 — A second kernel backend
 
@@ -462,10 +494,15 @@ recompiling ~900 KB per restart is latency for nothing.
 - ~~Whether the standalone single-file page is a hard requirement~~
   **Decided at Stage 1 — see §5.** The served page is the source of truth;
   `npm run bake` emits a single double-click-able file alongside it
-- Editor: a plain `<textarea>` is enough for Stage 1; CodeMirror is the
-  obvious upgrade but is the first real dependency. Diluvium syntax
-  highlighting exists in the browser REPL's PrismJS setup and could be
-  reused
+- ~~Editor: a plain `<textarea>` is enough for Stage 1~~ **Answered.** It
+  still is a `<textarea>`, with a highlighted `<pre>` underneath it and the
+  text painted transparent. Native editing survives — undo, IME, mobile
+  keyboards, screen readers — which a contenteditable would have cost.
+  CodeMirror remains the obvious upgrade and remains a real dependency
+  needing a real bundler; nothing here forecloses it. The tokenizer takes
+  its keyword set **from the running kernel**, probed by offering a
+  candidate superset and testing each word as an identifier, so a build
+  that adds `switch` colours `switch` with no edit here
 - Whether the analysis report / determinism verdict panel lands at Stage 2
   or Stage 3, and whether it uses `diluvium_compiler_wasi.wasm` as a second
   module or waits for the report to come through the kernel

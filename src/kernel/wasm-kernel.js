@@ -17,6 +17,62 @@ import {
 
 export const DEFAULT_WASM_URL = 'vendor/libdiluvium_wasi.wasm';
 
+/**
+ * What this adapter needs a module to export before it will run it.
+ *
+ * `_start` is deliberately absent: it exists in these builds and must never
+ * be called, since it runs the REPL against a stdin that is not there.
+ */
+const REQUIRED_EXPORTS = [
+  ['memory', 'memory'],
+  ['run_lua', 'function'],
+  ['malloc', 'function'],
+  ['free', 'function'],
+];
+
+/**
+ * The capability probe. A build the Lab cannot drive has to say so plainly
+ * -- "this build is too old" -- rather than failing somewhere strange three
+ * calls later with a message about a null pointer.
+ *
+ * Checked before anything is instantiated or swapped in, so a bad download
+ * leaves the running kernel exactly where it was.
+ *
+ * @returns {string[]} reasons it cannot be used; empty means it can
+ */
+export function incompatibilities(module, wasi) {
+  const problems = [];
+
+  const exports = new Map(WebAssembly.Module.exports(module).map((e) => [e.name, e.kind]));
+  for (const [name, kind] of REQUIRED_EXPORTS) {
+    if (!exports.has(name)) problems.push(`it does not export \`${name}\``);
+    else if (exports.get(name) !== kind) problems.push(`\`${name}\` is a ${exports.get(name)}, not a ${kind}`);
+  }
+
+  // Neither is fatal on its own -- Stage 0 measured that run_lua
+  // initialises what it needs -- but their absence together means this is
+  // not the reactor build, and is worth saying before anything runs.
+  if (!exports.has('init_lua') && !exports.has('__wasm_call_ctors')) {
+    problems.push('it has neither `init_lua` nor `__wasm_call_ctors`, so it is probably not libdiluvium_wasi.wasm');
+  }
+
+  const missing = unshimmedImports(module, wasi);
+  if (missing.length) problems.push(`it imports things this page cannot supply: ${missing.join(', ')}`);
+
+  return problems;
+}
+
+/** Compile and probe without touching any running kernel. */
+export function checkModuleBytes(bytes) {
+  let module;
+  try {
+    module = new WebAssembly.Module(bytes);
+  } catch (cause) {
+    return { module: null, problems: [`the browser refused to compile it: ${cause.message}`] };
+  }
+  return { module, problems: incompatibilities(module, createWasi()) };
+}
+
 export class WasmKernel extends Kernel {
   /**
    * @param {object} options
@@ -91,9 +147,9 @@ export class WasmKernel extends Kernel {
 
   _instantiate() {
     const wasi = createWasi();
-    const missing = unshimmedImports(this._module, wasi);
-    if (missing.length) {
-      throw new Error(`the kernel asks for imports this build does not shim: ${missing.join(', ')}`);
+    const problems = incompatibilities(this._module, wasi);
+    if (problems.length) {
+      throw new Error(`this build cannot be used by the Lab: ${problems.join('; ')}`);
     }
 
     const instance = new WebAssembly.Instance(this._module, { wasi_snapshot_preview1: wasi.exports });
@@ -103,8 +159,10 @@ export class WasmKernel extends Kernel {
     // init_lua, then run_lua. Stage 0 found this build tolerates skipping
     // either of the first two -- run_lua initialises what it needs -- but
     // this is the documented contract and it is idempotent, so keep it.
-    instance.exports.__wasm_call_ctors();
-    instance.exports.init_lua();
+    // Guarded, because the probe accepts a build carrying only one of the
+    // two. Calling both when present is the documented contract.
+    instance.exports.__wasm_call_ctors?.();
+    instance.exports.init_lua?.();
 
     this._instance = instance;
     this._wasi = wasi;
