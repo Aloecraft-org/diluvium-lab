@@ -11,14 +11,18 @@
 // and `test/highlight.spec.js` asserts the two boxes measure the same.
 
 import { highlightToHtml } from './highlight.js';
+import { attachEditing } from './editing.js';
+import { CompletionController } from './completion.js';
 
 export class HighlightedEditor {
   /**
    * @param {HTMLTextAreaElement} textarea already in the document
    * @param {() => object} getOptions supplies { keywords, globals }, read at
    *   paint time so a kernel swap re-colours without rebuilding anything
+   * @param {object} [behaviour] `complete` enables Ctrl+Space completion;
+   *   `handleEnter` is false where Enter already means something (console)
    */
-  constructor(textarea, getOptions = () => ({})) {
+  constructor(textarea, getOptions = () => ({}), behaviour = {}) {
     this.textarea = textarea;
     this.getOptions = getOptions;
 
@@ -40,6 +44,16 @@ export class HighlightedEditor {
     textarea.addEventListener('input', this._onInput);
     textarea.addEventListener('scroll', this._onScroll);
 
+    // Completion first: it listens in capture, so an open popup takes Enter
+    // and Tab before the editing keys or the run shortcut see them.
+    this.completion = behaviour.complete
+      ? new CompletionController(textarea, behaviour.complete)
+      : null;
+    this._detachEditing = attachEditing(textarea, {
+      isBusy: () => this.completion?.isOpen ?? false,
+      handleEnter: behaviour.handleEnter ?? true,
+    });
+
     this.paint();
   }
 
@@ -54,6 +68,8 @@ export class HighlightedEditor {
   }
 
   destroy() {
+    this.completion?.close();
+    this._detachEditing?.();
     this.textarea.removeEventListener('input', this._onInput);
     this.textarea.removeEventListener('scroll', this._onScroll);
     // put the textarea back where it was, so a re-render can re-wrap it

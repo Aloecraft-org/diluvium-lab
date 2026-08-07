@@ -315,6 +315,58 @@ the runtime.
 
 95 tests, all driving the real page and the real kernel.
 
+### Approachability pass ✅ done
+
+Not a numbered stage. Notebooks are the onramp to Diluvium, so a set of
+first-afternoon papercuts got fixed together.
+
+- **Tables show their contents.** `tostring({1,2,3})` is `table: 0x1f2e0`,
+  which is where a language starts to feel hostile. The **echo** renders
+  the value instead — sorted keys, capped depth and width, cycles reported,
+  `__tostring` honoured. `print` is deliberately left alone: a notebook
+  that quietly redefined it would teach something that stops being true in
+  the terminal. Output containing `table: 0x…` gets a one-line nudge
+  pointing at the echo instead.
+- **Errors carry a plain-English hint**, under the runtime's own message
+  and never replacing it. A wrong guess costs one confusing sentence; a
+  rewritten error costs the ability to search for it.
+- **Tab indents**, Shift+Tab dedents, Enter keeps the indentation and adds
+  one inside a block. Edits go through `execCommand('insertText')`, which
+  is deprecated and is still the only way to edit a textarea without wiping
+  its undo stack. Escape then Tab still moves focus, so a keyboard user is
+  never trapped in a cell.
+- **Completion is reachable at last.** The kernel has answered
+  `complete_request` since Stage 1 and nothing asked it. Now Ctrl+Space
+  asks, and so does typing `.` or `:` after a name — the second is the one
+  that teaches, since `string.` shows the library without a reference.
+
+Four bugs worth recording, because three of them were invisible to a test
+that only checked the happy path:
+
+- **The single-line trailing expression.** `local t = {3,1,2}
+  table.sort(t) t` failed with `syntax error near <eof>`. Echo split
+  candidates were newline positions only; they are now every token start,
+  walked from the end. The prefix-must-compile guard still rejects splits
+  inside a block.
+- **The traceback leaked the harness.** Frames below the user's stack
+  showed the generated chunk — `[string "local __N = "DL7dfe…""]:137` —
+  nonce and control characters included. It looked like the reader's
+  mistake. Cut at the `xpcall` frame, which is exactly the boundary
+  between their stack and ours.
+- **Completion raced the typist.** The `.` trigger fires mid-typing and the
+  kernel round trip can land between two keystrokes, so filling in a shared
+  prefix produced `inventory.apap`. Only an explicit Ctrl+Space may change
+  the text now; auto-open only shows.
+- **The popup always rendered empty**, because `_open()` called `close()`
+  and `close()` cleared the match list first.
+
+**`return f()` is a tail call, and an infinite one hangs the tab.** Lua
+reuses the frame, so it never overflows the stack — it loops forever, and
+`run_lua` cannot be interrupted. A test written with `return f()` froze the
+browser outright; `1 + f()` overflows properly and is what the suite uses.
+This is the sharpest argument yet for moving the kernel into a Worker: it
+would not make the loop interruptible, but it would keep the page alive.
+
 ### Stage 2 — Version switching ✅ done
 
 The dropdown, and more valuable than it looks: running one notebook
@@ -470,6 +522,15 @@ served cross-origin-isolated; it is annoying to change later.
 **Output volume.** One cell printing a million lines kills the tab. Cap
 lines and bytes per cell from Stage 1 — cheap, and easy to forget until it
 ruins a demo.
+
+**An infinite tail call hangs the tab, and no cap helps.** `local function
+f() return f() end f()` never overflows: Lua reuses the frame for a tail
+call, so it is an infinite loop, not a runaway stack. It produces no
+output, so the output ceiling never trips, and `run_lua` cannot be
+interrupted — the only way out is closing the tab. Measured, not theorised:
+it froze a test browser. Nothing in the Lab can fix this; a Worker would
+keep the *page* responsive while the kernel span, which is the strongest
+practical reason to move it there.
 
 **IndexedDB, not localStorage.** 5 MB dies quickly once notebooks carry
 saved output.

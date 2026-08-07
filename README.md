@@ -35,6 +35,23 @@ base64 into one ~1.2 MB file that makes no network requests at all.
 `Error:` line on stdout, `longjmp` unwinding — so it is the first thing to
 open when a new runtime is pinned.
 
+## In a cell
+
+| | |
+| :--- | :--- |
+| **Ctrl+Enter** | run the cell |
+| **Shift+Enter** | run it and move on |
+| **Tab** / **Shift+Tab** | indent / dedent (Escape first if you want Tab to move focus) |
+| **Ctrl+Space** | completions; typing `.` after a name opens them too |
+
+A cell ending in an expression shows its value as `Out[n]`, and tables show
+their contents rather than `table: 0x1f2e0`. `print` is left exactly as Lua
+defines it — a notebook that redefined it would be teaching something that
+stops being true in the terminal.
+
+Errors keep the runtime's own message and add a plain-English hint beneath
+it where there is something useful to say.
+
 ## Running against another Diluvium build
 
 The **Runtime** dropdown switches which Diluvium the notebook runs on,

@@ -9,6 +9,7 @@
 import { renderMarkdown } from './markdown.js';
 import { outputText } from './ipynb.js';
 import { HighlightedEditor } from './editor.js';
+import { hintFor, tipForOutput } from './hints.js';
 
 /**
  * Display caps. The kernel's ceiling is far higher (see wasi.js): these
@@ -63,6 +64,18 @@ function countLines(text) {
   return text.endsWith('\n') ? n - 1 : n;
 }
 
+/**
+ * Hint text carries `code spans`. Built as nodes rather than assigned as
+ * HTML: hints are our own strings today, but the rule in this codebase is
+ * that nothing reaches the DOM as markup, so there is no version of this
+ * that can be got wrong later.
+ */
+function withCodeSpans(text) {
+  return String(text).split(/`([^`]+)`/).map((piece, i) => (
+    i % 2 === 1 ? el('code', {}, [piece]) : piece
+  )).filter((piece) => piece !== '');
+}
+
 export function renderOutputs(cell, expandedSet) {
   const wrap = el('div', { class: 'outputs', 'data-outputs': cell.id });
   for (const [i, output] of (cell.outputs ?? []).entries()) {
@@ -81,6 +94,11 @@ export function renderOutputs(cell, expandedSet) {
     if (kind === 'error') {
       node.appendChild(el('div', { class: 'error-name', 'data-error-name': true },
         [`${output.ename}: ${output.evalue}`]));
+      // The runtime's own words first, always. The hint is additive: a
+      // wrong guess costs one confusing sentence, and rewriting the error
+      // would cost the ability to search for it.
+      const hint = hintFor(output.evalue);
+      if (hint) node.appendChild(el('p', { class: 'hint', 'data-hint': true }, withCodeSpans(hint)));
       if ((output.traceback ?? []).length) {
         node.appendChild(el('pre', { class: 'traceback' }, [capped.text]));
       }
@@ -90,6 +108,8 @@ export function renderOutputs(cell, expandedSet) {
       node.appendChild(el('pre', {}, [capped.text]));
     } else {
       node.appendChild(el('pre', {}, [capped.text]));
+      const tip = tipForOutput(text);
+      if (tip) node.appendChild(el('p', { class: 'hint', 'data-tip': true }, withCodeSpans(tip)));
     }
 
     if (capped.hidden > 0) {
@@ -236,7 +256,9 @@ export class NotebookView {
     // Only code cells get highlighted -- running a Lua tokenizer over prose
     // would colour the word "for" in an English sentence.
     if (isCode) {
-      this.editors.set(cell.id, new HighlightedEditor(editor, this.languageInfo));
+      this.editors.set(cell.id, new HighlightedEditor(editor, this.languageInfo, {
+        complete: this.handlers.complete,
+      }));
     }
     return node;
   }

@@ -167,6 +167,35 @@
   .traceback { color: var(--quiet); }
   .show-all { align-self: flex-start; font-size: .78rem; margin-top: .15rem; }
 
+  /* Plain-English help, under the runtime's own message and clearly not
+     part of it. */
+  .hint {
+    margin: .25rem 0 0; padding: .35rem .55rem;
+    font-size: .84rem; line-height: 1.45;
+    border-radius: 6px; background: var(--sunk);
+    color: color-mix(in srgb, currentColor 80%, transparent);
+  }
+  .hint code {
+    font-family: var(--mono); font-size: .92em;
+    background: color-mix(in srgb, currentColor 8%, transparent);
+    padding: .05rem .2rem; border-radius: 3px;
+  }
+  .output-error .hint { border-left: 3px solid color-mix(in srgb, var(--bad) 45%, transparent); }
+
+  /* --- completion --- */
+  .completions {
+    position: absolute; z-index: 5; left: .55rem; top: 100%;
+    margin: .15rem 0 0; padding: .2rem; list-style: none;
+    min-width: 12rem; max-height: 15rem; overflow-y: auto;
+    border: 1px solid var(--edge); border-radius: 8px;
+    background: Canvas; box-shadow: 0 6px 18px color-mix(in srgb, CanvasText 18%, transparent);
+    font-family: var(--mono); font-size: .84rem;
+  }
+  .completions li { padding: .15rem .45rem; border-radius: 4px; cursor: pointer; }
+  .completions li[data-active="true"] { background: color-mix(in srgb, var(--accent) 28%, transparent); }
+  .completions li:hover { background: var(--sunk); }
+  .completions-more { color: var(--quiet); cursor: default; font-style: italic; }
+
   /* --- console --- */
   .console {
     border-top: 1px solid var(--edge); display: grid; grid-template-rows: auto 1fr auto;

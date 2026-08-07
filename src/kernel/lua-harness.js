@@ -88,9 +88,99 @@ function emit(kind, payloadExpr) {
   return `io.write(__N, "\\1", "${kind}", "\\1", tostring(#${payloadExpr}), "\\1", ${payloadExpr})`;
 }
 
+/**
+ * Show a table's contents instead of its address.
+ *
+ * `tostring({1, 2, 3})` is `table: 0x1f2e0`, which is the moment a language
+ * starts to feel hostile to someone learning it. This renders the value
+ * instead, and it runs inside Lua because that is the only place the value
+ * exists -- the host only ever sees a string.
+ *
+ * Applied to the **echo** and nothing else. `print` stays exactly as Lua
+ * defines it: a notebook that quietly redefined it would teach people
+ * something that stops being true the moment they run the same code in the
+ * terminal. Out[n] is the notebook's own affordance and is fair game.
+ *
+ * Deliberately conservative: `__tostring` wins if a table defines one,
+ * recursion is depth- and width-capped, and cycles are reported rather than
+ * followed. Every metamethod call is wrapped, because rendering a value
+ * must never be what breaks a cell that otherwise ran fine.
+ */
+const RENDER_LUA = `
+local __MAX_DEPTH, __MAX_ITEMS, __MAX_STR = 4, 40, 200
+local function __ident(__k)
+  return type(__k) == "string" and __k:match("^[A-Za-z_][A-Za-z0-9_]*$") ~= nil
+end
+-- %q escapes a newline as backslash-newline, which is valid Lua source and
+-- awful to read on one line. char(92) is a backslash; writing it that way
+-- keeps this readable through two layers of quoting.
+local function __quote(__s)
+  return (string.format("%q", __s):gsub(string.char(92, 10), string.char(92) .. "n"))
+end
+-- \`local function\` so it can recurse without becoming a global. A helper
+-- of ours turning up in the user's _G would show in completion and in any
+-- loop over globals, which is the sort of thing that makes a tool feel
+-- like it is leaking.
+local function __render(__v, __depth, __seen)
+  local __t = type(__v)
+  if __t == "string" then
+    -- Bare at the top level, matching what the REPL prints, but quoted once
+    -- nested: inside a table, "1" and 1 have to be tellable apart.
+    if __depth <= 1 then return __v end
+    if #__v > __MAX_STR then return __quote(__v:sub(1, __MAX_STR)) .. "..." end
+    return __quote(__v)
+  end
+  if __t ~= "table" then return tostring(__v) end
+
+  local __ok, __mt = pcall(getmetatable, __v)
+  if __ok and __mt and __mt.__tostring then
+    local __good, __s = pcall(tostring, __v)
+    if __good then return __s end
+  end
+  if __seen[__v] then return "<cycle>" end
+  if __depth > __MAX_DEPTH then return "{...}" end
+  __seen[__v] = true
+
+  local __parts, __count, __more = {}, 0, false
+  -- array part first, in order
+  local __n = 0
+  local __lenOk, __len = pcall(function() return #__v end)
+  if __lenOk then __n = __len end
+  for __i = 1, __n do
+    if __count >= __MAX_ITEMS then __more = true break end
+    __parts[#__parts + 1] = __render(__v[__i], __depth + 1, __seen)
+    __count = __count + 1
+  end
+  -- then the rest, sorted so the same table always reads the same way
+  local __keys = {}
+  local __iterOk = pcall(function()
+    for __k in pairs(__v) do
+      if not (type(__k) == "number" and __k % 1 == 0 and __k >= 1 and __k <= __n) then
+        __keys[#__keys + 1] = __k
+      end
+    end
+  end)
+  if __iterOk then
+    pcall(table.sort, __keys, function(__a, __b) return tostring(__a) < tostring(__b) end)
+    for _, __k in ipairs(__keys) do
+      if __count >= __MAX_ITEMS then __more = true break end
+      local __label = __ident(__k) and __k or ("[" .. __render(__k, __depth + 1, __seen) .. "]")
+      __parts[#__parts + 1] = __label .. " = " .. __render(__v[__k], __depth + 1, __seen)
+      __count = __count + 1
+    end
+  end
+
+  __seen[__v] = nil
+  if __more then __parts[#__parts + 1] = "..." end
+  if #__parts == 0 then return "{}" end
+  return "{ " .. table.concat(__parts, ", ") .. " }"
+end
+`;
+
 export function executeChunk(code, nonce) {
   return `local __N = "${nonce}"
 local __src = ${luaLongString(code)}
+${RENDER_LUA}
 
 -- Finding the value to echo, in three attempts.
 --
@@ -107,20 +197,38 @@ local __src = ${luaLongString(code)}
 -- "for i = 1, 3 do / print(i) / end" would split inside the loop body and
 -- turn the first iteration into an early return -- printing 1 instead of
 -- 1, 2, 3. Requiring a valid prefix rejects every split inside a block.
+--
+-- Candidates are every token start, walked from the end backwards, not just
+-- line starts. Line starts alone miss the whole single-line form --
+-- "local t = {3,1,2} table.sort(t) t" -- which failed with a syntax error
+-- pointing at <eof>, about as unhelpful as a first-day error gets.
+--
+-- Splitting mid-string or mid-comment is not a hazard that needs its own
+-- check: the prefix would not compile, and every candidate has to compile.
 local __f, __e = load("return " .. __src, "=cell", "t")
 if not __f then
-  local __nl, __i = {}, 0
-  while true do
-    __i = __src:find("\\n", __i + 1, true)
-    if not __i then break end
-    __nl[#__nl + 1] = __i
-  end
-  for __k = #__nl, 1, -1 do
-    local __prefix = __src:sub(1, __nl[__k])
-    local __suffix = __src:sub(__nl[__k] + 1)
+  -- One past the end: the trailing expression is very often the final
+  -- character ("... table.sort(t) t"), and starting the scan at #__src - 1
+  -- skips exactly that case.
+  local __at = #__src + 1
+  local __tried = 0
+  while __at > 2 and __tried < 200 do
+    -- previous token start: a non-space preceded by a space or a separator
+    local __start = nil
+    for __i = __at - 1, 2, -1 do
+      local __c = __src:sub(__i, __i)
+      local __p = __src:sub(__i - 1, __i - 1)
+      if __c:match("%S") and (__p:match("%s") or __p == ";") then __start = __i break end
+    end
+    if not __start then break end
+    __at = __start
+
+    local __prefix = __src:sub(1, __start - 1)
+    local __suffix = __src:sub(__start)
+    __tried = __tried + 1
     if __suffix:match("%S") and load(__prefix, "=cell", "t") then
-      -- "return " goes on the suffix's own line, so line numbers in any
-      -- error still point at the line the user wrote.
+      -- "return " is spliced in place, so a later error still reports the
+      -- line and column the user actually typed.
       local __cand = load(__prefix .. "return " .. __suffix, "=cell", "t")
       if __cand then __f = __cand break end
     end
@@ -146,7 +254,7 @@ if not __r[1] then
 end
 if __r.n > 1 then
   local __parts = {}
-  for __i = 2, __r.n do __parts[#__parts + 1] = tostring(__r[__i]) end
+  for __i = 2, __r.n do __parts[#__parts + 1] = __render(__r[__i], 1, {}) end
   local __s = table.concat(__parts, "\\t")
   ${emit(RECORD.RESULT, '__s')}
 else
@@ -155,6 +263,7 @@ else
 end
 `;
 }
+
 
 /**
  * Lua's own REPL rule: a chunk that fails to compile with an error ending in

@@ -263,7 +263,7 @@ export class WasmKernel extends Kernel {
       }
       case RECORD.RUNTIME_ERROR: {
         const { message, traceback } = splitTraceback(run.record.payload);
-        const lines = traceback.split('\n').filter((l) => l.trim() !== '');
+        const lines = cleanTraceback(traceback, nonce);
         onMessage(errorMsg('LuaError', message, lines));
         return executeReply('error', count, { ename: 'LuaError', evalue: message, traceback: lines });
       }
@@ -309,6 +309,31 @@ export class WasmKernel extends Kernel {
     const matches = run.record.payload === '' ? [] : run.record.payload.split('\n');
     return completeReply(matches, start, cursorPos);
   }
+}
+
+/**
+ * Trim the harness out of a traceback.
+ *
+ * The user's code is loaded as the chunk `cell`, so their frames read
+ * `cell:3: in function 'f'`. Everything below the `xpcall` that wraps it is
+ * this file's own scaffolding, and `run_lua` names a chunk after its source
+ * text, so those frames arrive as
+ * `[string "local __N = "DL7dfe…""]:137: in main chunk` -- nonce, control
+ * characters and all. Showing that to someone learning the language is
+ * worse than showing nothing: it looks like their mistake.
+ *
+ * Cut at the xpcall frame, which is the exact boundary between their stack
+ * and ours, and drop anything still carrying the nonce as a backstop.
+ */
+export function cleanTraceback(traceback, nonce) {
+  const lines = [];
+  for (const line of traceback.split('\n')) {
+    if (line.trim() === '') continue;
+    if (/^\s*\[C\]: in function 'xpcall'/.test(line)) break;
+    if (nonce && line.includes(nonce)) continue;
+    lines.push(line);
+  }
+  return lines;
 }
 
 /**

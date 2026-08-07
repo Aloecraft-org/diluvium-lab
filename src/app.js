@@ -83,11 +83,13 @@ export class App {
     this.view = new NotebookView(document_.querySelector('[data-cells]'), this.model, {
       onRun: (cellId, opts) => this.runCell(cellId, opts),
       languageInfo,
+      complete: (code, cursor) => this.completeAt(code, cursor),
     });
 
     this.console = new ConsoleView(document_.querySelector('[data-console]'), {
       onExecute: (code) => this.executeCollectMessages(code),
       languageInfo,
+      complete: (code, cursor) => this.completeAt(code, cursor),
       onIsComplete: async (code) => {
         if (this.kernel.status === STATUS.DEAD) return 'complete';
         return (await this.kernel.isComplete(code)).content.status;
@@ -227,6 +229,14 @@ export class App {
    * rather than guessing: a build that adds `switch` gets `switch`
    * highlighted, without anything in this repository being edited.
    */
+  /** Completion, if the kernel is alive and willing. Never throws. */
+  async completeAt(code, cursor) {
+    if (this.kernel.status === STATUS.DEAD) return { matches: [] };
+    if (!this.kernel.capabilities?.complete) return { matches: [] };
+    const reply = await this.kernel.complete(code, cursor);
+    return reply.content;
+  }
+
   async refreshLanguage() {
     if (typeof this.kernel.languageInfo !== 'function') return;
     try {

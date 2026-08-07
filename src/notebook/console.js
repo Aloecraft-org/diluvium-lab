@@ -24,7 +24,10 @@ export class ConsoleView {
     this.historyAt = 0;
     this.busy = false;
 
-    this.editor = new HighlightedEditor(this.input, handlers.languageInfo ?? (() => ({})));
+    this.editor = new HighlightedEditor(this.input, handlers.languageInfo ?? (() => ({})), {
+      complete: handlers.complete,
+      handleEnter: false,          // Enter submits here; it is not a newline
+    });
 
     this.input.addEventListener('keydown', (event) => this._onKeydown(event));
     this.input.addEventListener('input', () => {
