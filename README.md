@@ -42,6 +42,7 @@ open when a new runtime is pinned.
 | **Ctrl+Enter** | run the cell |
 | **Shift+Enter** | run it and move on |
 | **Tab** / **Shift+Tab** | indent / dedent (Escape first if you want Tab to move focus) |
+| **Ctrl+/** | comment / uncomment the line or selection |
 | **Ctrl+Space** | completions; typing `.` after a name opens them too |
 
 A cell ending in an expression shows its value as `Out[n]`, and tables show

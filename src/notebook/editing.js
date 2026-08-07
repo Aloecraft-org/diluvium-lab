@@ -61,20 +61,39 @@ export function indent(textarea) {
   return true;
 }
 
-/** Shift+Tab. Removes one indent from the selected lines, or before the caret. */
+/** How much leading whitespace one Shift+Tab should remove. */
+function dedentWidth(leading) {
+  if (leading.startsWith('\t')) return 1;
+  return Math.min(INDENT.length, (/^ */.exec(leading) ?? [''])[0].length);
+}
+
+/**
+ * Shift+Tab. Removes one indent from the selected lines, or from the line
+ * the caret is on.
+ *
+ * The line, not the text before the caret. An earlier version only looked
+ * backwards from the caret, so `    <caret>end` dedented and
+ * `<caret>    end` did not -- the same line, the same intent, two different
+ * outcomes depending on where the caret happened to sit. Editors outdent
+ * the line wherever the caret is in it, and so does this.
+ */
 export function dedent(textarea) {
   const { selectionStart, selectionEnd, value } = textarea;
 
   if (selectionStart === selectionEnd) {
     const lineStart = value.lastIndexOf('\n', selectionStart - 1) + 1;
-    const before = value.slice(lineStart, selectionStart);
-    // Only leading whitespace is dedented; mid-line Shift+Tab does nothing
-    // rather than eating a character someone meant to keep.
-    if (before.trim() !== '') return false;
-    const remove = Math.min(INDENT.length, before.length - before.replace(/ +$/, '').length);
+    let lineEnd = value.indexOf('\n', lineStart);
+    if (lineEnd === -1) lineEnd = value.length;
+    const leading = (/^[ \t]*/.exec(value.slice(lineStart, lineEnd)) ?? [''])[0];
+    const remove = dedentWidth(leading);
     if (remove === 0) return false;
-    textarea.setSelectionRange(selectionStart - remove, selectionStart);
+
+    textarea.setSelectionRange(lineStart, lineStart + remove);
     insertText(textarea, '');
+    // Keep the caret on the same character it was on, unless that pushes
+    // it before the start of the line.
+    const caret = Math.max(lineStart, selectionStart - remove);
+    textarea.setSelectionRange(caret, caret);
     return true;
   }
 
@@ -88,6 +107,53 @@ export function dedent(textarea) {
   textarea.setSelectionRange(from, to);
   insertText(textarea, shifted);
   textarea.setSelectionRange(from, from + shifted.length);
+  return true;
+}
+
+export const LINE_COMMENT = '--';
+
+/**
+ * Ctrl+/ — comment the selected lines, or uncomment them if they already
+ * are. One key that does both, decided by what is there: if every non-blank
+ * line in the range is commented, the block is uncommented; otherwise it is
+ * commented.
+ *
+ * The marker goes in at the *shallowest* indentation in the block rather
+ * than at column zero, so commenting out the body of a loop leaves the
+ * shape of the code visible instead of flattening it against the margin.
+ */
+export function toggleComment(textarea) {
+  const { selectionStart, selectionEnd, value } = textarea;
+  const { from, to } = lineSpan(value, selectionStart, selectionEnd);
+  const lines = value.slice(from, to).split('\n');
+  const meaningful = lines.filter((line) => line.trim() !== '');
+  if (meaningful.length === 0) return false;
+
+  const commented = meaningful.every((line) => /^\s*--/.test(line));
+  const shifted = commented
+    // `-- x` and `--x` both uncomment; only one space is eaten, so `---` and
+    // a commented-out `--[[` survive intact.
+    ? lines.map((line) => line.replace(/^(\s*)--[ ]?/, '$1'))
+    : (() => {
+      const column = Math.min(...meaningful.map((line) => (/^[ \t]*/.exec(line) ?? [''])[0].length));
+      return lines.map((line) => (line.trim() === ''
+        ? line
+        : `${line.slice(0, column)}${LINE_COMMENT} ${line.slice(column)}`));
+    })();
+
+  const block = shifted.join('\n');
+  const hadSelection = selectionStart !== selectionEnd;
+  const firstLineDelta = shifted[0].length - lines[0].length;
+
+  textarea.setSelectionRange(from, to);
+  insertText(textarea, block);
+
+  if (hadSelection) {
+    textarea.setSelectionRange(from, from + block.length);
+  } else {
+    const caret = Math.max(from, selectionStart + firstLineDelta);
+    textarea.setSelectionRange(caret, caret);
+  }
   return true;
 }
 
@@ -130,6 +196,15 @@ export function attachEditing(textarea, options = {}) {
 
     if (event.key === 'Escape') {
       tabEscapes = true;                 // next Tab leaves the field
+      return;
+    }
+
+    // Ctrl+/ (Cmd+/ on a Mac). `code` as well as `key`, because on some
+    // layouts the slash arrives only as a physical key.
+    if ((event.ctrlKey || event.metaKey) && !event.altKey
+        && (event.key === '/' || event.code === 'Slash')) {
+      event.preventDefault();
+      toggleComment(textarea);
       return;
     }
 

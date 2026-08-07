@@ -230,6 +230,44 @@ test.describe('Tab indents', () => {
     await expect(editor).toHaveValue('  print(1)');
   });
 
+  test('Shift+Tab dedents wherever the caret sits on the line', async ({ page }) => {
+    await openLab(page);
+    const editor = codeCell(page).locator('[data-editor]');
+
+    // Caret after the indentation.
+    await editor.fill('    end');
+    await editor.press('End');
+    await editor.press('Shift+Tab');
+    await expect(editor).toHaveValue('  end');
+
+    // Caret before it, at column zero -- the same line and the same intent,
+    // and it used to do nothing at all.
+    await editor.fill('    end');
+    await editor.press('Home');
+    await editor.press('Shift+Tab');
+    await expect(editor).toHaveValue('  end');
+
+    // Caret in the middle of the word.
+    await editor.fill('    end');
+    await editor.press('Home');
+    await editor.press('ArrowRight');
+    await editor.press('ArrowRight');
+    await editor.press('ArrowRight');
+    await editor.press('ArrowRight');
+    await editor.press('ArrowRight');
+    await editor.press('Shift+Tab');
+    await expect(editor).toHaveValue('  end');
+  });
+
+  test('Shift+Tab on an unindented line does nothing', async ({ page }) => {
+    await openLab(page);
+    const editor = codeCell(page).locator('[data-editor]');
+    await editor.fill('end');
+    await editor.press('Home');
+    await editor.press('Shift+Tab');
+    await expect(editor).toHaveValue('end');
+  });
+
   test('a selection indents every line it covers', async ({ page }) => {
     await openLab(page);
     const editor = codeCell(page).locator('[data-editor]');
@@ -305,6 +343,190 @@ test.describe('Tab indents', () => {
 });
 
 // ---------------------------------------------------------------------
+
+test.describe('Ctrl+/ comments', () => {
+  test('one line, there and back', async ({ page }) => {
+    await openLab(page);
+    const editor = codeCell(page).locator('[data-editor]');
+    await editor.fill('print(1)');
+    await editor.press('End');
+    await editor.press('Control+/');
+    await expect(editor).toHaveValue('-- print(1)');
+
+    await editor.press('Control+/');
+    await expect(editor).toHaveValue('print(1)');
+  });
+
+  test('a selection, commented at the shallowest indent', async ({ page }) => {
+    await openLab(page);
+    const editor = codeCell(page).locator('[data-editor]');
+    await editor.fill('for i = 1, 3 do\n  print(i)\n  print(i * 2)\nend');
+    await editor.press('Control+a');
+    await editor.press('Control+/');
+    // Column zero is the shallowest line, so that is where the marker goes.
+    await expect(editor).toHaveValue('-- for i = 1, 3 do\n--   print(i)\n--   print(i * 2)\n-- end');
+
+    await editor.press('Control+/');
+    await expect(editor).toHaveValue('for i = 1, 3 do\n  print(i)\n  print(i * 2)\nend');
+  });
+
+  test('an indented block keeps its shape', async ({ page }) => {
+    await openLab(page);
+    const editor = codeCell(page).locator('[data-editor]');
+    await editor.fill('  print(1)\n    print(2)');
+    await editor.press('Control+a');
+    await editor.press('Control+/');
+    // Marker at the shallowest indent, so the nesting is still visible.
+    await expect(editor).toHaveValue('  -- print(1)\n  --   print(2)');
+  });
+
+  test('a part-commented block gets fully commented, not toggled', async ({ page }) => {
+    await openLab(page);
+    const editor = codeCell(page).locator('[data-editor]');
+    await editor.fill('-- print(1)\nprint(2)');
+    await editor.press('Control+a');
+    await editor.press('Control+/');
+    await expect(editor).toHaveValue('-- -- print(1)\n-- print(2)');
+  });
+
+  test('blank lines are left alone', async ({ page }) => {
+    await openLab(page);
+    const editor = codeCell(page).locator('[data-editor]');
+    await editor.fill('print(1)\n\nprint(2)');
+    await editor.press('Control+a');
+    await editor.press('Control+/');
+    await expect(editor).toHaveValue('-- print(1)\n\n-- print(2)');
+  });
+
+  test('uncommenting eats one space, so --- survives', async ({ page }) => {
+    await openLab(page);
+    const editor = codeCell(page).locator('[data-editor]');
+    await editor.fill('--- a heading comment');
+    await editor.press('Control+a');
+    await editor.press('Control+/');
+    await expect(editor).toHaveValue('- a heading comment');
+  });
+
+  test('a commented cell still runs, doing nothing', async ({ page }) => {
+    await openLab(page);
+    const editor = codeCell(page).locator('[data-editor]');
+    await editor.fill('print("hidden")');
+    await editor.press('Control+a');
+    await editor.press('Control+/');
+    await editor.press('Control+Enter');
+    await expect(codeCell(page)).toHaveAttribute('data-busy', 'false');
+    await expect(codeCell(page).locator('[data-outputs] .output')).toHaveCount(0);
+  });
+
+  test('undo puts it back', async ({ page }) => {
+    await openLab(page);
+    const editor = codeCell(page).locator('[data-editor]');
+    await editor.fill('print(1)');
+    await editor.press('End');
+    await editor.press('Control+/');
+    await expect(editor).toHaveValue('-- print(1)');
+    await editor.press('Control+z');
+    await expect(editor).toHaveValue('print(1)');
+  });
+
+  test('it works in the console too', async ({ page }) => {
+    await openLab(page);
+    const input = page.locator('[data-console-input]');
+    await input.fill('print(1)');
+    await input.press('End');
+    await input.press('Control+/');
+    await expect(input).toHaveValue('-- print(1)');
+  });
+});
+
+// ---------------------------------------------------------------------
+
+test.describe('Ctrl+/ comments and uncomments', () => {
+  test('one line, both ways', async ({ page }) => {
+    await openLab(page);
+    const editor = codeCell(page).locator('[data-editor]');
+    await editor.fill('print(1)');
+    await editor.press('Control+/');
+    await expect(editor).toHaveValue('-- print(1)');
+
+    await editor.press('Control+/');
+    await expect(editor).toHaveValue('print(1)');
+  });
+
+  test('a selection, and the marker lands at the shallowest indent', async ({ page }) => {
+    await openLab(page);
+    const editor = codeCell(page).locator('[data-editor]');
+    await editor.fill('  local a = 1\n    local b = 2');
+    await editor.press('Control+a');
+    await editor.press('Control+/');
+    // Aligned at column 2, so the shape of the block survives.
+    await expect(editor).toHaveValue('  -- local a = 1\n  --   local b = 2');
+
+    await editor.press('Control+/');
+    await expect(editor).toHaveValue('  local a = 1\n    local b = 2');
+  });
+
+  test('a part-commented block gets commented, not toggled line by line', async ({ page }) => {
+    await openLab(page);
+    const editor = codeCell(page).locator('[data-editor]');
+    await editor.fill('-- already\nprint(2)');
+    await editor.press('Control+a');
+    await editor.press('Control+/');
+    await expect(editor).toHaveValue('-- -- already\n-- print(2)');
+  });
+
+  test('blank lines are left alone', async ({ page }) => {
+    await openLab(page);
+    const editor = codeCell(page).locator('[data-editor]');
+    await editor.fill('print(1)\n\nprint(2)');
+    await editor.press('Control+a');
+    await editor.press('Control+/');
+    await expect(editor).toHaveValue('-- print(1)\n\n-- print(2)');
+  });
+
+  test('uncommenting eats one space, so ---- and --[[ survive', async ({ page }) => {
+    await openLab(page);
+    const editor = codeCell(page).locator('[data-editor]');
+    await editor.fill('-- --[[ kept ]]');
+    await editor.press('Control+/');
+    await expect(editor).toHaveValue('--[[ kept ]]');
+  });
+
+  test('the commented code actually stops running', async ({ page }) => {
+    await openLab(page);
+    const cell = codeCell(page);
+    const editor = cell.locator('[data-editor]');
+    await editor.fill('print("before")\nprint("after")');
+    // Control+Home, not Home: fill() leaves the caret at the end, so Home
+    // would land on the *last* line and comment the wrong one.
+    await editor.press('Control+Home');
+    await editor.press('Control+/');
+    await editor.press('Control+Enter');
+    await expect(cell).toHaveAttribute('data-busy', 'false');
+
+    const output = await cell.locator('[data-outputs]').innerText();
+    expect(output).not.toContain('before');
+    expect(output).toContain('after');
+  });
+
+  test('undo puts it back', async ({ page }) => {
+    await openLab(page);
+    const editor = codeCell(page).locator('[data-editor]');
+    await editor.fill('print(1)');
+    await editor.press('Control+/');
+    await expect(editor).toHaveValue('-- print(1)');
+    await editor.press('Control+z');
+    await expect(editor).toHaveValue('print(1)');
+  });
+
+  test('it works in the console as well', async ({ page }) => {
+    await openLab(page);
+    const input = page.locator('[data-console-input]');
+    await input.fill('print(1)');
+    await input.press('Control+/');
+    await expect(input).toHaveValue('-- print(1)');
+  });
+});
 
 test.describe('completion makes the library findable', () => {
   const popup = (page) => page.locator('[data-completions]');
