@@ -607,6 +607,15 @@ Multiple notebooks, file tree, tabs, `File > New`.
 exists — the reusable part — so the bespoke work is not wasted either
 way, and the choice can be made on evidence instead of prediction.
 
+### The polishing pass — planned, see §9
+
+Not numbered with the stages above because it does not sit after them: it
+is about whether the page can be *read* while it works, which is a
+question the stages so far have not asked. It also carries the answer to
+whether interactivity and graphics — sliders, selects, charts, canvas —
+are feasible here. They are, in four tiers, and the tiers were priced by
+measurement rather than estimate. **§9.**
+
 ---
 
 ## 5. Decided
@@ -700,6 +709,14 @@ interrupted — the only way out is closing the tab. Measured, not theorised:
 it froze a test browser. Nothing in the Lab can fix this; a Worker would
 keep the *page* responsive while the kernel span, which is the strongest
 practical reason to move it there.
+
+**Cell metadata does not round-trip, and that is data loss.** `fromIpynb`
+never reads `raw.metadata`; `toIpynb` always writes `metadata: {}`. Open
+someone's notebook, save it, and every cell's tags, slide directives and
+`nbgrader` fields are gone — silently, with no error and no diff anyone
+would notice until it mattered. Found while planning §9, which needs those
+same keys for folding, so it is fixed there; but it is a bug in its own
+right and not a missing feature.
 
 **IndexedDB, not localStorage.** 5 MB dies quickly once notebooks carry
 saved output.
@@ -1015,3 +1032,315 @@ during the overlap when the mirror carries both. The rules it encodes:
 Doing the consumer first is the point. The producer can change whenever
 Diluvium is ready, in its own repository, on its own schedule, and nothing
 here has to be timed against it.
+
+---
+
+## 9. The polishing pass — planned
+
+Everything up to here answered *does it work*. This pass answers *can you
+read it while it works*. The two are not the same question and the second
+one has barely been asked: the page runs Lua correctly and tells you
+almost nothing about what it is doing while it does.
+
+Written ahead of the work, with the risky parts measured first rather than
+estimated. The measurements are in §9.7 and several of them changed the
+plan.
+
+### 9.1 What the page currently cannot say
+
+Not a wish list — these are things a reader asks and the DOM has no answer
+for.
+
+- **Which cell is current.** `.cell:focus-within` is the only cue and it is
+  focus, not selection: it vanishes the moment you click a toolbar button,
+  so at the exact instant you press **Run all** nothing on the page is the
+  current cell. There is no selection model at all — no command mode, no
+  arrow-key navigation between cells, no notion of "the cell the toolbar
+  acts on". Every keyboard affordance in `ui.js` is scoped to a focused
+  textarea.
+- **That a cell succeeded.** `data-busy` goes `true`, then `false`.
+  Success and failure land on the same attribute value; the only way to
+  tell them apart is to read the output. `renderOutputs` knows which it
+  was — the cell does not.
+- **That output is stale.** Editing a cell after running it leaves `In [3]`
+  and its output sitting there, describing source that no longer exists.
+  After a kernel restart *every* cell is in that state:
+  `resetExecutionCounts` clears the counter but nothing says the outputs
+  below are the residue of a Lua state that has been destroyed. In a kernel
+  where **Stop** means "lose all your variables", this is the single most
+  misleading thing on the page.
+- **What is queued.** Run all executes serially; only the running cell is
+  marked. The others look idle while they wait.
+- **How much output there is.** `capText` cuts at 200 lines with a *show
+  all*, which is the right floor and the wrong shape for the common case:
+  people want a scroll box, not a wall.
+
+### 9.2 Order of work, and why
+
+Cell state first. Folding, full-screen output and a nicer toolbar are all
+decoration layered on a page that cannot currently say what it is doing,
+and each of them needs somewhere to hang state that does not yet exist.
+
+1. **Selection and run state** — the model change everything else needs.
+2. **The metadata round-trip bug** (§9.4) — a correctness fix, and the
+   blocker for persisting anything in §9.3.
+3. **Output: bounded, scrolled, full-screen.**
+4. **Folding and minimizing.**
+5. **Layout: header, toolbar, console.**
+6. **Completion.**
+7. **The display channel** — graphics.
+8. **Widgets** — interactivity.
+
+7 and 8 are separable and 7 is worth having on its own. Do not start 8
+until 7 has landed, because 8's controls are rendered *by* 7.
+
+### 9.3 Cell state, made visible
+
+One `activeCellId`, owned by the view, not inferred from
+`document.activeElement`. Click sets it, arrow keys move it, running a cell
+sets it, and the toolbar reads it.
+
+Adopt Jupyter's **command/edit mode** distinction. It is the design that
+already works, the shortcuts are ones people bring with them, and it is the
+only way "the current cell" survives the toolbar taking focus. Adopting the
+*model* on day one; not every binding.
+
+Per-cell run state, as a single attribute:
+
+| State | Means |
+| :--- | :--- |
+| `idle` | never run, or outputs cleared |
+| `queued` | Run all reached it, kernel has not started it |
+| `running` | the kernel is inside this cell |
+| `ok` | last run finished without error |
+| `error` | last run raised |
+| `stale` | output describes source that has since changed, or a Lua state that has since been destroyed |
+
+`stale` is the one Jupyter does not have and the one this kernel needs
+most, for the reason in §9.1. Two triggers: `setSource` on a cell with
+outputs, and any kernel restart or stop.
+
+Two constraints on the rendering, both non-negotiable and both cheap:
+**state is never colour alone** (a shape, a glyph or a label beside it),
+and the running cue must not animate under
+`prefers-reduced-motion: reduce`.
+
+### 9.4 A round-trip bug found on the way, which blocks folding
+
+`fromIpynb` never reads `raw.metadata` and `toIpynb` always writes
+`metadata: {}`. **Opening a notebook and saving it silently destroys every
+cell's metadata** — tags, slide directives, `nbgrader` fields, anything a
+real Jupyter put there. That is a data-loss bug today, independent of this
+pass, and worth fixing on its own.
+
+It also has to be fixed *first*, because nbformat already has the keys
+this pass wants and they live exactly there:
+
+- `metadata.jupyter.source_hidden` — the editor is folded
+- `metadata.jupyter.outputs_hidden` — the output is folded
+- `metadata.collapsed` — the cell is minimized
+- `metadata.scrolled` — the output is a scroll box rather than a wall
+
+So folding, minimizing and bounded output are **standard, portable and
+already specified**. Use those keys, do not invent `x-diluvium-folded`, and
+a notebook folded here opens folded in JupyterLab. Carry unknown metadata
+through untouched.
+
+### 9.5 Output, console, toolbar
+
+**Output** gets three modes rather than one: the current cap-with-*show
+all*, a bounded scroll box (`metadata.scrolled`), and full-screen. The
+existing `capText` stays underneath all three — it is a rendering ceiling,
+not a policy, and `SOFT_MAX_LINES` is what stops a scroll box from laying
+out 50 000 lines just because it is scrollable.
+
+**Toolbar**: eleven controls in one flat wrapping flex row, with no
+grouping beyond three `.sep` spans. Group by what they act on — document,
+run, kernel — and let the header carry the notebook's identity (filename,
+dirty marker, runtime) rather than leaving it as a `<span data-filename>`
+in the middle of the button row.
+
+**Console**: a fixed-height bottom section that occupies space whether or
+not it is being used. It should be collapsible and resizable, and it should
+keep sharing the kernel, which is the property that makes it good.
+
+**Completion**: today it is a `_G` walk, prefix-matched and sorted
+alphabetically, so `a` offers `arg` before `assert`. Rank by relevance,
+show the kind (function, table, number) beside each match, and match
+subsequences rather than prefixes only. The kernel already reports its own
+globals and keywords, so this is presentation, not new plumbing.
+
+### 9.6 Interactivity and graphics — the answer
+
+**Feasible, and considerably cheaper than it sounds, in four tiers.**
+Nothing below needs a change to Diluvium, and nothing below breaks a hard
+constraint. It divides into a *display* half and an *input* half, and the
+display half is most of the value.
+
+#### The mechanism already exists
+
+The harness in `lua-harness.js` already frames structured data out of the
+kernel: a per-request nonce, then `SEP kind SEP length SEP payload`, with
+length-prefixing so a payload may contain anything — newlines, tabs, the
+separator itself. That is a display channel with a different name.
+
+**Measured**: multiple records can be emitted from a single run, interleaved
+with ordinary output, and parsed back positionally with ordering and
+content intact — including a payload carrying a bare separator byte
+(§9.7). The wire format needs nothing. The only change is `parseRecord`
+→ `parseRecords`, scanning every nonce occurrence instead of the first, and
+returning text-and-records in order.
+
+Add `RECORD.DISPLAY = 'D'` carrying a JSON MIME bundle, publish it as
+Jupyter's `display_data`, and it lands in nbformat as `display_data` —
+which `isKnownOutput` and `outputText` **already accept**. The reader is
+ready; only the renderer ignores non-text MIME types.
+
+The Lua-side API is a `lab` table installed once at kernel start, next to
+the harness — `lab.svg`, `lab.html`, `lab.png`, `lab.table`, `lab.show`.
+Unlike the `__`-prefixed harness internals it belongs in `_G` on purpose:
+it is the user-facing surface and should appear in completion.
+
+#### One rule that comes with it
+
+`text/html` and `image/svg+xml` are markup, and this project's standing
+rule is that nothing reaches the DOM as markup. That rule is load-bearing
+here in a way it is not elsewhere: **saved outputs render on open, before
+anything runs.** A notebook you were sent could carry a `display_data`
+payload that executes the moment the file is opened — no cell run, no
+consent. The markdown renderer already treats notebooks as untrusted input
+for exactly this reason.
+
+So: kernel-produced markup renders in a **sandboxed `<iframe srcdoc>` with
+scripts not allowed**, or not at all. Vendored, offline, no new dependency,
+and it fails closed. Decide this before writing the renderer, not after.
+
+#### Tier 1 — Static graphics. Cheap, do it first.
+
+Charts, plots, images, rich tables. The kernel emits SVG or a base64 image;
+the page displays it.
+
+**SVG is the fast path by a wide margin** — 10 000 plotted points built in
+Lua and delivered in **22 ms** (§9.7). It is text, so it survives the
+stdout decode untouched; it scales, it themes with `currentColor`, and it
+costs nothing to save in the notebook. A plotting library written in Lua
+emitting SVG is the natural shape, and it is ordinary Lua rather than
+anything special.
+
+#### Tier 2 — Inputs that re-run the cell. Small, and probably enough.
+
+`lab.slider{min, max, value}` returns a value *and* declares a control. The
+page renders the control with the cell's output; changing it re-executes
+**that cell**. This is `ipywidgets.interact` without the machinery: no new
+channel beyond Tier 1, deterministic, and it matches the notebook mental
+model — the cell you can see is the cell that ran.
+
+Sliders, checkboxes, radio groups, selects, text and colour inputs all fit
+here. Re-running a cell with side effects is the user's problem, exactly as
+it is in Jupyter.
+
+#### Tier 3 — Live callbacks. Feasible; measured at ~1 ms.
+
+`lab.on_change(w, function(v) ... end)`. The closure lives in the
+persistent `global_L`, so a widget event is just a synthetic execute
+against a state that is already there.
+
+**Measured**: a trivial execute round-trips through the worker in **0.96 ms
+median** and a stored-closure call in **1.07 ms median** (p90 ≈ 6 ms). A
+60 Hz slider drag has a 16.7 ms budget, so this is live with room to spare.
+The tier is affordable.
+
+Three things it must get right, all measured rather than assumed:
+
+- **Conflate, never queue.** Two executes issued together serialise, and
+  each takes an execution number. 120 drag samples queued cost 65 ms and
+  burned 120 execution counts; keeping only the latest while one is in
+  flight cost **2 ms** (§9.7). Thirty times faster and it is about fifteen
+  lines.
+- **Widget events are not history.** They must not increment
+  `execution_count`, must not touch `In[]`/`Out[]`, and must route output to
+  the widget's own area. Today `execute` increments unconditionally, so
+  this needs a `silent`/`store_history` path — which `executeRequest`
+  already has fields for and no implementation behind.
+- **A stop kills every widget.** `terminate()` takes the Lua state and
+  every registered closure with it. The widgets must then render as dead
+  and say so, under the same rule as `interruptLosesState`: nothing may
+  imply a liveness the kernel cannot deliver.
+
+#### Tier 4 — Canvas and animation. Real limits; the measurements changed the plan.
+
+Two findings, and they point the same way.
+
+**Raw bytes cannot leave the kernel.** stdout is decoded as UTF-8, so
+arbitrary bytes are destroyed: writing all 256 byte values produced **128
+replacement characters** — half the range gone (§9.7). This is the same
+fact the bytecode viewer already lives with, and it generalises: *every
+payload on this channel must be text*. Base64 or hex, never raw.
+
+**Per-pixel Lua is not an animation path.** A 640×480 RGBA framebuffer
+built pixel-by-pixel in Lua and base64'd out costs **365 ms per frame** —
+about 2.7 fps. Even 160×120 only reaches ~13 fps. The cost is split between
+the interpreter loop and the 4/3 base64 expansion, and neither is going
+away.
+
+So the canvas path is **draw commands, not pixels**: the kernel emits a
+display list (paths, rects, text, transforms), the page replays it onto a
+`<canvas>`. Orders of magnitude less data, and it is what a plotting
+library wants to emit anyway. Pixel buffers stay available for a *static*
+image, where 365 ms is fine and 2.7 fps is not a number anyone sees.
+
+If per-frame pixels are ever genuinely needed, the escape hatch is to stop
+using stdout: `memory` is exported and the whole Lua C API with it, so the
+host can read a framebuffer straight out of linear memory and skip both the
+encode and the decode. That is a real option and it is not needed yet.
+
+Animation also needs a frame budget and an automatic stop. A `while true`
+animation loop is the tail-call hang of §6 wearing a nicer hat, and the
+only cure remains the same one — it is a worker, and the worker can be
+terminated.
+
+#### What is *not* feasible
+
+- **Anything requiring the kernel to be interrupted mid-call.** Unchanged:
+  `run_lua` is synchronous. A widget event that arrives while a cell runs
+  waits, or is dropped. It cannot preempt.
+- **Blocking input from Lua** — `io.read()` returns EOF by design, and
+  making a cell wait for a keystroke would need the kernel to yield, which
+  it cannot. `input()` is not available; a widget plus a callback is the
+  shape that works.
+- **Live widgets in the baked `file://` build.** No worker, no stop, so a
+  runaway callback there hangs the tab as anything else would. Tiers 1 and
+  2 are fine; Tier 3 should degrade rather than pretend, the same way the
+  Stop button already does.
+
+### 9.7 What was measured, before any of this was designed
+
+Chromium 141 (Playwright 1.56.1), pinned runtime `v5.5.1_build1`, kernel in
+its worker, on the machine the session ran on. Absolute numbers will move;
+the ratios are what the plan rests on. The probes were throwaway and are
+not in the suite — the work they justify will bring its own tests.
+
+| Question | Result |
+| :--- | :--- |
+| Trivial execute, round trip through the worker | **0.96 ms** median, 6.7 ms p90, 12 ms max |
+| Calling a stored Lua closure (a widget callback) | **1.07 ms** median, 6.1 ms p90 |
+| 120 drag samples, queued | 65 ms, and 120 execution counts consumed |
+| 120 drag samples, conflated to the latest | **2 ms** |
+| Two executes issued together | serialise; each takes its own execution number |
+| stdout throughput, text | 1 MB in 27 ms; 4 MB in 65 ms |
+| stdout, raw bytes | **lossy** — 256 byte values in, 128 replacement chars out |
+| SVG chart built in Lua, 10 000 points | **22 ms**, 116 KB |
+| SVG chart, 1 000 points | 6 ms, 12 KB |
+| 640×480 framebuffer, per-pixel Lua + base64 | **365 ms** (70 ms build, 295 ms encode and send) |
+| 160×120 framebuffer, same path | 73 ms |
+| Several harness records in one run, interleaved with output | **works** — order preserved, separator bytes survive length-prefixing |
+
+Two of these changed the design. The lossy-bytes result rules out raw
+binary on this channel outright, and the framebuffer result moved canvas
+from pixels to draw commands.
+
+One more, worth writing down because it is a ceiling nobody will remember:
+`HARD_MAX_BYTES` is 4 MiB and the truncation notice fired exactly there
+during the throughput probe. **That ceiling is now also the maximum image
+size**, and base64 costs 4/3, so the display channel needs its own budget
+accounting rather than sharing the output cap silently.
