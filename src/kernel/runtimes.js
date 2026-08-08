@@ -10,7 +10,8 @@
 // it was -- switching versions should never be how you lose a session.
 
 import { MirrorSource, ReleaseError, DEFAULT_MIRROR, KERNEL_ARTIFACT } from './releases.js';
-import { WasmKernel, DEFAULT_WASM_URL, checkModuleBytes } from './wasm-kernel.js';
+import { DEFAULT_WASM_URL, checkModuleBytes } from './wasm-kernel.js';
+import { WorkerKernel } from './worker-kernel.js';
 import { canVerify } from './digest.js';
 import { getRuntime, putRuntime } from '../notebook/storage.js';
 
@@ -111,8 +112,11 @@ export class RuntimeRegistry {
         problems.map((p) => `  - ${p}`).join('\n'));
     }
 
+    // The bytes were fetched, checksummed and probed on this thread --
+    // crypto.subtle and IndexedDB live here and the worker has no business
+    // with either. Only the verified module crosses over.
     const entry = this.entries().find((e) => e.id === id);
-    const kernel = new WasmKernel({
+    const kernel = new WorkerKernel({
       moduleBytes: bytes,
       label: `On-page WASM (${entry?.label ?? id})`,
     });

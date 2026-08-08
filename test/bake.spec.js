@@ -89,3 +89,39 @@ test('restart works without a network round trip', async ({ page }) => {
   await cell.locator('[data-editor]').press('Control+Enter');
   await expect(cell.locator('[data-outputs]')).toContainText('nil');
 });
+
+test('it runs in the page, and says so rather than offering a stop that does nothing', async ({ page }) => {
+  await openBaked(page);
+
+  // A file:// page has an opaque origin and browsers refuse to start a
+  // worker from one, so the baked build cannot run the kernel off-thread
+  // and cannot stop a runaway cell. That is an accepted trade -- the same
+  // one that already costs it runtime switching, for the same reason --
+  // but it has to be visible. A Stop button that silently does nothing
+  // would be worse than no Stop button.
+  const info = await page.evaluate(() => ({
+    offThread: window.lab.kernel.offThread,
+    interrupt: window.lab.kernel.capabilities.interrupt,
+    label: window.lab.kernel.label,
+    reason: window.lab.kernel.fallbackReason ?? null,
+  }));
+
+  expect(info.offThread).toBe(false);
+  expect(info.interrupt).toBe(false);
+  expect(info.label).toContain('in page');
+  expect(info.reason).toBeTruthy();
+
+  // Disabled, not merely inert.
+  await expect(page.locator('[data-toolbar="stop"]')).toBeDisabled();
+
+  // And it still runs code, which is the part that must not regress.
+  // No dynamic import here: there is no ./src/ in a single file.
+  const out = await page.evaluate(async () => {
+    const messages = [];
+    const reply = await window.lab.kernel.execute('return 6 * 7', (m) => messages.push(m));
+    const result = messages.find((m) => m.msg_type === 'execute_result');
+    return { status: reply.content.status, result: result?.content.data['text/plain'] ?? null };
+  });
+  expect(out.status).toBe('ok');
+  expect(out.result).toBe('42');
+});

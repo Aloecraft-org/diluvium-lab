@@ -67,9 +67,19 @@ and drive the real UI — no mocking the kernel.
 
 - `pcall` depends on `setjmp`/`longjmp` lowering onto WASM exception
   handling. Test that errors are *caught*, never just the happy path.
-- Cap output per cell in lines and bytes. One runaway cell kills the tab.
+- Cap output per cell in lines and bytes. *Amended at the Worker port:*
+  a runaway cell no longer kills the tab, it kills a worker — but the caps
+  still matter, because a cell that prints forever fills memory on both
+  threads and only the caps stop it.
 - IndexedDB, not localStorage.
 - Drop module and instance references on kernel restart, or each restart
   leaks a linear memory.
-- `run_lua` is synchronous and cannot be interrupted. Do not design UI
-  that implies otherwise until an interrupt tier actually exists.
+- `run_lua` is synchronous and cannot be interrupted. *An interrupt tier
+  now exists, and it is not what that word usually means:* the kernel runs
+  in a Web Worker and stopping it is `terminate()`, which takes the Lua
+  state with it. `capabilities.interrupt` is true and
+  `capabilities.interruptLosesState` is true beside it; the control says
+  **Stop**, not Interrupt. Nothing may imply Jupyter's interrupt, which
+  unwinds and keeps your variables. Where no worker is possible — the
+  baked `file://` build — the kernel runs in the page, reports
+  `interrupt: false`, and the button is disabled rather than inert.

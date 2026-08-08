@@ -277,6 +277,12 @@
   </label>
   <button type="button" data-toolbar="check-versions" title="Look for other Diluvium builds on the mirror">⟳</button>
   <span class="sep"></span>
+  <!-- Says "Stop", not "Interrupt", on purpose. Jupyter's interrupt
+       unwinds and leaves your variables alone; this terminates the worker,
+       which is the only way to stop a synchronous WASM call, and takes the
+       Lua state with it. The title says so and so does the console note. -->
+  <button type="button" data-toolbar="stop" disabled
+          title="Stop the running cell. This restarts the kernel, so every variable is lost.">Stop</button>
   <button type="button" data-toolbar="restart" title="Discard every variable and start the kernel again">Restart kernel</button>
   <span class="status" data-kernel-status>starting</span>
 </header>

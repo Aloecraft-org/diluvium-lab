@@ -5,7 +5,8 @@
 // that constructs it. That line is where Stage 2's version dropdown and
 // Stage 3's second backend will plug in.
 
-import { WasmKernel, DEFAULT_WASM_URL } from './kernel/wasm-kernel.js';
+import { DEFAULT_WASM_URL } from './kernel/wasm-kernel.js';
+import { WorkerKernel } from './kernel/worker-kernel.js';
 import { STATUS } from './kernel/kernel.js';
 import { MSG } from './kernel/protocol.js';
 import { NotebookModel } from './notebook/model.js';
@@ -52,9 +53,14 @@ const DEFAULT_NOTEBOOK = {
 export class App {
   constructor(document_, options = {}) {
     this.document = document_;
-    this.kernel = options.kernel ?? new WasmKernel({
+    // A WorkerKernel by default, so a runaway cell freezes a worker
+    // rather than the tab. It degrades to running in the page by itself
+    // where a worker is impossible (the baked file:// build), which is
+    // why there is no branch here.
+    this.kernel = options.kernel ?? new WorkerKernel({
       wasmUrl: options.wasmUrl ?? DEFAULT_WASM_URL,
       moduleBytes: options.moduleBytes ?? null,
+      label: 'On-page WASM',
     });
     this.model = new NotebookModel();
     this.filename = 'notebook.ipynb';
@@ -412,6 +418,7 @@ export class App {
     on('add-markdown', () => this.model.addCell('markdown'));
     on('run-all', () => this.runAll());
     on('restart', () => this.restartKernel());
+    on('stop', () => this.stopKernel());
     on('clear-outputs', () => this.model.clearAllOutputs());
     on('save', () => this.saveFile());
 
@@ -428,12 +435,43 @@ export class App {
   }
 
   _renderStatus(status) {
+    this.document.body.dataset.kernelState = status;
+    // Enabled only while there is something to stop and a kernel that can
+    // stop it. Kept in the DOM and disabled rather than hidden: a control
+    // that appears and vanishes moves the toolbar under the pointer and
+    // drops in and out of the tab order mid-task.
+    const stop = this.document.querySelector('[data-toolbar="stop"]');
+    if (stop) stop.disabled = !(status === STATUS.BUSY && this.kernel.capabilities?.interrupt);
     if (!this.statusNode) return;
     this.statusNode.textContent = status;
     this.statusNode.dataset.status = status;
-    // A distinct name: `data-kernel-status` belongs to the indicator, and
-    // reusing it on <body> would make every selector for it ambiguous.
-    this.document.body.dataset.kernelState = status;
+  }
+
+  /**
+   * Stop the running cell.
+   *
+   * Deliberately not called "interrupt". Terminating the worker is the
+   * only way to stop a synchronous WASM call, and it takes the Lua state
+   * with it -- so this says so plainly rather than letting someone
+   * discover it by finding their variables gone.
+   */
+  async stopKernel() {
+    if (!this.kernel.capabilities?.interrupt) {
+      this._toast(this.kernel.fallbackReason
+        ? `This kernel runs in the page and cannot be stopped (${this.kernel.fallbackReason}).`
+        : 'This kernel cannot be stopped.', 'error');
+      return;
+    }
+    try {
+      await this.kernel.interrupt();
+      await this.refreshLanguage();
+      this.model.resetExecutionCounts();
+      this.console.note('Stopped. The kernel restarted, so every variable is gone.');
+      this._toast('Stopped the running cell.');
+    } catch (err) {
+      this._renderStatus(STATUS.DEAD);
+      this._toast(`Could not stop the kernel: ${err.message}`, 'error');
+    }
   }
 
   _renderFilename() {

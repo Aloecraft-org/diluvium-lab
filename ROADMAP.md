@@ -832,3 +832,44 @@ Confirmed from here — `200`, `server: cloudflare`, no such header — so the
 dropdown cannot fetch in a browser even though curl can. That is one line
 of server config, and it is the last thing between Stage 2 and working
 against the real host.
+
+### The kernel moved off the main thread ✅ done
+
+The single worst thing about the Lab in public: `while true do end` in a
+cell froze the whole tab, with no recovery but closing it and losing the
+notebook. `run_lua` is a synchronous WASM call and nothing preempts it, so
+there was no fix on the main thread — only somewhere else to put it.
+
+`src/kernel/worker-kernel.js` is a `Kernel` that owns a Worker;
+`src/kernel/kernel-worker.js` is the far side, and it owns a real
+`WasmKernel` and forwards to it. That split matters: "in the page" and "in
+a worker" are the same kernel rather than two implementations that drift.
+The whole port fit behind `src/kernel/kernel.js` — `app.js` needed one
+changed constructor call, which is the seam paying for itself.
+
+**A worker does not make the call interruptible; it makes it survivable.**
+The frozen thread is no longer the one painting the page, and
+`terminate()` is an immediate unconditional stop. That is the entire win
+and it is a large one. What it costs is the Lua state: this is not
+Jupyter's interrupt, which unwinds and leaves your variables alone. So
+`capabilities.interrupt` is true and `capabilities.interruptLosesState` is
+true beside it, the control says **Stop** rather than Interrupt, and the
+console says what it cost afterwards. CLAUDE.md's rule about not implying
+an interrupt tier that does not exist cuts both ways.
+
+Where a worker is impossible it falls back to running in the page and says
+so — `offThread`, `fallbackReason`, `interrupt: false`, and a disabled
+button rather than an inert one. That is the baked `file://` build, whose
+opaque origin browsers refuse to start workers from. It already trades
+runtime switching away for a related reason (no secure context, so no
+checksums), and a Stop button that silently did nothing would be worse
+than none.
+
+**The bug this nearly shipped with is worth recording.** The first version
+worked, passed the entire suite, and was running in the page the whole
+time. The worker resolves `wasmUrl` against its own base — `/src/kernel/`
+— so `vendor/libdiluvium_wasi.wasm` 404'd there, the fallback caught it,
+and every test still passed because the fallback is fully functional. The
+only symptom was that stop did nothing. `test/worker.spec.js` now asserts
+`offThread` explicitly and prints `fallbackReason` when it fails, because
+a silent fallback is the failure mode this design has.
