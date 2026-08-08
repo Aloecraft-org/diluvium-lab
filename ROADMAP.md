@@ -989,3 +989,29 @@ publish the parts **separately** rather than encoding them in a string:
 `releases.json` and BUILDSTATS.json already carry `version` and `commit`,
 and adding explicit `lua_version` and `channel` fields would retire the
 Lab's last parsing heuristic outright.
+
+##### What was done about it, and what was deliberately not
+
+Nothing was renamed. **No published tag may be renamed** — its checksums,
+the mirror layout, `vendor/PINNED_TAG` and the committed bytecode
+fixtures all point at it, and a rename breaks four things to fix a
+cosmetic one.
+
+What did land is the tolerant half, which is Lab-only and needs no
+coordination: `compareVersions` in `src/kernel/releases.js` understands
+**both** shapes and the registry now sorts with it instead of trusting the
+order the mirror happened to write. So the version dropdown is correct
+today with `_buildN` tags, correct afterwards with semver, and correct
+during the overlap when the mirror carries both. The rules it encodes:
+
+- `_release` marks the final build, so `5.4.7_release` == `5.4.7`.
+- A final release outranks every pre-release of the same version, whether
+  spelled `_buildN` or `-rc.N`.
+- Numbers compare as numbers, so `build10 > build2` — the trap in the
+  current scheme, since string order puts `10` first.
+- Everything after `+` is ignored, which is what would make
+  `1.4.0+lua.5.5.1` a safe way to carry the tracked Lua version.
+
+Doing the consumer first is the point. The producer can change whenever
+Diluvium is ready, in its own repository, on its own schedule, and nothing
+here has to be timed against it.

@@ -215,6 +215,104 @@ export function versionOf(release) {
   return String(release.tag).replace(/^v/, '').replace(/_release$/, '');
 }
 
+/**
+ * Take a version apart into something comparable.
+ *
+ * Two shapes have to work, and they have to work *together*, because a
+ * mirror will carry both for as long as the old tags exist:
+ *
+ *   v5.4.7_release      the current scheme: `_release` is the final one
+ *   v5.5.1_build1       ...and `_buildN` is an iteration on it
+ *   v5.5.1-rc.2         semver, which is where this is going
+ *   1.4.0+lua.5.5.1     semver with build metadata, ignored for ordering
+ *
+ * The Lab is deliberately the tolerant end of this. Making the consumer
+ * accept the new format *before* anything emits one means the day the
+ * release job changes, nothing here has to change with it and no tag has
+ * to be renamed — renaming a published tag would break its checksums, the
+ * mirror, `vendor/PINNED_TAG` and the committed bytecode fixtures all at
+ * once.
+ *
+ * @returns {{core: number[], pre: Array<string|number>|null}} `pre` is
+ *   null for a final release, which sorts *above* any pre-release of the
+ *   same core version — that is semver's rule and also the intuitive one.
+ */
+export function parseVersion(raw) {
+  const text = String(raw ?? '').trim().replace(/^v/i, '');
+  // Build metadata never affects ordering. Semver is explicit about this
+  // and it is the whole reason `1.4.0+lua.5.5.1` is a workable way to
+  // record which Lua a Diluvium tracks.
+  const [beforeMeta] = text.split('+');
+
+  let core = beforeMeta;
+  let pre = null;
+  const hyphen = beforeMeta.indexOf('-');
+  const underscore = beforeMeta.indexOf('_');
+
+  if (hyphen !== -1) {
+    core = beforeMeta.slice(0, hyphen);
+    pre = beforeMeta.slice(hyphen + 1);
+  } else if (underscore !== -1) {
+    core = beforeMeta.slice(0, underscore);
+    const legacy = beforeMeta.slice(underscore + 1);
+    // `_release` marks the final build rather than a pre-release of it,
+    // so `5.4.7_release` and `5.4.7` are the same version.
+    pre = /^release$/i.test(legacy) ? null : legacy;
+  }
+
+  return {
+    core: core.split('.').map((n) => Number.parseInt(n, 10) || 0),
+    pre: pre === null ? null : identifiers(pre),
+  };
+}
+
+/**
+ * Pre-release identifiers, dot-separated, numbers compared as numbers.
+ *
+ * `build1` is split into `['build', 1]` rather than left as one string,
+ * which is what makes `build10` sort after `build2` instead of before it
+ * — the trap in the current scheme, since string order puts `10` first.
+ */
+function identifiers(pre) {
+  return pre.split('.').flatMap((part) => {
+    const match = /^([A-Za-z-]*)(\d*)$/.exec(part);
+    if (!match) return [part];
+    const [, word, digits] = match;
+    return [...(word ? [word] : []), ...(digits ? [Number.parseInt(digits, 10)] : [])];
+  });
+}
+
+/** Newest first, for a dropdown. Returns <0, 0 or >0 like a comparator. */
+export function compareVersions(a, b) {
+  const va = parseVersion(a);
+  const vb = parseVersion(b);
+
+  const depth = Math.max(va.core.length, vb.core.length);
+  for (let i = 0; i < depth; i++) {
+    const diff = (va.core[i] ?? 0) - (vb.core[i] ?? 0);
+    if (diff !== 0) return diff;
+  }
+
+  if (va.pre === null && vb.pre === null) return 0;
+  if (va.pre === null) return 1;              // a release outranks its pre-releases
+  if (vb.pre === null) return -1;
+
+  for (let i = 0; i < Math.max(va.pre.length, vb.pre.length); i++) {
+    const x = va.pre[i];
+    const y = vb.pre[i];
+    if (x === undefined) return -1;           // fewer identifiers sorts lower
+    if (y === undefined) return 1;
+    if (x === y) continue;
+    // Numeric identifiers always sort below alphanumeric ones, and
+    // compare numerically among themselves.
+    if (typeof x === 'number' && typeof y === 'number') return x - y;
+    if (typeof x === 'number') return -1;
+    if (typeof y === 'number') return 1;
+    return x < y ? -1 : 1;
+  }
+  return 0;
+}
+
 /** `{ name: sha256 }` from an index's asset array, lowercased. */
 function assetChecksums(assets) {
   const out = {};

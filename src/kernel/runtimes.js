@@ -9,7 +9,7 @@
 // fails any of the first three must leave the running kernel exactly where
 // it was -- switching versions should never be how you lose a session.
 
-import { MirrorSource, ReleaseError, DEFAULT_MIRROR, KERNEL_ARTIFACT } from './releases.js';
+import { MirrorSource, ReleaseError, DEFAULT_MIRROR, KERNEL_ARTIFACT, compareVersions } from './releases.js';
 import { DEFAULT_WASM_URL, checkModuleBytes } from './wasm-kernel.js';
 import { WorkerKernel } from './worker-kernel.js';
 import { canVerify } from './digest.js';
@@ -60,6 +60,12 @@ export class RuntimeRegistry {
       // "why are there two 5.4.7s"; the bundled copy wins because it is
       // the one that works with no network.
       .filter((r) => (r.version ?? r.tag) !== this.pinnedLabel)
+      // Newest first, and sorted here rather than trusting the index --
+      // the order a mirror happens to write is not a promise, and the
+      // comparator understands both the current `_buildN` tags and the
+      // semver they are moving to, so this keeps working across that
+      // change without anyone timing the two.
+      .sort((a, b) => compareVersions(b.version ?? b.tag, a.version ?? a.tag))
       .map((r) => ({ id: r.tag, label: r.version ?? r.tag, tag: r.tag, remote: true }))];
   }
 

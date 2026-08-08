@@ -192,7 +192,9 @@ test.describe('no request at load', () => {
     expect(requests).toEqual(['releases.json']);
     // Both mirror entries are offered: neither is the bundled build,
     // which is 5.5.1_build1. The dedup case has its own test below.
-    await expect(select(page).locator('option')).toHaveText([/\(bundled\)/, '5.4.7', '5.5.0']);
+    // Newest first now that the registry sorts rather than trusting the
+            // order the mirror happened to write.
+    await expect(select(page).locator('option')).toHaveText([/\(bundled\)/, '5.5.0', '5.4.7']);
     await expect(select(page)).toHaveAttribute('data-count', '3');
   });
 
@@ -206,7 +208,7 @@ test.describe('no request at load', () => {
     });
     await openLab(page);
     await checkVersions(page);
-    await expect(select(page).locator('option')).toHaveText([/bundled/, '5.4.7', '5.5.0', '5.5.1-rc1']);
+    await expect(select(page).locator('option')).toHaveText([/bundled/, '5.5.1-rc1', '5.5.0', '5.4.7']);
   });
 });
 
@@ -508,5 +510,80 @@ test.describe('the real mirror index', () => {
     await expect(select(page).locator('option')).toHaveText([/5\.5\.1_build1 \(bundled\)/, '5.4.7']);
     expect(REAL.releases.find((r) => r.tag === 'v5.5.1_build1')
       .assets.find((a) => a.name === 'libdiluvium_wasi.wasm').sha256).toBe(sha256(kernelBytes));
+  });
+});
+
+// ---------------------------------------------------------------------
+
+test.describe('version ordering across the format change', () => {
+  // Diluvium's tags are moving from `v5.5.1_build1` to semver, and both
+  // will exist on the mirror for as long as the old tags do. The Lab is
+  // deliberately the tolerant end: it accepts the new shape *before*
+  // anything emits one, so the day the release job changes, nothing here
+  // changes with it and no published tag has to be renamed -- renaming one
+  // would break its checksums, the mirror, vendor/PINNED_TAG and the
+  // committed bytecode fixtures at once.
+  const ORDERINGS = [
+    ['5.5.1_build1', '5.4.7_release', 'a newer core wins'],
+    ['5.5.1_build2', '5.5.1_build1', 'later builds of one version'],
+    ['5.5.1_build10', '5.5.1_build2', 'build numbers compare as numbers, not strings'],
+    ['5.5.1', '5.5.1_build9', 'the final release outranks its builds'],
+    ['5.5.1-rc.2', '5.5.1-rc.1', 'semver pre-releases'],
+    ['5.5.1', '5.5.1-rc.9', 'the final release outranks its pre-releases'],
+    ['5.5.1-rc.10', '5.5.1-rc.9', 'semver numeric identifiers too'],
+    ['5.5.1-build.2', '5.5.1_build1', 'the new shape against the old'],
+    ['5.10.0', '5.9.0', 'ten is after nine'],
+  ];
+
+  test('the comparator puts every pair the right way round', async ({ page }) => {
+    await openLab(page);
+    const wrong = await page.evaluate(async (pairs) => {
+      const { compareVersions } = await import('./src/kernel/releases.js');
+      return pairs.filter(([bigger, smaller]) => !(compareVersions(bigger, smaller) > 0))
+        .map(([bigger, smaller, why]) => `${bigger} should beat ${smaller} (${why})`);
+    }, ORDERINGS);
+    expect(wrong).toEqual([]);
+  });
+
+  test('`_release` means final, not a pre-release of itself', async ({ page }) => {
+    await openLab(page);
+    const equal = await page.evaluate(async () => {
+      const { compareVersions } = await import('./src/kernel/releases.js');
+      return compareVersions('5.4.7_release', '5.4.7') === 0
+        && compareVersions('v5.4.7_release', '5.4.7') === 0;
+    });
+    expect(equal).toBe(true);
+  });
+
+  test('build metadata is carried but ignored for ordering', async ({ page }) => {
+    await openLab(page);
+    // `1.4.0+lua.5.5.1` is the shape that would let Diluvium have its own
+    // version while still saying which Lua it tracks. Semver ignores
+    // everything after `+`, which is what makes it safe to put facts there.
+    const ignored = await page.evaluate(async () => {
+      const { compareVersions } = await import('./src/kernel/releases.js');
+      return compareVersions('1.4.0+lua.5.5.1', '1.4.0+lua.5.4.7') === 0;
+    });
+    expect(ignored).toBe(true);
+  });
+
+  test('the dropdown is newest first, whatever order the mirror wrote', async ({ page }) => {
+    await stubMirror(page, {
+      // Deliberately shuffled, and mixing both tag shapes.
+      releases: [
+        { tag: 'v5.5.0', name: 'Diluvium 5.5.0' },
+        { tag: 'v5.5.1_build10', name: 'Diluvium 5.5.1_build10' },
+        { tag: 'v5.4.7_release', name: 'Diluvium 5.4.7' },
+        { tag: 'v5.5.1-rc.1', name: 'Diluvium 5.5.1-rc.1' },
+        { tag: 'v5.5.1_build2', name: 'Diluvium 5.5.1_build2' },
+      ],
+    });
+    await openLab(page);
+    await checkVersions(page);
+
+    await expect(select(page).locator('option')).toHaveText([
+      /\(bundled\)/,
+      '5.5.1-rc.1', '5.5.1_build10', '5.5.1_build2', '5.5.0', '5.4.7',
+    ]);
   });
 });
