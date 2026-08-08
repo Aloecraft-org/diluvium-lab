@@ -61,7 +61,21 @@ export class HighlightedEditor {
   }
 
   paint() {
-    this.code.innerHTML = highlightToHtml(this.textarea.value, this.getOptions());
+    // Colour is a nicety; the overlay lining up with the textarea is not.
+    // A throw in here used to propagate out through render() and take the
+    // whole page down with it -- no cells, no toolbar, no explanation --
+    // so a tokenizer that chokes on something now costs the colours and
+    // nothing else. `textContent` keeps every character in place, which is
+    // the property the caret depends on.
+    try {
+      this.code.innerHTML = highlightToHtml(this.textarea.value, this.getOptions());
+    } catch (err) {
+      this.code.textContent = this.textarea.value;
+      if (!HighlightedEditor._warnedAboutHighlighting) {
+        HighlightedEditor._warnedAboutHighlighting = true;
+        console.error('diluvium-lab: syntax highlighting failed; showing plain text', err);
+      }
+    }
     this.syncScroll();
   }
 

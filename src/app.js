@@ -125,24 +125,98 @@ export class App {
 
   // --- boot ---------------------------------------------------------
 
+  /**
+   * Bring the page up, and never leave it silently half-built.
+   *
+   * Every phase is separately guarded and the last two lines run whatever
+   * happened. The version this replaced put `_setModel` and `kernel.start`
+   * ahead of `_renderVersions` with nothing around them, so anything that
+   * threw or hung in either left a page with no runtime dropdown, no
+   * `data-ready`, and no explanation -- which is indistinguishable from
+   * "this browser is broken" and is exactly what a browser with unfamiliar
+   * restrictions will produce. A page that half-works and says why beats a
+   * page that stops and does not.
+   */
   async start() {
-    const restored = await this._restore();
-    this._setModel(restored ?? fromIpynb(DEFAULT_NOTEBOOK));
+    this.startupProblems = [];
+    const phase = async (what, fn) => {
+      try {
+        return await fn();
+      } catch (err) {
+        this.startupProblems.push(`${what}: ${err?.message ?? err}`);
+        console.error(`diluvium-lab: ${what} failed`, err);
+        return undefined;
+      }
+    };
 
-    this._renderStatus(this.kernel.status);
-    if (this.backendNode) this.backendNode.textContent = this.kernel.label ?? 'kernel';
+    const restored = await phase('restoring the saved notebook', () => this._restore());
+    await phase('rendering the notebook', () => {
+      this._setModel(restored ?? fromIpynb(DEFAULT_NOTEBOOK));
+    });
 
-    try {
-      await this.kernel.start();
-      await this.refreshLanguage();
+    await phase('showing the kernel status', () => {
+      this._renderStatus(this.kernel.status);
+      if (this.backendNode) this.backendNode.textContent = this.kernel.label ?? 'kernel';
+    });
+
+    const started = await phase('starting the kernel', async () => {
+      // A hang here used to be indistinguishable from a slow start, and
+      // nothing downstream ran. Now it becomes an ordinary failure.
+      await withTimeout(this.kernel.start(), 30_000, 'the kernel did not start within 30 seconds');
+      return true;
+    });
+    if (started) {
+      await phase('asking the kernel about its language', () => this.refreshLanguage());
       this.console.note('Kernel ready. Cells and this console share it.');
-    } catch (err) {
+    } else {
       this._renderStatus(STATUS.DEAD);
-      this._toast(err.message, 'error');
-      this.console.note(err.message);
     }
-    this._renderVersions();
+
+    // Always. The dropdown carries the bundled runtime unconditionally, so
+    // an empty one means this line never ran -- which is a fact worth being
+    // unable to hide.
+    await phase('listing runtimes', () => this._renderVersions());
+
+    if (this.startupProblems.length) {
+      const first = this.startupProblems[0];
+      this._toast(`${first} — see About for details.`, 'error');
+      for (const problem of this.startupProblems) this.console.note(problem);
+    }
     this.document.body.dataset.ready = 'true';
+    this.document.body.dataset.startupProblems = String(this.startupProblems.length);
+  }
+
+  /**
+   * What this browser will and will not let the Lab do.
+   *
+   * Reported rather than assumed, because the interesting cases are the
+   * ones nobody here can reproduce: a browser with strict privacy defaults
+   * blocks some of these, and "it does not work in X" is unactionable
+   * while "Worker: no, IndexedDB: no" is a bug report.
+   */
+  environment() {
+    const view = this.document.defaultView ?? {};
+    const has = (fn) => { try { return fn() ? 'yes' : 'no'; } catch (err) { return `blocked (${err.name})`; } };
+    return [
+      ['WebAssembly', has(() => typeof view.WebAssembly?.Module === 'function')],
+      ['Web Worker', has(() => typeof view.Worker === 'function')],
+      ['crypto.subtle', has(() => !!view.crypto?.subtle)],
+      ['secure context', has(() => view.isSecureContext)],
+      ['IndexedDB', has(() => !!view.indexedDB)],
+      ['structuredClone', has(() => typeof view.structuredClone === 'function')],
+      ['clipboard', has(() => !!view.navigator?.clipboard)],
+      // Appearance rather than function, and the reason a page can look
+      // wrong while working: nearly every border, background and muted
+      // colour in the stylesheet is a color-mix(), so a build without it
+      // renders a flat, unstyled-looking page that still runs.
+      ['CSS color-mix', has(() => view.CSS?.supports?.('color', 'color-mix(in srgb, red 50%, blue)'))],
+      ['<dialog>', has(() => typeof view.HTMLDialogElement !== 'undefined')],
+      // Everything the page loads is same-origin and unversioned, so a
+      // browser holding a stale copy of one module and a fresh copy of
+      // another is a real failure mode. Comparing this against the commit
+      // in the deployment is how you spot it.
+      ['Lab build', LAB_COMMIT ? LAB_COMMIT.slice(0, 12) : 'unversioned (served from a checkout)'],
+    ];
   }
 
   // --- runtimes -----------------------------------------------------
@@ -538,6 +612,10 @@ export class App {
         : 'in a worker (Stop available)'],
       ['Notebook format', 'ipynb 4.5'],
       ['Browser', view?.navigator?.userAgent ?? 'unknown'],
+      ...this.environment().map(([k, v]) => [`  ${k}`, v]),
+      ...(this.startupProblems?.length
+        ? [['Startup problems', this.startupProblems.join(' | ')]]
+        : []),
     ];
   }
 
@@ -604,4 +682,20 @@ export class App {
     clearTimeout(this._toastTimer);
     this._toastTimer = setTimeout(() => { this.toastNode.hidden = true; }, 6000);
   }
+}
+
+/**
+ * Reject rather than hang for ever.
+ *
+ * A promise that never settles is worse than one that rejects: nothing
+ * downstream runs, nothing reports, and the page sits half-built looking
+ * like a browser problem. This turns that into an ordinary failure with a
+ * sentence attached.
+ */
+function withTimeout(promise, ms, message) {
+  let timer;
+  return Promise.race([
+    Promise.resolve(promise).finally(() => clearTimeout(timer)),
+    new Promise((_, reject) => { timer = setTimeout(() => reject(new Error(message)), ms); }),
+  ]);
 }

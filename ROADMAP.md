@@ -1015,3 +1015,60 @@ during the overlap when the mirror carries both. The rules it encodes:
 Doing the consumer first is the point. The producer can change whenever
 Diluvium is ready, in its own repository, on its own schedule, and nothing
 here has to be timed against it.
+
+### Startup fails loudly now ⚠️ partly diagnosed
+
+Reported from the deployed site: no syntax highlighting, and an empty
+runtime dropdown. Chrome and Firefox fine; Chromium, Opera and Brave not;
+and fine locally under `npm start`.
+
+**The empty dropdown was the useful clue.** `entries()` returns the
+bundled runtime unconditionally, so an empty `<select>` cannot mean "found
+no runtimes" — it means `_renderVersions()` never ran. And in the old
+`start()` that method sat after `_setModel` and `await kernel.start()`
+with nothing guarding either, so anything that threw *or hung* in those
+left a page with no dropdown, no `data-ready`, and no explanation.
+
+That hole is now closed regardless of what caused it, because it is a bug
+on its own terms: each phase is guarded separately, `_renderVersions()`
+and `data-ready` happen whatever else failed, the kernel start has a
+30-second timeout so a hang becomes an ordinary error, and the problems
+are toasted, logged and listed in About. `test/startup.spec.js` covers
+kernel-cannot-start, storage-blocked and workers-blocked, and asserts the
+dropdown is populated in every one.
+
+The highlighter also fails soft now. A throw in `paint()` used to
+propagate out through `render()` and take the whole page with it; it falls
+back to plain text and keeps every character in place, which is what the
+caret position depends on. Colour is a nicety; the overlay lining up is
+not.
+
+**What has been ruled out**, by measurement rather than reasoning:
+
+- Not the deployment. Every file the domain serves is byte-identical to
+  HEAD, with correct MIME types.
+- Not Cloudflare rewriting anything, for the same reason.
+- Not a CSP, COOP or COEP — the responses carry none.
+- Not the `/lab/` subpath. Serving the repo under `/lab/` locally, without
+  the COOP/COEP headers `serve.mjs` sets, works: dropdown populated,
+  highlighting present, no errors.
+
+**What remains, and neither can be settled from here.** A real browser
+could not be pointed at the live host from this environment (the egress
+proxy's TLS interception is not trusted by Chromium), so the next step
+needs the console output from a browser that shows it.
+
+1. **A stale module graph from HTTP caching.** The deployed responses
+   carry no `Cache-Control` and no `ETag`, only `Last-Modified`, so
+   browsers apply heuristic freshness and may hold one module from before
+   a deploy alongside another from after. That fits every part of the
+   pattern — per-browser variation, and correctness locally where
+   `serve.mjs` sends `no-store`. **The host should send
+   `Cache-Control: no-cache` for `.html` and `.js`.** A hard reload in a
+   failing browser confirms or eliminates this in one keystroke.
+2. **A browser-version feature gap.** Chromium, Opera and Brave builds lag
+   Chrome. About now reports `CSS color-mix` and `<dialog>` support
+   alongside the rest, because nearly every border and muted colour in the
+   stylesheet is a `color-mix()` — a build without it renders a flat,
+   unstyled-looking page that still runs, which is close to what was
+   described.
