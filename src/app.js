@@ -16,6 +16,11 @@ import { ConsoleView } from './notebook/console.js';
 import { saveAutosave, loadAutosave, debounceSave } from './notebook/storage.js';
 import { FALLBACK_KEYWORDS, FALLBACK_GLOBALS } from './notebook/highlight.js';
 import { RuntimeRegistry, PINNED } from './kernel/runtimes.js';
+import { LAB_VERSION, LAB_COMMIT } from './version.js';
+// `BUNDLED`, not `PINNED`: runtimes.js already exports a `PINNED` (the
+// runtime *id*), and the bake flattens every module into one scope --
+// its duplicate-name guard is what caught this.
+import { BUNDLED } from '../vendor/pinned.js';
 
 /**
  * The notebook a first-time visitor gets. Embedded rather than fetched: the
@@ -442,6 +447,7 @@ export class App {
     on('run-all', () => this.runAll());
     on('restart', () => this.restartKernel());
     on('stop', () => this.stopKernel());
+    on('about', () => this.showAbout());
     on('clear-outputs', () => this.model.clearAllOutputs());
     on('save', () => this.saveFile());
 
@@ -495,6 +501,89 @@ export class App {
       this._renderStatus(STATUS.DEAD);
       this._toast(`Could not stop the kernel: ${err.message}`, 'error');
     }
+  }
+
+  // --- about --------------------------------------------------------
+
+  /**
+   * Everything needed to identify this build, in one place.
+   *
+   * The point is not vanity, it is bug reports: "it does not work" is
+   * unactionable, and nobody should have to be talked through finding a
+   * version. So the panel states the facts and hands over a block to
+   * paste. Every value is read from the thing it describes rather than
+   * assumed -- the kernel is asked for its own version, the runtime
+   * reports its own tag and checksum.
+   */
+  aboutFacts() {
+    const entry = this.registry.entries().find((e) => e.id === this.runtimeId);
+    const remote = this.registry.remote?.find((r) => r.tag === this.runtimeId);
+    const bundled = this.runtimeId === PINNED;
+    const view = this.document.defaultView;
+
+    return [
+      ['Lab', `${LAB_VERSION}${LAB_COMMIT ? ` (${LAB_COMMIT.slice(0, 12)})` : ' (commit unknown — served from a checkout)'}`],
+      ['Diluvium', bundled ? BUNDLED.version : (remote?.version ?? entry?.label ?? this.runtimeId)],
+      ['Release tag', bundled ? BUNDLED.tag : (remote?.tag ?? this.runtimeId)],
+      ['Source', bundled ? 'bundled with this build' : `downloaded from the mirror`],
+      ['Kernel sha256', bundled
+        ? BUNDLED.sha256
+        : (remote?.assets?.['libdiluvium_wasi.wasm'] ?? 'verified at download; not recorded here')],
+      ['Diluvium commit', bundled ? BUNDLED.commit : (remote ? 'see the mirror\'s BUILDINFO.txt' : 'unknown')],
+      ['Built', bundled ? BUNDLED.built : (remote?.published ?? 'unknown')],
+      // Asked of the running kernel, so it cannot disagree with reality.
+      ['Reported by the kernel', this.language.version ?? 'not started'],
+      ['Execution', this.kernel.offThread === false
+        ? `in the page — ${this.kernel.fallbackReason ?? 'no worker'}`
+        : 'in a worker (Stop available)'],
+      ['Notebook format', 'ipynb 4.5'],
+      ['Browser', view?.navigator?.userAgent ?? 'unknown'],
+    ];
+  }
+
+  /** The same facts as something a person can paste into an issue. */
+  aboutReport() {
+    return this.aboutFacts().map(([k, v]) => `${k}: ${v}`).join('\n');
+  }
+
+  showAbout() {
+    const dialog = this.document.querySelector('[data-about]');
+    if (!dialog) return;
+
+    const list = dialog.querySelector('[data-about-facts]');
+    if (list) {
+      list.replaceChildren(...this.aboutFacts().flatMap(([term, value]) => {
+        const dt = this.document.createElement('dt');
+        dt.textContent = term;
+        const dd = this.document.createElement('dd');
+        dd.textContent = value;          // text, never markup
+        return [dt, dd];
+      }));
+    }
+    const report = dialog.querySelector('[data-about-report]');
+    if (report) report.textContent = this.aboutReport();
+
+    dialog.showModal?.() ?? dialog.setAttribute('open', '');
+    this._bindAbout(dialog);
+  }
+
+  _bindAbout(dialog) {
+    if (dialog.dataset.bound === 'true') return;
+    dialog.dataset.bound = 'true';
+    dialog.addEventListener('click', async (event) => {
+      const action = event.target.closest('[data-about-action]')?.dataset.aboutAction;
+      if (action === 'close') dialog.close?.() ?? dialog.removeAttribute('open');
+      if (action !== 'copy') return;
+      try {
+        await this.document.defaultView.navigator.clipboard.writeText(this.aboutReport());
+        this._toast('Copied. Paste it into the bug report.');
+      } catch {
+        // Clipboard access is refused in plenty of ordinary situations.
+        // The text is already on screen and selectable, so say that
+        // rather than failing silently.
+        this._toast('Could not reach the clipboard — select the text above and copy it.', 'error');
+      }
+    });
   }
 
   _renderFilename() {

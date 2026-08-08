@@ -299,6 +299,37 @@
     }
   }
 
+  /* --- about --- */
+  dialog[data-about] {
+    max-width: min(46rem, calc(100vw - 2rem));
+    border: 1px solid var(--edge); border-radius: 10px;
+    padding: 1rem 1.1rem; background: Canvas; color: CanvasText;
+  }
+  dialog[data-about]::backdrop { background: rgb(0 0 0 / .4); }
+  dialog[data-about] h2 { margin: 0 0 .6rem; font-size: 1.1rem; }
+  dialog[data-about] dl {
+    display: grid; grid-template-columns: auto 1fr; gap: .2rem .8rem;
+    margin: 0 0 .8rem; font-size: .85rem;
+  }
+  dialog[data-about] dt { color: var(--quiet); }
+  dialog[data-about] dd { margin: 0; font-family: var(--mono); overflow-wrap: anywhere; }
+  .about-note { font-size: .82rem; color: var(--quiet); margin: .2rem 0 .4rem; }
+  [data-about-report] {
+    font-family: var(--mono); font-size: .76rem; margin: 0 0 .8rem;
+    background: var(--sunk); border: 1px solid var(--edge); border-radius: 6px;
+    padding: .5rem .6rem; max-height: 14rem; overflow: auto; white-space: pre-wrap;
+  }
+  .about-actions { display: flex; gap: .5rem; justify-content: flex-end; }
+  .about-actions button {
+    font: inherit; font-size: .85rem; padding: .3rem .7rem;
+    border: 1px solid var(--edge); border-radius: 6px;
+    background: transparent; color: inherit; cursor: pointer;
+  }
+  @media (max-width: 34rem) {
+    dialog[data-about] dl { grid-template-columns: 1fr; gap: 0 0; }
+    dialog[data-about] dt { margin-top: .45rem; }
+  }
+
 </style>
 </head>
 <body>
@@ -329,8 +360,26 @@
   <button type="button" data-toolbar="stop" disabled
           title="Stop the running cell. This restarts the kernel, so every variable is lost.">Stop</button>
   <button type="button" data-toolbar="restart" title="Discard every variable and start the kernel again">Restart kernel</button>
+  <button type="button" data-toolbar="about" title="Versions, and what to paste into a bug report">About</button>
   <span class="status" data-kernel-status role="status" aria-live="polite">starting</span>
 </header>
+
+<!-- A <dialog> rather than a div: modal focus containment, Escape to
+     close and the top layer all come from the element, and none of them
+     are things worth reimplementing badly. -->
+<dialog data-about aria-labelledby="about-title">
+  <h2 id="about-title">Diluvium Lab</h2>
+  <dl data-about-facts></dl>
+  <p class="about-note">
+    Paste the block below into a bug report — it says exactly which Lab,
+    which Diluvium, and which browser.
+  </p>
+  <pre data-about-report tabindex="0"></pre>
+  <div class="about-actions">
+    <button type="button" data-about-action="copy">Copy for a bug report</button>
+    <button type="button" data-about-action="close">Close</button>
+  </div>
+</dialog>
 
 <main class="sheet">
   <div class="cells" data-cells></div>

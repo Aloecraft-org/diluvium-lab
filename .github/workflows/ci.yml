@@ -50,6 +50,9 @@ jobs:
       - name: Install Chromium
         run: npx playwright install --with-deps chromium
 
+      - name: Check the version sources agree
+        run: node scripts/check-version.mjs
+
       - name: Test
         run: npm test
         env:
