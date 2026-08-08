@@ -128,7 +128,14 @@ async function collect(file) {
 }
 
 async function main() {
-  const html = await readFile(ENTRY_HTML, 'utf8');
+  let html = await readFile(ENTRY_HTML, 'utf8');
+  // Strip the import map first, before anything measures offsets into this
+  // string. It versions URLs the baked file never fetches -- every module
+  // is inlined -- so leaving it would name files that are not there. Doing
+  // it later shifted every offset and silently corrupted the output.
+  html = html.replace(
+    /<!-- BEGIN import map[\s\S]*?<!-- END import map -->\n?/,
+    '<!-- import map removed: this build inlines every module -->\n');
   const entry = extractEntryScript(html);
 
   const entryImports = findImports(entry.source);

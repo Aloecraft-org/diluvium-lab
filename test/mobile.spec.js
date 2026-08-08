@@ -101,3 +101,36 @@ test.describe('on a phone', () => {
     expect(overflow).toBe(0);
   });
 });
+
+test.describe('the toolbar on a small screen', () => {
+  test('takes one row, not half the screen', async ({ page }) => {
+    await openLab(page);
+    // Nine controls at 44px tall with `flex-wrap: wrap` stacked into four
+    // or five rows before a single cell was visible. One scrolling row
+    // keeps every control reachable and costs one row.
+    const metrics = await page.evaluate(() => {
+      const bar = document.querySelector('.toolbar').getBoundingClientRect();
+      return {
+        height: bar.height,
+        share: bar.height / window.innerHeight,
+        overflow: document.documentElement.scrollWidth - document.documentElement.clientWidth,
+      };
+    });
+    expect(metrics.share).toBeLessThan(0.2);
+    expect(metrics.overflow).toBe(0);          // it scrolls itself, not the page
+  });
+
+  test('and every control is still reachable by scrolling it', async ({ page }) => {
+    await openLab(page);
+    // Reachable, not merely present: `overflow-x: auto` is the whole
+    // reason hiding nothing is acceptable here.
+    const scrollable = await page.evaluate(() => {
+      const bar = document.querySelector('.toolbar');
+      return bar.scrollWidth > bar.clientWidth;
+    });
+    expect(scrollable).toBe(true);
+    await page.locator('[data-toolbar="about"]').scrollIntoViewIfNeeded();
+    await page.locator('[data-toolbar="about"]').tap();
+    await expect(page.locator('[data-about]')).toBeVisible();
+  });
+});

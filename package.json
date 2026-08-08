@@ -6,7 +6,9 @@
   "scripts": {
     "start": "node scripts/serve.mjs",
     "test": "playwright test",
-    "bake": "node scripts/bake.mjs"
+    "bake": "node scripts/bake.mjs",
+    "stamp": "node scripts/stamp-imports.mjs",
+    "release": "node scripts/stamp-imports.mjs && node scripts/check-version.mjs"
   },
   "devDependencies": {
     "@playwright/test": "~1.56.0"

@@ -247,7 +247,7 @@ test.describe('the stale-scripts banner', () => {
     // The worse case: nothing booted, so there is no version to compare.
     // A blank page that says nothing is what sent this investigation after
     // the wrong browser for two rounds.
-    await page.route('**/src/app.js', (route) => route.abort('failed'));
+    await page.route('**/src/app.js*', (route) => route.abort('failed'));
     await page.goto('/');
     const banner = page.locator('[data-stale-banner]');
     await expect(banner).toBeVisible({ timeout: 20_000 });
@@ -257,11 +257,42 @@ test.describe('the stale-scripts banner', () => {
   test('its reload button adds a query the cache has never seen', async ({ page }) => {
     // `location.reload(true)` has been a no-op for years; a fresh URL is
     // what actually re-fetches through a CDN that is holding an old copy.
-    await page.route('**/src/app.js', (route) => route.abort('failed'));
+    await page.route('**/src/app.js*', (route) => route.abort('failed'));
     await page.goto('/');
     await expect(page.locator('[data-stale-banner]')).toBeVisible({ timeout: 20_000 });
     await page.locator('[data-stale-banner] button').click();
     await page.waitForURL(/cachebust=/, { timeout: 10_000 });
     expect(page.url()).toMatch(/[?&]cachebust=/);
+  });
+});
+
+test.describe('module URLs carry the version', () => {
+  test('so a cache cannot serve half a build', async ({ page }) => {
+    const fetched = [];
+    page.on('request', (r) => {
+      if (r.url().includes('/src/') && r.url().endsWith('.js') === false) fetched.push(r.url());
+    });
+    await page.addInitScript(() => indexedDB.deleteDatabase('diluvium-lab'));
+    await boot(page);
+
+    // Every module comes from a URL a cache has never seen before this
+    // release, which is what makes a stale graph impossible rather than
+    // merely detectable.
+    const versioned = fetched.filter((u) => /\?v=\d+\.\d+\.\d+/.test(u));
+    expect(versioned.length).toBeGreaterThan(10);
+    expect(fetched.filter((u) => !/\?v=/.test(u))).toEqual([]);
+  });
+
+  test('including the worker, which an import map cannot reach', async ({ page }) => {
+    const workerUrls = [];
+    page.on('request', (r) => {
+      if (r.url().includes('kernel-worker.js')) workerUrls.push(r.url());
+    });
+    await page.addInitScript(() => indexedDB.deleteDatabase('diluvium-lab'));
+    await boot(page);
+    // `new Worker()` is outside module resolution, so this one is stamped
+    // by hand at its use site rather than by the map.
+    expect(workerUrls.length).toBeGreaterThan(0);
+    expect(workerUrls.every((u) => /\?v=\d+\.\d+\.\d+/.test(u))).toBe(true);
   });
 });

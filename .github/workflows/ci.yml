@@ -53,6 +53,11 @@ jobs:
       - name: Check the version sources agree
         run: node scripts/check-version.mjs
 
+      # The import map is what pins every module URL to a version. If it is
+      # stale, a deploy ships a graph pinned to the previous release.
+      - name: Check the import map is current
+        run: node scripts/stamp-imports.mjs --check
+
       - name: Test
         run: npm test
         env:

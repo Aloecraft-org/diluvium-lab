@@ -291,6 +291,20 @@ disables browser caching. Check it with:
 curl -sI <base>/src/app.js | grep -i 'cache-control\|cf-cache-status'
 ```
 
+**Version the module URLs, and none of this can bite you.** `npm run stamp`
+writes an import map into `index.html` pinning every module to
+`?v=<version>`; bump the version, re-stamp, deploy, and every URL is one a
+cache has never seen. That is the only fix that does not depend on the CDN
+being configured correctly, and CI fails if the map is stale. It runs at
+release time, not development time — a checkout still runs as-is, because
+the map points at the same files with a query the server ignores.
+
+One honest gap: a module worker does not inherit the document's import
+map, so the kernel worker's own imports resolve unversioned. The worker
+script itself is stamped by hand, which shrinks the window, and a kernel
+that misbehaves falls back to running in the page — but the host still
+should not cache unversioned scripts.
+
 **Purging matters as much as the header.** Changing `Cache-Control`
 governs what gets stored *next*; it does not evict what a CDN already
 holds. After a deploy, purge — and then check that the edge agrees with

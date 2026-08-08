@@ -30,12 +30,21 @@
 // context, so no checksums); losing stop is the same kind of trade and it
 // is better than not opening.
 
+import { LAB_VERSION } from '../version.js';
 import { Kernel, STATUS } from './kernel.js';
 import { MSG } from './protocol.js';
 import { WasmKernel, DEFAULT_WASM_URL } from './wasm-kernel.js';
 
-/** Where the worker script lives, relative to this module. */
-export const WORKER_URL = new URL('./kernel-worker.js', import.meta.url);
+/**
+ * Where the worker script lives, relative to this module.
+ *
+ * Versioned by hand because an import map does not apply to `new Worker()`
+ * -- worker scripts are fetched outside module resolution, so this is the
+ * one URL in the graph that `scripts/stamp-imports.mjs` cannot reach. A
+ * stale worker is the same class of bug as a stale module and deserves the
+ * same fix.
+ */
+export const WORKER_URL = new URL(`./kernel-worker.js?v=${LAB_VERSION}`, import.meta.url);
 
 /** How long to wait for the worker to come up before giving up on it. */
 const HANDSHAKE_MS = 15_000;

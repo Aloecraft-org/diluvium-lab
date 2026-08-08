@@ -50,4 +50,18 @@ if (meta !== declared) {
   process.exit(1);
 }
 
-console.log(`check-version: ${declared} (package.json, src/version.js, index.html)`);
+// The import map is what actually decides which URLs the browser fetches,
+// so a stale one is not cosmetic -- it would pin the whole graph to an old
+// version and defeat the point of stamping it.
+const stamped = [...html.matchAll(/\?v=([0-9A-Za-z.+-]+)"/g)].map((m) => m[1]);
+const wrong = [...new Set(stamped)].filter((v) => v !== declared);
+if (wrong.length) {
+  console.error('check-version: index.html\'s import map is stamped with the wrong version');
+  console.error(`  found      ${wrong.join(', ')}`);
+  console.error(`  expected   ${declared}`);
+  console.error('  Run: node scripts/stamp-imports.mjs');
+  process.exit(1);
+}
+
+console.log(
+  `check-version: ${declared} (package.json, src/version.js, index.html, ${stamped.length} stamped imports)`);

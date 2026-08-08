@@ -1154,3 +1154,44 @@ build, while `/lab/src/app.js?bust=…` returned `MISS` with the correct
 `src/version.js`, the `diluvium-lab-build` meta tag, and the inline
 constant — because that constant is what decides whether every visitor
 sees a banner.
+
+#### Versioned module URLs ✅ done
+
+The caching diagnosis was right about the mechanism and wrong about the
+remedy: "configure the CDN, purge, and reload" leaves you at the mercy of
+a configuration you cannot see failing. Every deploy is another chance for
+the same silent skew, and the failure mode is a clean console.
+
+`npm run stamp` writes an **import map** into `index.html` pinning all 28
+modules to `?v=<LAB_VERSION>`. A different URL is a different cache entry,
+so bumping the version invalidates the whole graph atomically and no cache
+anywhere can serve half a build. This is the only fix that does not depend
+on the CDN behaving; CI fails if the map is stale.
+
+Why an import map rather than a query on the entry point: static `import`
+specifiers cannot be rewritten at runtime, and a query does not propagate
+— a relative import inside `app.js` resolves against `/src/app.js` and
+drops it. An import map remaps *resolved* URLs, and it lives in
+`index.html`, which is the one file always fetched fresh. It is generated
+at release time, so the un-bundled page still runs as-is from a checkout.
+
+**The gap, stated rather than glossed:** a module worker does not inherit
+the document's import map, so the kernel worker's own imports resolve
+unversioned. The worker script URL is stamped by hand at its use site,
+which shrinks the window to that module's dependencies, and a kernel that
+misbehaves falls back to running in the page. It is smaller, not zero.
+
+Also fixed while here: the bake stripped the import map *after* computing
+the offsets of the entry script, which shifted every index and silently
+corrupted the output — caught by `bake.spec.js` noticing the baked file
+had started fetching `src/app.js`. It strips first now.
+
+#### The mobile toolbar ✅ fixed
+
+Nine controls at a 44px touch-target minimum, with `flex-wrap: wrap`,
+stacked into four or five rows before a single cell was visible — a
+regression introduced by the touch-target fix itself. It is one
+horizontally scrolling row now: **56px, 7–10% of the viewport** on a Pixel
+7 and an iPhone SE, with nothing hidden and no page-level overflow. The
+title and filename are dropped at that width, since neither tells a reader
+anything they do not already know.
