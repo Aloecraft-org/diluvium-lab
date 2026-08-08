@@ -32,6 +32,9 @@ export class HighlightedEditor {
 
     this.pre = document.createElement('pre');
     this.pre.className = 'editor-highlight';
+    // The <pre> is a coloured copy of the textarea's text, sitting behind
+    // it. To a screen reader it is the same content twice -- and the copy
+    // is the one that cannot be edited or navigated. Hide it.
     this.pre.setAttribute('aria-hidden', 'true');
     this.code = document.createElement('code');
     this.pre.appendChild(this.code);

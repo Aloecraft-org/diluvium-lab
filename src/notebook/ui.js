@@ -36,7 +36,14 @@ export function el(tag, attrs = {}, kids = []) {
 }
 
 function button(action, label, title) {
-  return el('button', { type: 'button', 'data-action': action, title: title ?? label }, [label]);
+  // `title` is a tooltip and a *fallback* accessible name -- it is not
+  // announced reliably, and several of these buttons are a single glyph
+  // (`↑`, `✕`) that a screen reader either skips or reads as punctuation.
+  // aria-label is the name; title stays for the sighted tooltip.
+  return el('button', {
+    type: 'button', 'data-action': action,
+    title: title ?? label, 'aria-label': title ?? label,
+  }, [label]);
 }
 
 /** Trim text for display, reporting what was held back. */
@@ -78,7 +85,13 @@ function withCodeSpans(text) {
 }
 
 export function renderOutputs(cell, expandedSet) {
-  const wrap = el('div', { class: 'outputs', 'data-outputs': cell.id });
+  // Output arrives asynchronously, so a screen reader user gets nothing
+  // unless the region announces itself. `polite` rather than `assertive`:
+  // a cell finishing should not interrupt what is already being read.
+  const wrap = el('div', {
+    class: 'outputs', 'data-outputs': cell.id,
+    role: 'status', 'aria-live': 'polite', 'aria-atomic': 'false',
+  });
   for (const [i, output] of (cell.outputs ?? []).entries()) {
     const key = `${cell.id}:${i}`;
     const expanded = expandedSet.has(key);

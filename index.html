@@ -254,6 +254,51 @@
     background: Canvas; font-size: .86rem; z-index: 10;
   }
   [data-toast][data-kind="error"] { border-color: var(--bad); color: var(--bad); }
+  /* --- touch and small screens ---
+     The pitch is "try the language with nothing installed", which is
+     strongest exactly where installing is hardest: a phone. These rules
+     are keyed off `pointer: coarse` rather than a width, because the
+     thing that changes is the input device, not the viewport. */
+  @media (pointer: coarse) {
+    /* 44px is the usual floor for a touch target. The toolbar buttons
+       were about 24px tall, which is a miss more often than a hit. */
+    .toolbar button, .cell-tools button, .show-all,
+    .version select, [data-console-input] {
+      min-height: 44px;
+      padding-inline: .7rem;
+    }
+    /* iOS zooms the page in when a focused field is under 16px, and does
+       not zoom back out. The overlay must match or the highlight drifts
+       off the glyphs -- both boxes, always. */
+    textarea[data-editor], [data-console-input], .editor-highlight {
+      font-size: 16px;
+    }
+    /* There is no hover on a touch screen, so a toolbar revealed by it is
+       a toolbar that is permanently dimmed. */
+    .cell-tools { opacity: 1; }
+  }
+
+  @media (max-width: 34rem) {
+    .sheet { padding: .5rem .4rem 4rem; }
+    .cell { padding: .35rem .25rem; }
+    /* Outputs were indented to line up under the prompt, which on a
+       narrow screen spends a third of the width on alignment. */
+    .outputs { margin-left: 0; }
+    .prompt { min-width: 0; }
+    .toolbar { gap: .3rem; padding: .4rem .5rem; }
+    .toolbar .title { width: 100%; margin-right: 0; }
+  }
+
+  /* Nothing here is load-bearing animation, so honour the preference
+     rather than making someone watch it. */
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+      animation-duration: .01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: .01ms !important;
+    }
+  }
+
 </style>
 </head>
 <body>
@@ -284,7 +329,7 @@
   <button type="button" data-toolbar="stop" disabled
           title="Stop the running cell. This restarts the kernel, so every variable is lost.">Stop</button>
   <button type="button" data-toolbar="restart" title="Discard every variable and start the kernel again">Restart kernel</button>
-  <span class="status" data-kernel-status>starting</span>
+  <span class="status" data-kernel-status role="status" aria-live="polite">starting</span>
 </header>
 
 <main class="sheet">
@@ -304,7 +349,7 @@
   </div>
 </section>
 
-<div data-toast hidden></div>
+<div data-toast hidden role="status" aria-live="polite"></div>
 
 <script type="module">
 import { App } from './src/app.js';
