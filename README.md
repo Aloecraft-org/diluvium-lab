@@ -116,8 +116,14 @@ The layout is plain files:
 ```
 <base>/index.json
 <base>/<tag>/libdiluvium_wasi.wasm
-<base>/<tag>/SHA256SUMS.txt
+<base>/<tag>/SHA256SUMS.txt        (or BUILDINFO.txt)
 ```
+
+`index.json` is the only file the Lab cannot do without — it is how the
+dropdown learns which tags exist, and there is no way to enumerate a
+static directory from a browser. The checksum may come from either
+`SHA256SUMS.txt` or `BUILDINFO.txt`, since the release job publishes both
+and the build manifest embeds the same `<sha256>  <filename>` lines.
 
 ```json
 {

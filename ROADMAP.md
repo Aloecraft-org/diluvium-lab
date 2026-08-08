@@ -496,6 +496,40 @@ Two things fell out of having real 5.5 bytes to hand:
 kernel needs `libdiluvium_wasi.wasm` published for a 5.5 tag, and the
 version dropdown needs the mirror to index it.
 
+### Keywords that are not reserved words
+
+The highlighter takes its keyword set from the running kernel, and until
+5.5 that was a solved problem: offer a candidate superset, try each word
+as an identifier, and whatever fails is reserved. 5.4.7 answers with
+stock Lua's 22.
+
+5.5 breaks that probe on purpose. `switch`, `defer`, `with` and `global`
+are **contextual** keywords — recognised at the start of a statement and
+left as ordinary identifiers everywhere else, so that a program with a
+variable called `switch` keeps working. `LUA_COMPAT_GLOBAL` de-reserves
+`global` specifically to get it into the same category. So `local switch
+= 1` compiles on 5.5.1, and the identifier probe concludes, correctly and
+uselessly, that `switch` is not reserved.
+
+The fix is a second probe that compiles a snippet which only parses if
+the word is a statement keyword — `switch x do end`, `defer do end`,
+`with x = 1 do end`, `global x = 1`. Each was checked both ways against
+real builds: all four compile on native 5.5.1 and none compiles on the
+vendored 5.4.7, which is pinned in test/highlight.spec.js because a
+snippet that accidentally parsed on 5.4 would colour a word that build
+treats as a name.
+
+This is the first place the Lab has had to know any 5.5 *grammar* rather
+than just ask the kernel questions. That is the cost of a keyword that is
+not a reserved word, and it is worth stating plainly: **a language
+feature the kernel cannot be asked about is a feature the Lab has to be
+told about.** If a future build can name its own contextual keywords —
+even a plain list in a `diluvium` table — this list goes away and the
+probe becomes exact.
+
+Completions are unaffected: they enumerate `_G` in the live kernel, so
+new stdlib names arrive with no change here.
+
 Compiling is not running: the panel loads and dumps the chunk and executes
 nothing, which is what makes "paste bytecode someone sent you" a safe thing
 to offer.

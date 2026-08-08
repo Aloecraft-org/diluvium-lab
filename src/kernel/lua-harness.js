@@ -51,6 +51,29 @@ export const KEYWORD_CANDIDATES = [
   'unless', 'loop', 'each', 'with', 'where', 'type',
 ];
 
+/**
+ * Keywords that are keywords only in statement position, with a snippet
+ * that parses if and only if the build has them.
+ *
+ * Diluvium 5.5 introduces these as *contextual* keywords precisely so
+ * that they stay usable as variable names, which is why the identifier
+ * probe above cannot see them. Each snippet is one the compiler's own
+ * lookahead test accepts: `switch (`, `switch "s"` and `switch {}` are
+ * deliberately still function calls, so the probes avoid those shapes.
+ *
+ * Verified both ways against real builds -- every snippet compiles on
+ * 5.5.1 and fails on 5.4.7.
+ */
+export const CONTEXTUAL_CANDIDATES = [
+  ['switch', 'switch x do end'],
+  ['defer', 'defer do end'],
+  ['with', 'with x = 1 do end'],
+  // `global` is reserved outright unless the build sets LUA_COMPAT_GLOBAL,
+  // which the shipped 5.5.1 does -- so it needs both probes to be safe,
+  // and appears in the list above as well.
+  ['global', 'global x = 1'],
+];
+
 const SEP = '\u0001';
 
 export function makeNonce() {
@@ -381,18 +404,46 @@ ${emit(RECORD.BYTECODE, '__s')}
  *
  * Reserved words cannot be probed by enumeration -- Lua exposes no list --
  * so a candidate superset is offered and each one is tested by trying to
- * use it as an identifier. 5.4.7 reserves exactly stock Lua's 22; a 5.5
- * build that adds `switch` answers with 23 and the editor follows without
- * anyone editing a table. Globals need no candidates: `_G` enumerates.
+ * use it as an identifier. 5.4.7 reserves exactly stock Lua's 22.
+ *
+ * That test alone is not enough for 5.5, and the reason is a deliberate
+ * design decision in the compiler rather than an oversight here.
+ * Diluvium 5.5 adds `switch`, `defer`, `with` and `global` as
+ * **contextual** keywords: recognised only at the start of a statement,
+ * and left as ordinary identifiers everywhere else, so that existing code
+ * with a variable called `switch` keeps working. `local switch = 1`
+ * therefore compiles on 5.5, and an identifier probe concludes -- quite
+ * correctly, and uselessly -- that `switch` is not reserved.
+ *
+ * So a second probe compiles a snippet that only parses if the word *is* a
+ * statement keyword. `switch x do end` is a syntax error on 5.4.7 and a
+ * switch statement on 5.5.1. This does mean the Lab knows a little 5.5
+ * grammar, which is the cost of a keyword that is not a reserved word;
+ * the list degrades safely, since a snippet that does not compile simply
+ * adds nothing.
+ *
+ * Globals need no candidates: `_G` enumerates.
  */
 export function languageInfoChunk(candidates, nonce) {
   const list = candidates.map((w) => `"${w}"`).join(', ');
+  const contextual = CONTEXTUAL_CANDIDATES
+    .map(([word, snippet]) => `{ "${word}", ${luaLongString(snippet)} }`).join(', ');
   return `local __N = "${nonce}"
-local __reserved = {}
-for _, __w in ipairs({ ${list} }) do
-  if not load("local " .. __w .. " = 1", "=probe", "t") then
+local __reserved, __seen = {}, {}
+local function __keyword(__w)
+  if not __seen[__w] then
+    __seen[__w] = true
     __reserved[#__reserved + 1] = __w
   end
+end
+for _, __w in ipairs({ ${list} }) do
+  if not load("local " .. __w .. " = 1", "=probe", "t") then __keyword(__w) end
+end
+-- A word can be reserved outright or contextual depending on how the
+-- build was configured, so both probes run and the set absorbs the
+-- overlap.
+for _, __p in ipairs({ ${contextual} }) do
+  if load(__p[2], "=probe", "t") then __keyword(__p[1]) end
 end
 local __globals = {}
 for __k in pairs(_G) do

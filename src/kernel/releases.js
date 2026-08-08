@@ -17,8 +17,12 @@
 
 import { sha256Hex } from './digest.js';
 
-/** Where the Lab looks for runtimes it did not ship with. */
-export const DEFAULT_MIRROR = 'https://diluvium.aloecraft.org/releases/';
+/**
+ * Where the Lab looks for runtimes it did not ship with.
+ *
+ * `/release/`, singular — that is the path the mirror actually serves.
+ */
+export const DEFAULT_MIRROR = 'https://diluvium.aloecraft.org/release/';
 
 /** The artifact the Lab runs. Never the command module, never luac. */
 export const KERNEL_ARTIFACT = 'libdiluvium_wasi.wasm';
@@ -45,11 +49,17 @@ export class ReleaseSource {
  *
  *   <base>/index.json
  *   <base>/<tag>/libdiluvium_wasi.wasm
- *   <base>/<tag>/SHA256SUMS.txt
+ *   <base>/<tag>/SHA256SUMS.txt      (or BUILDINFO.txt -- see below)
  *
  * index.json is `{ "schema": 1, "releases": [ { "tag", "version",
  * "published" } ] }`. Nothing else is required of the host: no API, no
  * redirects, no auth. See README for the full contract.
+ *
+ * The checksum can come from either `SHA256SUMS.txt` or `BUILDINFO.txt`,
+ * because the release job publishes both and BUILDINFO.txt embeds the same
+ * `<sha256>  <filename>` lines under an `Artifacts` heading. Accepting
+ * both means a mirror that carries only the build manifest still works,
+ * and it costs one extra request only when the first file is absent.
  */
 export class MirrorSource extends ReleaseSource {
   constructor(baseUrl = DEFAULT_MIRROR) {
@@ -77,6 +87,16 @@ export class MirrorSource extends ReleaseSource {
     return response;
   }
 
+  /** Like `_get`, but a missing file is `null` rather than a throw. */
+  async _getOptional(path) {
+    try {
+      return await this._get(path, path);
+    } catch (error) {
+      if (error instanceof ReleaseError && /is not on the mirror/.test(error.message)) return null;
+      throw error;                            // unreachable host, CORS: still fatal
+    }
+  }
+
   async list() {
     const index = await (await this._get('index.json', 'the release index')).json();
     if (!Array.isArray(index?.releases)) {
@@ -93,16 +113,34 @@ export class MirrorSource extends ReleaseSource {
   }
 
   /**
+   * The kernel's expected checksum for `tag`, or null.
+   *
+   * SHA256SUMS.txt first, because it is the file `scripts/fetch-runtime.sh`
+   * checks, so the browser path and the shell path agree on what "correct"
+   * means. BUILDINFO.txt carries the identical lines and is the fallback.
+   */
+  async checksumFor(tag) {
+    const dir = encodeURIComponent(tag);
+    for (const file of ['SHA256SUMS.txt', 'BUILDINFO.txt']) {
+      const response = await this._getOptional(`${dir}/${file}`);
+      if (!response) continue;
+      const found = parseChecksums(await response.text()).get(KERNEL_ARTIFACT);
+      if (found) return found;
+    }
+    return null;
+  }
+
+  /**
    * Download and verify. The Lab fetches a binary and then executes it, so
-   * the checksum is not a nicety -- and it is checked against the release's
-   * own SHA256SUMS.txt, the same file `scripts/fetch-runtime.sh` uses, so
-   * the browser path and the shell path agree on what "correct" means.
+   * the checksum is not a nicety.
    */
   async fetchKernel(tag) {
-    const sums = await (await this._get(`${encodeURIComponent(tag)}/SHA256SUMS.txt`, 'SHA256SUMS.txt')).text();
-    const expected = parseChecksums(sums).get(KERNEL_ARTIFACT);
+    const expected = await this.checksumFor(tag);
     if (!expected) {
-      throw new ReleaseError(`${tag}'s SHA256SUMS.txt does not list ${KERNEL_ARTIFACT}`);
+      throw new ReleaseError(
+        `${tag} publishes no checksum for ${KERNEL_ARTIFACT}. Looked for `
+        + `SHA256SUMS.txt and BUILDINFO.txt under ${this.url(`${encodeURIComponent(tag)}/`)}. `
+        + 'A runtime that cannot be verified is not loaded.');
     }
 
     const response = await this._get(`${encodeURIComponent(tag)}/${KERNEL_ARTIFACT}`, KERNEL_ARTIFACT);
@@ -117,7 +155,13 @@ export class MirrorSource extends ReleaseSource {
   }
 }
 
-/** `<hex>  <filename>` per line, the format sha256sum writes. */
+/**
+ * `<hex>  <filename>` per line, the format sha256sum writes.
+ *
+ * Also parses BUILDINFO.txt, without needing to know it is doing so: the
+ * manifest's prose header has no line matching this shape, and its
+ * `Artifacts` section is exactly sha256sum output.
+ */
 export function parseChecksums(text) {
   const sums = new Map();
   for (const line of text.split('\n')) {

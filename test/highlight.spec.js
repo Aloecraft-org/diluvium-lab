@@ -381,8 +381,18 @@ test.describe('the keyword set comes from the kernel', () => {
     expect(language.keywords).toContain('local');
     expect(language.keywords).toContain('goto');
     expect(language.keywords).toHaveLength(22);
-    // and does not reserve the 5.5 additions, so they must not be coloured
-    expect(language.keywords).not.toContain('switch');
+    // and does not have the 5.5 additions, so they must not be coloured.
+    //
+    // This is the false-positive guard for the contextual-keyword probe.
+    // Those four are not found by asking whether the word is a valid
+    // identifier -- on 5.5 they deliberately are -- so they are found by
+    // compiling `switch x do end` and friends instead. On 5.4.7 every one
+    // of those snippets must fail to compile, and this is where that is
+    // checked. A probe snippet that accidentally parses on 5.4 would
+    // colour a word this build treats as an ordinary name.
+    for (const word of ['switch', 'defer', 'with', 'global']) {
+      expect(language.keywords, `${word} must not be a 5.4.7 keyword`).not.toContain(word);
+    }
     expect(language.version).toContain('diluvium');
 
     expect(language.globals).toContain('print');

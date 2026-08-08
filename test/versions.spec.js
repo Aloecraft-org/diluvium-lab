@@ -15,7 +15,10 @@ import { createHash } from 'node:crypto';
 // unauthenticated GitHub allows 60 requests an hour, which a test suite
 // eats in a minute; and the mirror does not exist yet.
 
-const MIRROR = 'https://diluvium.aloecraft.org/releases/';
+// Imported rather than repeated: this const used to be a copy, and when
+// the real mirror turned out to serve /release/ rather than /releases/,
+// the copy is what failed instead of the code.
+const { DEFAULT_MIRROR: MIRROR } = await import('../src/kernel/releases.js');
 
 const kernelBytes = await readFile(new URL('../vendor/libdiluvium_wasi.wasm', import.meta.url));
 const sha256 = (buf) => createHash('sha256').update(buf).digest('hex');
@@ -25,6 +28,22 @@ const EMPTY_MODULE = Buffer.from([0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00
 
 function sumsFor(buf, name = 'libdiluvium_wasi.wasm') {
   return `${sha256(buf)}  ${name}\n${sha256(Buffer.from('other'))}  diluvium_wasi.wasm\n`;
+}
+
+/** The release job's build manifest, in the shape vendor/BUILDINFO.txt has. */
+function buildinfoFor(buf) {
+  return [
+    'Diluvium build manifest',
+    '=======================',
+    'version    : 5.5.0',
+    'commit     : 0000000000000000000000000000000000000000',
+    'built      : 2026-08-06T10:00:00Z',
+    '',
+    'Artifacts',
+    '---------',
+    sumsFor(buf).trimEnd(),
+    '',
+  ].join('\n');
 }
 
 /**
@@ -48,8 +67,12 @@ async function stubMirror(page, {
 
     const path = url.slice(MIRROR.length);
     if (path in bodies) {
-      const body = bodies[path];
-      return route.fulfill({ status: 200, body, contentType: 'application/octet-stream' });
+      const override = bodies[path];
+      // An override is a body, or `{ status, body }` when a test needs to
+      // say "this file is not here" rather than "this file is wrong".
+      const { status = 200, body } = (override && typeof override === 'object' && !Buffer.isBuffer(override))
+        ? override : { body: override };
+      return route.fulfill({ status, body, contentType: 'application/octet-stream' });
     }
     if (path === 'index.json') {
       return route.fulfill({ status: 200, contentType: 'application/json',
@@ -251,6 +274,29 @@ test.describe('integrity', () => {
     await select(page).selectOption('v5.5.0');
     await expect(page.locator('[data-toast]')).toContainText('SHA256SUMS.txt');
     await expect(page.locator('[data-kernel-status]')).toHaveText('idle');
+  });
+
+  test('BUILDINFO.txt can carry the checksum when SHA256SUMS.txt is absent', async ({ page }) => {
+    // The release job publishes both, and a mirror may carry only the
+    // build manifest. Its Artifacts section is sha256sum output with a
+    // prose header, so the same parser reads it.
+    const requests = await stubMirror(page, {
+      bodies: {
+        'v5.5.0/SHA256SUMS.txt': { status: 404, body: 'not found' },
+        'v5.5.0/BUILDINFO.txt': buildinfoFor(kernelBytes),
+      },
+    });
+    await openLab(page);
+    await checkVersions(page);
+
+    await select(page).selectOption('v5.5.0');
+    await expect(page.locator('[data-kernel-status]')).toHaveText('idle', { timeout: 30_000 });
+    await expect(select(page)).toHaveValue('v5.5.0');
+    expect(requests).toContain('v5.5.0/BUILDINFO.txt');
+
+    // It really ran: the fallback path is not a shortcut past verification.
+    const cell = await runInCell(page, 'return 6 * 7');
+    await expect(cell.locator('[data-outputs]')).toContainText('42');
   });
 });
 
