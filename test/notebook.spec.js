@@ -231,7 +231,7 @@ test.describe('markdown cells', () => {
 });
 
 test.describe('kernel controls', () => {
-  test('restart discards state and resets the prompts', async ({ page }) => {
+  test('restart discards state and marks the old runs stale', async ({ page }) => {
     await openLab(page);
     const index = await addCodeCell(page);
     await typeAndRun(page, index, 'gone_after_restart = "here"');
@@ -239,12 +239,21 @@ test.describe('kernel controls', () => {
 
     await page.locator('[data-toolbar="restart"]').click();
     await expect(page.locator('[data-kernel-status]')).toHaveText('idle');
-    await expect(cell(page, index).locator('[data-prompt]')).toHaveText('In [ ]:');
+    // The number is kept, not blanked -- the reader still sees that this
+    // ran and in what order. It is marked stale, because In [1] now
+    // describes a Lua state that no longer exists. Blanking to In [ ]
+    // would erase that history, which is the Jupyter behaviour every
+    // teacher warns about.
+    await expect(cell(page, index).locator('[data-prompt]')).toHaveText('In [1]:');
+    await expect(cell(page, index)).toHaveAttribute('data-run-state', 'stale');
 
+    // And the kernel really is fresh: the variable is gone, and running
+    // again clears the stale mark.
     const check = await addCodeCell(page);
     const node = await typeAndRun(page, check, 'print(tostring(gone_after_restart))');
     await expect(outputsOf(node).first()).toContainText('nil');
     await expect(node.locator('[data-prompt]')).toHaveText('In [1]:');
+    await expect(node).toHaveAttribute('data-run-state', 'ok');
   });
 
   test('clear outputs empties every cell', async ({ page }) => {

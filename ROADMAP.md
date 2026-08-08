@@ -1195,3 +1195,45 @@ horizontally scrolling row now: **56px, 7–10% of the viewport** on a Pixel
 7 and an iPhone SE, with nothing hidden and no page-level overflow. The
 title and filename are dropped at that width, since neither tells a reader
 anything they do not already know.
+
+### Visual polish: the states the UI had nowhere to hang ✅ done
+
+The notebook worked but told you almost nothing about itself. `:focus-within`
+was the only "current cell" cue, so the instant you clicked Run all,
+focus left for the toolbar and nothing on the page was current. A cell
+that succeeded and a cell that failed both ended as `data-busy="false"`
+and no other trace. This pass gives those states somewhere to live, and
+adds the one Jupyter lacks.
+
+- **Selection, independent of focus.** `view.select(id)` tracks a current
+  cell that survives focus leaving the sheet and survives a structural
+  re-render. Running a cell selects it, so Run all leaves the last cell
+  run highlighted. There is always exactly one current cell.
+- **Run state on a left rail.** `runStateOf(cell)` derives ok / error /
+  stale / busy from the model, so it is right after a reload too (an
+  error output *is* the error state). A coloured strip down the cell's
+  left edge reads as "this one" from across the page without a banner:
+  quiet green for success, red for error, a breathing amber while busy.
+- **Stale — the state Jupyter does not have.** After a Stop or a restart,
+  every `In [n]` describes a Lua state that is gone; Jupyter keeps showing
+  those numbers as if live. `markAllStale()` replaced `resetExecution
+  Counts()` at all three sites (stop, restart, runtime switch): the count
+  is *kept* — you still see what ran and in what order — struck through
+  and labelled, so it cannot be mistaken for current. Running a cell
+  clears its mark.
+- **Folding**, stored as nbformat's own `jupyter.source_hidden`, so a fold
+  round-trips to JupyterLab. Folded cells keep a one-line preview.
+- **Execution timing**, written as JupyterLab's `metadata.execution` ISO
+  pair, so a duration survives a save and shows up in other tools. A busy
+  cell shows a live elapsed clock -- eight seconds in looks different from
+  just-started, which is the difference between "wait" and "press Stop".
+- **Output height** capped with in-place scroll; `⛶` lifts the cap
+  full-screen via the Fullscreen API. The soft line/byte caps still bound
+  what is there first.
+
+Cell `metadata` is now carried whole through `toIpynb`/`fromIpynb` rather
+than rebuilt, so tags, slideshow settings and ExecuteTime stamps from
+other tools survive a round trip. `test/polish.spec.js` asserts the states
+rather than the pixels; the two existing tests that asserted the old
+"restart blanks the counts" behaviour were updated to the new stale
+contract.

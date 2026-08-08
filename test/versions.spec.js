@@ -237,7 +237,7 @@ test.describe('switching', () => {
     expect(problems).toEqual([]);
   });
 
-  test('switching resets the execution counters', async ({ page }) => {
+  test('switching marks the old runs stale rather than blanking them', async ({ page }) => {
     await stubMirror(page);
     await openLab(page);
     await checkVersions(page);
@@ -247,7 +247,10 @@ test.describe('switching', () => {
 
     await select(page).selectOption('v5.5.0');
     await expect(page.locator('body')).toHaveAttribute('data-switching', 'false');
-    await expect(codeCell(page).locator('[data-prompt]')).toHaveText('In [ ]:');
+    // The counts survive the switch, marked stale: what ran on the old
+    // runtime, and in what order, is history worth keeping visible.
+    await expect(codeCell(page).locator('[data-prompt]')).toHaveText('In [1]:');
+    await expect(codeCell(page)).toHaveAttribute('data-run-state', 'stale');
   });
 
   test('the console says which runtime is running', async ({ page }) => {

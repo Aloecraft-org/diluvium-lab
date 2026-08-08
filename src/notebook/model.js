@@ -14,6 +14,16 @@ export function newCell(cellType = 'code', source = '') {
     source,
     outputs: [],
     execution_count: null,
+    // nbformat cell metadata, carried whole. The Lab reads two corners of
+    // it -- `jupyter.source_hidden` for folding and `execution` for timing
+    // -- and preserves the rest untouched, because a notebook that came
+    // from JupyterLab with tags or slideshow settings should leave with
+    // them.
+    metadata: {},
+    // Session-only: true after the kernel that produced this cell's
+    // outputs died. Not serialised -- toIpynb never reads it -- because
+    // "stale" is a fact about the session, not the document.
+    stale: false,
   };
 }
 
@@ -93,6 +103,7 @@ export class NotebookModel {
     const cell = this.get(cellId);
     if (!cell) return;
     cell.outputs = outputs;
+    cell.stale = false;             // these outputs are from the live kernel
     this._emit('outputs', cellId);
   }
 
@@ -100,7 +111,48 @@ export class NotebookModel {
     const cell = this.get(cellId);
     if (!cell) return;
     cell.execution_count = count;
+    cell.stale = false;
     this._emit('outputs', cellId);
+  }
+
+  /**
+   * Record when a run started and finished, in the shape JupyterLab's
+   * ExecuteTime extension reads (`metadata.execution` with ISO
+   * timestamps). Duration is derived from the pair, so it survives a
+   * save/load round trip and even shows up in other tools.
+   */
+  setExecutionTiming(cellId, startedAtIso, endedAtIso) {
+    const cell = this.get(cellId);
+    if (!cell) return;
+    cell.metadata = {
+      ...cell.metadata,
+      execution: {
+        ...(cell.metadata?.execution ?? {}),
+        'iopub.execute_input': startedAtIso,
+        'shell.execute_reply': endedAtIso,
+      },
+    };
+    this._emit('outputs', cellId);
+  }
+
+  /**
+   * Fold or unfold a cell's source. Stored as nbformat's own
+   * `jupyter.source_hidden`, so a folded cell arrives folded in
+   * JupyterLab and vice versa -- the convention exists, so inventing a
+   * private one would only cost interoperability.
+   */
+  setFolded(cellId, folded) {
+    const cell = this.get(cellId);
+    if (!cell) return;
+    cell.metadata = {
+      ...cell.metadata,
+      jupyter: { ...(cell.metadata?.jupyter ?? {}), source_hidden: !!folded },
+    };
+    this._emit('structure', cellId);
+  }
+
+  isFolded(cellId) {
+    return this.get(cellId)?.metadata?.jupyter?.source_hidden === true;
   }
 
   clearOutputs(cellId) {
@@ -112,13 +164,29 @@ export class NotebookModel {
     for (const cell of this.cells) {
       cell.outputs = [];
       cell.execution_count = null;
+      cell.stale = false;
     }
     this._emit('structure');
   }
 
-  /** Forget every `In [n]`, which is what a kernel restart means for a document. */
-  resetExecutionCounts() {
-    for (const cell of this.cells) cell.execution_count = null;
+  /**
+   * The kernel these results came from is gone; say so on every cell that
+   * shows any.
+   *
+   * This replaced blanking the execution counts, deliberately. `In [ ]`
+   * erases history -- the reader loses the order things ran in *and* the
+   * fact that they ran. Keeping `In [3]` and marking it stale preserves
+   * both while making clear the number describes a Lua state that no
+   * longer exists. Jupyter has no such state; after a restart it happily
+   * shows counts from a dead kernel as if nothing happened, and every
+   * teacher of it warns about exactly that.
+   */
+  markAllStale() {
+    for (const cell of this.cells) {
+      if (cell.execution_count !== null || (cell.outputs?.length ?? 0) > 0) {
+        cell.stale = true;
+      }
+    }
     this._emit('structure');
   }
 }

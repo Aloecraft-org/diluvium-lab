@@ -332,7 +332,7 @@ export class App {
     await old.shutdown().catch(() => {});
 
     await this.refreshLanguage();
-    this.model.resetExecutionCounts();
+    this.model.markAllStale();
     this._renderVersions();
     this._renderStatus(this.kernel.status);
     if (this.backendNode) this.backendNode.textContent = this.kernel.label;
@@ -443,12 +443,14 @@ export class App {
       return;
     }
 
+    this.view.select(cellId);
     this.view.setBusy(cellId, true);
     // Yield once so the In [*] marker actually paints before run_lua takes
     // the thread for however long it takes. This is the honest limit of a
     // synchronous kernel, not a loading spinner pretending to be one.
     await new Promise((resolve) => setTimeout(resolve, 0));
 
+    const startedAt = new Date().toISOString();
     const outputs = [];
     let reply;
     try {
@@ -460,12 +462,14 @@ export class App {
       this.model.setOutputs(cellId, [{
         output_type: 'error', ename: 'KernelError', evalue: err.message, traceback: [],
       }]);
+      this.model.setExecutionTiming(cellId, startedAt, new Date().toISOString());
       this.view.setBusy(cellId, false);
       return;
     }
 
     this.model.setOutputs(cellId, outputs);
     this.model.setExecutionCount(cellId, reply.content.execution_count);
+    this.model.setExecutionTiming(cellId, startedAt, new Date().toISOString());
     if (advance) this._focusNext(cellId);
     return reply;
   }
@@ -505,7 +509,7 @@ export class App {
     try {
       await this.kernel.restart();
       await this.refreshLanguage();
-      this.model.resetExecutionCounts();
+      this.model.markAllStale();
       this.console.note('Kernel restarted. Every variable is gone.');
       this._toast('Kernel restarted.');
     } catch (err) {
@@ -601,7 +605,11 @@ export class App {
     try {
       await this.kernel.interrupt();
       await this.refreshLanguage();
-      this.model.resetExecutionCounts();
+      // Not resetExecutionCounts: keep the In [n] numbers and mark them
+      // stale instead, so the reader still sees what ran and in what
+      // order -- and sees that those results describe a Lua state that is
+      // gone. Erasing the numbers would throw that history away.
+      this.model.markAllStale();
       this.console.note('Stopped. The kernel restarted, so every variable is gone.');
       this._toast('Stopped the running cell.');
     } catch (err) {

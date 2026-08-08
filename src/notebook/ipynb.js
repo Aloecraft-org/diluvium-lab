@@ -75,7 +75,11 @@ export function toIpynb(model, metadata = {}) {
     cells: model.cells.map((cell) => {
       const base = {
         cell_type: cell.cell_type,
-        metadata: {},
+        // Carried whole, not rebuilt: a notebook that arrived with tags,
+        // slideshow settings or ExecuteTime stamps should leave with
+        // them. The Lab's own folding and timing live in here too, under
+        // nbformat's `jupyter.source_hidden` and `execution` keys.
+        metadata: cell.metadata ?? {},
         source: splitLines(cell.source),
       };
       if (cell.cell_type !== 'code') return base;
@@ -112,6 +116,8 @@ export function fromIpynb(json) {
   const cells = doc.cells.map((raw) => {
     const type = raw.cell_type === 'markdown' || raw.cell_type === 'raw' ? raw.cell_type : 'code';
     const cell = newCell(type, joinLines(raw.source));
+    cell.metadata = (raw.metadata && typeof raw.metadata === 'object' && !Array.isArray(raw.metadata))
+      ? raw.metadata : {};
     if (type === 'code') {
       cell.execution_count = typeof raw.execution_count === 'number' ? raw.execution_count : null;
       cell.outputs = Array.isArray(raw.outputs) ? raw.outputs.filter(isKnownOutput) : [];

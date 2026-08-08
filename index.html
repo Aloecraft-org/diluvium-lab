@@ -134,18 +134,80 @@
   .sheet { overflow: auto; padding: 1rem .75rem 4rem; }
   .cells { max-width: 62rem; margin: 0 auto; display: flex; flex-direction: column; gap: .5rem; }
 
-  .cell { border: 1px solid transparent; border-radius: 8px; padding: .35rem .5rem; }
-  .cell:focus-within { border-color: var(--edge); background: var(--sunk); }
-  .cell[data-busy="true"] { border-color: color-mix(in srgb, #b45309 45%, transparent); }
+  .cell {
+    border: 1px solid transparent; border-radius: 8px; padding: .35rem .5rem;
+    /* A rail down the left edge is where run state lives: a coloured strip
+       reads as "this cell" from across the page without shouting. */
+    border-left: 3px solid transparent;
+    transition: border-color .12s, background .12s;
+  }
+  .cell:focus-within { background: var(--sunk); }
+
+  /* Current cell, independent of focus -- so something is always current,
+     including the instant focus jumps to the page toolbar for Run all. */
+  .cell[data-selected="true"] { border-color: var(--edge); background: var(--sunk); }
+  .cell[data-selected="true"] { border-left-color: var(--accent); }
+
+  /* Run state, on the left rail. Success is quiet on purpose (a faint
+     green tick's worth), error and stale are not. */
+  .cell[data-run-state="ok"]    { border-left-color: color-mix(in srgb, var(--ok) 55%, transparent); }
+  .cell[data-run-state="error"] { border-left-color: color-mix(in srgb, var(--bad) 70%, transparent); }
+  .cell[data-run-state="stale"] { border-left-color: color-mix(in srgb, #b45309 60%, transparent); }
+  .cell[data-busy="true"] {
+    border-left-color: #b45309;
+    /* A slow breathing rail while a cell runs -- movement says "working",
+       colour says "this one". Honours reduced-motion via the block below. */
+    animation: cell-pulse 1.4s ease-in-out infinite;
+  }
+  @keyframes cell-pulse { 50% { border-left-color: color-mix(in srgb, #b45309 35%, transparent); } }
+
+  /* A stale cell's whole prompt is dimmed and struck, because the number
+     it shows describes a Lua state that no longer exists. */
+  .cell[data-run-state="stale"] .prompt {
+    text-decoration: line-through;
+    opacity: .6;
+  }
+  .cell[data-run-state="stale"] .outputs { opacity: .55; }
+  .cell[data-run-state="stale"] .cell-head::after {
+    content: "stale"; font-size: .62rem; font-family: var(--mono);
+    text-transform: uppercase; letter-spacing: .04em;
+    color: #b45309; border: 1px solid color-mix(in srgb, #b45309 45%, transparent);
+    border-radius: 4px; padding: 0 .3rem; margin-left: .1rem;
+  }
+
   .cell-head { display: flex; align-items: center; gap: .5rem; min-height: 1.6rem; }
   .prompt {
     font-family: var(--mono); font-size: .78rem; color: var(--quiet);
     min-width: 5.5rem; user-select: none;
   }
+  .timing {
+    font-family: var(--mono); font-size: .7rem; color: var(--quiet);
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* Fold control in the gutter, next to the prompt. */
+  .fold-toggle {
+    font: inherit; font-size: .8rem; line-height: 1;
+    width: 1.3rem; height: 1.3rem; padding: 0; flex: 0 0 auto;
+    border: none; border-radius: 4px; cursor: pointer;
+    background: transparent; color: var(--quiet);
+  }
+  .fold-toggle:hover { background: var(--sunk); color: inherit; }
+  .fold-preview {
+    display: block; width: 100%; text-align: left;
+    font-family: var(--mono); font-size: .82rem; color: var(--quiet);
+    padding: .2rem .55rem; margin: .1rem 0 0;
+    border: 1px dashed var(--edge); border-radius: 6px;
+    background: transparent; cursor: pointer;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .fold-preview:hover { color: inherit; border-style: solid; }
+
   /* Dimmed rather than hidden: a hover-only toolbar does not exist on a
      touch screen, and cannot be reached by keyboard at all. */
   .cell-tools { display: flex; gap: .25rem; margin-left: auto; opacity: .3; transition: opacity .12s; }
-  .cell:hover .cell-tools, .cell:focus-within .cell-tools { opacity: 1; }
+  .cell:hover .cell-tools, .cell:focus-within .cell-tools,
+  .cell[data-selected="true"] .cell-tools { opacity: 1; }
 
   /* Every property here affects where a glyph lands, and the highlight
      overlay must land on exactly the same pixels as the textarea. Change
@@ -220,6 +282,18 @@
   /* --- outputs --- */
   .outputs { display: flex; flex-direction: column; gap: .25rem; margin: .3rem 0 0 5.5rem; }
   .outputs:empty { margin: 0; }
+  /* A tall output should not push the next cell off the screen. Cap the
+     height and let it scroll; the ⛶ tool lifts the cap over the whole
+     viewport when a reader genuinely wants all of it. The soft line/byte
+     caps still apply first -- this bounds what is left. */
+  .outputs { max-height: 22rem; overflow: auto; overscroll-behavior: contain; }
+  /* Fullscreen: the outputs element fills the screen and drops the cap.
+     :fullscreen needs its own background because the element was
+     transparent over the page. */
+  .outputs:fullscreen {
+    max-height: none; background: Canvas; padding: 1.5rem 2rem;
+    margin: 0; overflow: auto;
+  }
   .output pre {
     margin: 0; font-family: var(--mono); font-size: .84rem;
     white-space: pre-wrap; word-break: break-word;
@@ -384,6 +458,9 @@
       animation-iteration-count: 1 !important;
       transition-duration: .01ms !important;
     }
+    /* A busy cell keeps a steady rail rather than a stopped-mid-pulse
+       colour, which is what the global reset would leave. */
+    .cell[data-busy="true"] { border-left-color: #b45309 !important; animation: none !important; }
   }
 
   /* --- about --- */

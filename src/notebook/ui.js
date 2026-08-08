@@ -21,6 +21,11 @@ import { BytecodeView } from './bytecode-view.js';
 export const SOFT_MAX_LINES = 200;
 export const SOFT_MAX_BYTES = 64 * 1024;
 
+/** performance.now(), or Date-free fallback -- only relative deltas are used. */
+function performanceNow() {
+  return (typeof performance !== 'undefined' && performance.now) ? performance.now() : 0;
+}
+
 export function el(tag, attrs = {}, kids = []) {
   const node = document.createElement(tag);
   for (const [k, v] of Object.entries(attrs)) {
@@ -162,10 +167,43 @@ export class NotebookView {
     this.languageInfo = handlers.languageInfo ?? (() => ({}));
     this.editors = new Map();
 
+    // The current cell, independent of focus. `:focus-within` vanishes
+    // the moment focus moves to the page toolbar, which is exactly when
+    // "which cell is current" matters most -- at the instant you click
+    // Run all, nothing on the page would be marked. Selection persists
+    // until something else is selected.
+    this.selectedId = null;
+    this._busyTimers = new Map();
+
     this.root.addEventListener('click', (event) => this._onClick(event));
     this.root.addEventListener('input', (event) => this._onInput(event));
     this.root.addEventListener('keydown', (event) => this._onKeydown(event));
     this.root.addEventListener('dblclick', (event) => this._onDoubleClick(event));
+    // pointerdown as well as focusin: tapping a cell's blank margin
+    // focuses nothing, but it should still make that cell current.
+    this.root.addEventListener('focusin', (event) => this.select(this._cellIdFor(event.target)));
+    this.root.addEventListener('pointerdown', (event) => this.select(this._cellIdFor(event.target)));
+  }
+
+  /** Make a cell current. Passing null or an unknown id changes nothing. */
+  select(cellId) {
+    if (!cellId || cellId === this.selectedId || !this.model.get(cellId)) return;
+    this.selectedId = cellId;
+    this._applySelection();
+  }
+
+  _applySelection() {
+    // Selection can outlive the cell it pointed at (delete, open file).
+    // Falling back to the first cell keeps "there is always a current
+    // cell" true, which is what folding and the keyboard will build on.
+    if (this.selectedId && !this.model.get(this.selectedId)) this.selectedId = null;
+    if (!this.selectedId) this.selectedId = this.model.cells[0]?.id ?? null;
+    for (const node of this.root.querySelectorAll('[data-cell-id]')) {
+      const selected = node.dataset.cellId === this.selectedId;
+      node.dataset.selected = selected ? 'true' : 'false';
+      if (selected) node.setAttribute('aria-current', 'true');
+      else node.removeAttribute('aria-current');
+    }
   }
 
   setModel(model) {
@@ -189,6 +227,8 @@ export class NotebookView {
 
     this.editors.clear();   // the old nodes, and their listeners, go with them
     this.bytecodeViews.clear();
+    for (const timer of this._busyTimers.values()) clearInterval(timer);
+    this._busyTimers.clear();
     this.root.replaceChildren(...this.model.cells.map((cell, i) => this._renderCell(cell, i)));
 
     if (focusedCell) {
@@ -198,6 +238,7 @@ export class NotebookView {
         if (caret !== null) editor.setSelectionRange(caret, caret);
       }
     }
+    this._applySelection();
   }
 
   updateOutputs(cellId) {
@@ -208,6 +249,25 @@ export class NotebookView {
     const prompt = node.querySelector('[data-prompt]');
     if (prompt) prompt.textContent = promptText(cell);
     node.dataset.busy = 'false';
+    // A cell that succeeded and a cell that failed used to leave the same
+    // trace -- both just `data-busy="false"`. runStateOf tells them apart:
+    // ok, error or stale, or absent for a cell that has never run.
+    this._applyRunState(node, cell);
+    this._applyTiming(node, cell);
+  }
+
+  _applyRunState(node, cell) {
+    const state = runStateOf(cell);
+    if (state) node.dataset.runState = state;
+    else delete node.dataset.runState;
+  }
+
+  _applyTiming(node, cell) {
+    const slot = node.querySelector('[data-timing]');
+    if (!slot) return;
+    const ms = durationOf(cell);
+    slot.textContent = ms === null ? '' : formatDuration(ms);
+    slot.hidden = ms === null;
   }
 
   setBusy(cellId, busy) {
@@ -216,6 +276,20 @@ export class NotebookView {
     node.dataset.busy = busy ? 'true' : 'false';
     const prompt = node.querySelector('[data-prompt]');
     if (prompt && busy) prompt.textContent = 'In [*]:';
+    // While busy, show a live-updating elapsed clock. A cell that has been
+    // running for eight seconds looks the same as one that just started
+    // otherwise, which is the difference between "be patient" and "press
+    // Stop". Cleared and replaced by the final duration in updateOutputs.
+    const slot = node.querySelector('[data-timing]');
+    const existing = this._busyTimers.get(cellId);
+    if (existing) { clearInterval(existing); this._busyTimers.delete(cellId); }
+    if (busy && slot) {
+      const started = performanceNow();
+      slot.hidden = false;
+      const tick = () => { slot.textContent = formatDuration(performanceNow() - started); };
+      tick();
+      this._busyTimers.set(cellId, setInterval(tick, 100));
+    }
   }
 
   _renderCell(cell, index) {
@@ -225,6 +299,8 @@ export class NotebookView {
     // opens for editing until it has something to show.
     const editing = isCode || this.editingMarkdown.has(cell.id) || cell.source.trim() === '';
 
+    const folded = isCode && this.model.isFolded(cell.id);
+
     const editor = el('textarea', {
       'data-editor': true,
       spellcheck: 'false',
@@ -232,11 +308,12 @@ export class NotebookView {
       'aria-label': `${cell.cell_type} cell ${index + 1}`,
     });
     editor.value = cell.source;
-    editor.hidden = !editing;
+    editor.hidden = !editing || folded;
 
     const tools = el('div', { class: 'cell-tools' }, [
       isCode ? button('run', 'Run', 'Run this cell (Ctrl+Enter)') : button('run', 'Render', 'Render (Ctrl+Enter)'),
       isCode ? button('bytecode', 'Bytecode', 'Compile this cell and read the bytecode — nothing runs') : null,
+      isCode ? button('fullscreen', '⛶', 'Show this cell\'s output full screen') : null,
       button('to-code', 'Code', 'Turn into a code cell'),
       button('to-markdown', 'Markdown', 'Turn into a markdown cell'),
       button('move-up', '↑', 'Move up'),
@@ -245,11 +322,35 @@ export class NotebookView {
       button('delete', '✕', 'Delete this cell'),
     ]);
 
+    // A fold toggle in the gutter, next to the prompt where the eye already
+    // is. Only code cells fold -- a markdown cell folds by rendering.
+    const foldToggle = isCode
+      ? el('button', {
+          type: 'button', class: 'fold-toggle', 'data-action': 'fold',
+          title: folded ? 'Unfold this cell' : 'Fold this cell',
+          'aria-label': folded ? 'Unfold this cell' : 'Fold this cell',
+          'aria-expanded': folded ? 'false' : 'true',
+        }, [folded ? '▸' : '▾'])
+      : null;
+
+    // A one-line preview when folded, so a folded cell is identifiable
+    // without unfolding it. First non-blank line, trimmed.
+    const firstLine = (cell.source.split('\n').find((l) => l.trim() !== '') ?? '').trim();
+    const foldPreview = folded
+      ? el('button', {
+          type: 'button', class: 'fold-preview', 'data-action': 'fold',
+          title: 'Unfold this cell',
+        }, [firstLine || '(empty cell)'])
+      : null;
+
     const kids = [
       el('div', { class: 'cell-head' }, [
+        foldToggle,
         el('span', { class: 'prompt', 'data-prompt': true }, [promptText(cell)]),
+        isCode ? el('span', { class: 'timing', 'data-timing': true, hidden: true }) : null,
         tools,
       ]),
+      foldPreview,
       editor,
     ];
 
@@ -272,7 +373,11 @@ export class NotebookView {
       'data-index': index,
       'data-editing': editing ? 'true' : 'false',
       'data-busy': 'false',
+      'data-folded': folded ? 'true' : 'false',
+      'data-run-state': runStateOf(cell) ?? false,
+      'data-selected': cell.id === this.selectedId ? 'true' : 'false',
     }, kids);
+    if (isCode) this._applyTiming(node, cell);
 
     // Only code cells get highlighted -- running a Lua tokenizer over prose
     // would colour the word "for" in an English sentence.
@@ -304,6 +409,8 @@ export class NotebookView {
 
     switch (action) {
       case 'run': this.handlers.onRun?.(cellId); break;
+      case 'fold': this.model.setFolded(cellId, !this.model.isFolded(cellId)); break;
+      case 'fullscreen': this._fullscreenOutputs(cellId); break;
       case 'bytecode': this.toggleBytecode(cellId); break;
       case 'delete': this.model.deleteCell(cellId); break;
       case 'move-up': this.model.moveCell(cellId, -1); break;
@@ -313,6 +420,23 @@ export class NotebookView {
       case 'to-markdown': this._toType(cellId, 'markdown'); break;
       default: break;
     }
+  }
+
+  /**
+   * Put a cell's output full screen, or take it back.
+   *
+   * Uses the platform Fullscreen API on the outputs element itself, so the
+   * height cap and the page chrome both fall away and the reader gets the
+   * whole thing. A no-op where the API is unavailable (some embedded web
+   * views) -- the height cap still scrolls, so nothing is lost, only the
+   * lift.
+   */
+  _fullscreenOutputs(cellId) {
+    const outputs = this.cellNode(cellId)?.querySelector('[data-outputs]');
+    if (!outputs) return;
+    const doc = outputs.ownerDocument;
+    if (doc.fullscreenElement === outputs) { doc.exitFullscreen?.(); return; }
+    outputs.requestFullscreen?.().catch(() => {});
   }
 
   /** Show or hide the bytecode panel, compiling the first time it opens. */
@@ -380,4 +504,41 @@ export class NotebookView {
 function promptText(cell) {
   if (cell.cell_type !== 'code') return '';
   return `In [${cell.execution_count ?? ' '}]:`;
+}
+
+/**
+ * What the last run of this cell means now.
+ *
+ * Derived from the model rather than stored in the view, so it is right
+ * after a reload too: an error output makes the cell an error cell, a
+ * count makes it a ran-fine cell. `stale` is the one part that cannot be
+ * derived -- it is session state, set when the kernel that produced these
+ * results died -- and it outranks the others because "this errored" is
+ * less important than "this is from a Lua state that no longer exists".
+ */
+export function runStateOf(cell) {
+  if (cell.cell_type !== 'code') return null;
+  if (cell.stale) return 'stale';
+  if ((cell.outputs ?? []).some((o) => o.output_type === 'error')) return 'error';
+  if (cell.execution_count !== null) return 'ok';
+  return null;
+}
+
+/** `metadata.execution`'s ISO pair, as milliseconds, or null. */
+export function durationOf(cell) {
+  const execution = cell.metadata?.execution;
+  const started = Date.parse(execution?.['iopub.execute_input'] ?? '');
+  const ended = Date.parse(execution?.['shell.execute_reply'] ?? '');
+  if (Number.isNaN(started) || Number.isNaN(ended) || ended < started) return null;
+  return ended - started;
+}
+
+/** "12 ms", "1.4 s", "2m 05s" -- coarse on purpose; this is a hint, not a benchmark. */
+export function formatDuration(ms) {
+  if (ms < 1) return '<1 ms';
+  if (ms < 1000) return `${Math.round(ms)} ms`;
+  if (ms < 60_000) return `${(ms / 1000).toFixed(1)} s`;
+  const minutes = Math.floor(ms / 60_000);
+  const seconds = Math.round((ms % 60_000) / 1000);
+  return `${minutes}m ${String(seconds).padStart(2, '0')}s`;
 }
