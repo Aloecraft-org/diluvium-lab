@@ -873,3 +873,62 @@ and every test still passed because the fallback is fully functional. The
 only symptom was that stop did nothing. `test/worker.spec.js` now asserts
 `offThread` explicitly and prints `fallbackReason` when it fails, because
 a silent fallback is the failure mode this design has.
+
+### Public-readiness pass ✅ partly done
+
+Ahead of putting the Lab somewhere strangers can find it. What landed,
+and what deliberately did not.
+
+**CI exists** (`.github/workflows/ci.yml`): one job, Chromium, plus the
+bake and a new `scripts/check-bake.mjs` that asserts the single file is
+genuinely self-contained. That check is not decoration — a stray
+`<script src>` or an un-inlined kernel still renders, and only fails on a
+machine with no network, which is the machine the baked file exists for.
+Verified it catches both an injected CDN tag and an emptied kernel
+constant. Firefox and WebKit are a matrix entry once the Lab is known to
+pass on them, which is what the browser-check notebook is for.
+
+**Mobile is no longer untested**, and four things were wrong: 24px touch
+targets against a 44px floor, a 14px editor that makes iOS zoom in on
+focus and never back out, a cell toolbar revealed by a hover that a touch
+screen cannot perform, and outputs indented to line up under a prompt,
+spending a third of a narrow screen on alignment. `test/mobile.spec.js`
+drives a real phone viewport with touch and taps rather than typing
+shortcuts. Note the media queries had to move to the end of the
+stylesheet: they share selectors with the base rules, so the cascade
+decides on source order and a media query adds no specificity — the first
+attempt set 16px and computed 14.08px.
+
+**Accessibility, the easy half only.** Icon-only buttons had a `title` and
+no accessible name. Output regions now announce politely, having been
+silent. The highlight overlay is `aria-hidden` — it is the textarea's text
+a second time, and the copy is the one that cannot be edited or navigated.
+Status and toasts are status regions; animation honours
+`prefers-reduced-motion`. **Not done, and still owed:** focus management
+across add/delete/run/restart, cell-level navigation ("cell 3 of 7"), and
+a contrast audit of both themes.
+
+**Persistence has a safety net** (`test/storage.spec.js`), and writing it
+turned up a real gap: autosave is debounced 400ms and nothing flushed it
+on the way out, so the last thing typed before a tab closed was the one
+thing lost. `visibilitychange` → `hidden` is now flushed, chosen over
+`beforeunload` because a backgrounded phone tab can be discarded without
+ever firing an unload event. Covered: typing then reload, reload with no
+time to debounce, outputs and execution counts, the filename, cell
+add/delete, a corrupt record, IndexedDB unavailable, a failing write.
+
+**`notebooks/browser-check.ipynb`** is the instrument for the engines
+nobody here can run: open it, Run all, read the PASS/FAIL lines. Its most
+important section is `pcall`, because if WASM exception handling is
+missing then `pcall` silently stops catching and every other check still
+passes. `test/browser-check.spec.js` runs the notebook itself and asserts
+nothing prints FAIL — and asserts the `pcall` check has teeth by running
+its logic against a deliberately broken `pcall`.
+
+**Still open, and named so they are not mistaken for done:** the
+JupyterLab story (a Lab `.ipynb` opens there and cannot run; a leading
+markdown cell explaining that on export is the cheap fix, and it needs a
+decision about round-tripping), `CONTRIBUTING.md`, the first-run
+notebook, `<diluvium-cell>`, and the VS Code path — which is downstream of
+the JupyterLab one, since VS Code's notebook editor reads the same
+kernelspec.

@@ -107,6 +107,7 @@ export class App {
 
     this._bindToolbar();
     this._bindModel();
+    this._bindLifecycle();
   }
 
   /** Status messages come from whichever kernel is current. */
@@ -288,6 +289,28 @@ export class App {
 
   _scheduleAutosave() {
     this.autosave.schedule({ ipynb: toIpynb(this.model), filename: this.filename, savedAt: Date.now() });
+  }
+
+  /**
+   * Write the pending autosave before the page can go away.
+   *
+   * Autosave is debounced 400ms, so without this the last thing typed
+   * before closing a tab is the one thing lost -- which is exactly the
+   * keystroke someone will remember.
+   *
+   * `visibilitychange` rather than `beforeunload`, and this matters on a
+   * phone: a backgrounded tab can be discarded outright without ever
+   * firing an unload event, and `hidden` is the last moment guaranteed to
+   * arrive. `pagehide` covers the desktop close and the bfcache. Both are
+   * cheap and idempotent, so registering both costs a redundant write at
+   * worst.
+   */
+  _bindLifecycle() {
+    const flush = () => { this.autosave.flush().catch(() => {}); };
+    this.document.addEventListener('visibilitychange', () => {
+      if (this.document.visibilityState === 'hidden') flush();
+    });
+    this.document.defaultView?.addEventListener('pagehide', flush);
   }
 
   // --- running ------------------------------------------------------
