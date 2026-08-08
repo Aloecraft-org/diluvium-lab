@@ -1,33 +1,61 @@
 // A reader for compiled Diluvium chunks — the bytes `string.dump` returns.
 //
-// The container is stock Lua 5.4's, with one difference this file exists to
-// notice: **`LUAC_FORMAT` is 0x44, not 0.** Stock Lua writes zero there and
-// refuses to load anything else, so a Diluvium chunk and a PUC-Rio Lua
-// chunk are deliberately not interchangeable even though the layout is
-// identical. `'D'` is a nice touch and it is also a compatibility fence, so
-// the reader reports the byte instead of quietly accepting either.
+// It reads **two** containers, because Diluvium 5.5 rebased onto Lua 5.5
+// and the dump format changed underneath it. They share a signature and
+// almost nothing else, so the version byte in the header picks a profile
+// and every difference lives in one of the two `PROFILES` entries below.
 //
-// Everything here was derived from the shipped artifact by decoding
-// `function() end` a byte at a time and checking the parse lands exactly on
-// the last byte of the buffer. That "no bytes left over" property is the
-// strongest cheap check a binary parser can have, and `readChunk` enforces
-// it rather than trusting itself.
+// What differs, all of it load-bearing:
+//
+// | | 5.4 | 5.5 |
+// | :-- | :-- | :-- |
+// | varint terminator | high bit **set** on the last byte | high bit **clear** on the last byte |
+// | integer constants | raw 8-byte little-endian | zigzag varint |
+// | strings | inline, every time | interned: `size 0` means "reuse #n" |
+// | `source` | first field of a function | after the nested protos |
+// | vararg | its own byte | bits 0–1 of a `flag` byte |
+// | code section | packed | aligned to 4 first |
+// | `abslineinfo` | pairs of varints | aligned pairs of raw int32 |
+// | scramble covers | code and string constants | code and *every* string |
+//
+// The one thing they agree on is `LUAC_FORMAT` = 0x44 (`'D'`), where stock
+// Lua writes 0 and refuses anything else — so a Diluvium chunk and a
+// PUC-Rio chunk of the same Lua version are still deliberately not
+// interchangeable.
+//
+// The 5.4 profile was derived from the shipped artifact by decoding
+// `function() end` a byte at a time. The 5.5 profile was derived from
+// `ldump.c` and `lundump.c` at tag v5.5.1_build1. Both are checked the
+// same way at the end of `readChunk`: the parse must land exactly on the
+// last byte and every opcode must exist.
 
-import { decodeInstruction } from './opcodes.js';
+import { decodeInstruction, instructionSet } from './opcodes.js';
 
 export const LUA_SIGNATURE = '\x1bLua';
-export const LUAC_VERSION = 0x54;         // 5.4
 export const DILUVIUM_FORMAT = 0x44;      // 'D'; stock Lua writes 0
 export const LUAC_DATA = [0x19, 0x93, 0x0d, 0x0a, 0x1a, 0x0a];
-export const LUAC_INT = 0x5678n;
-export const LUAC_NUM = 370.5;
 
-/** Constant type tags, as `ttypetag` writes them. */
+/** Constant type tags, as `ttypetag` writes them. Unchanged across 5.4/5.5. */
 const TAG = {
   NIL: 0x00, FALSE: 0x01, TRUE: 0x11,
   NUMINT: 0x03, NUMFLT: 0x13,
   SHRSTR: 0x04, LNGSTR: 0x14,
 };
+
+/**
+ * Diluvium scrambles secure functions with a single-byte XOR. One key,
+ * applied byte by byte — *not* a 32-bit word key, which is worth stating
+ * because the compiler carried a `0xCAFEBABE` word version at one point
+ * and the two are easy to confuse. A 32-bit `0xCAFEBABE` on a
+ * little-endian word leaves `be ba fe ca`; every sample here reads `0xbe`
+ * in all four positions.
+ *
+ * In 5.4 this covers the instruction stream and the string constants,
+ * with the debug section left plain. In 5.5 `DumpState::encrypted` gates
+ * `dumpString` itself, so the source name and every local and upvalue
+ * name are scrambled too.
+ */
+const SCRAMBLE_KEY = 0xbe;
 
 export class BytecodeError extends Error {}
 
@@ -47,13 +75,27 @@ class Reader {
   byte() { this.need(1); return this.bytes[this.at++]; }
   take(n) { this.need(n); const out = this.bytes.subarray(this.at, this.at + n); this.at += n; return out; }
 
+  u32() { this.need(4); const v = this.view.getUint32(this.at, true); this.at += 4; return v; }
+  i32() { this.need(4); const v = this.view.getInt32(this.at, true); this.at += 4; return v; }
+  i64() { this.need(8); const v = this.view.getBigInt64(this.at, true); this.at += 8; return v; }
+  f64() { this.need(8); const v = this.view.getFloat64(this.at, true); this.at += 8; return v; }
+
+  /**
+   * `dumpAlign` pads with zeros to the next multiple of `align`, measured
+   * from the start of the dump — which is why this counts from `at` and
+   * not from the start of the section.
+   */
+  align(width) {
+    const padding = (width - (this.at % width)) % width;
+    this.take(padding);
+  }
+
   /**
    * Lua 5.4's variable-length unsigned: seven bits per byte, most
    * significant first, and the byte that *has* the high bit set is the
-   * last one. (Not the usual LEB128 convention, which is the other way
-   * round in both respects.)
+   * last one.
    */
-  unsigned() {
+  varint54() {
     let value = 0;
     let b;
     do {
@@ -63,218 +105,327 @@ class Reader {
     return value;
   }
 
-  int() { return this.unsigned(); }
-
   /**
-   * Size 0 means absent; otherwise the stored size is length + 1.
-   *
-   * For a **constant** inside a scrambled function it is length exactly,
-   * and the bytes are XORed like the instructions are: `04 85 ce cc d7 d0
-   * ca` is a short-string constant whose five content bytes XOR to `print`,
-   * five characters after a stored size of five. The debug section of the
-   * same function is *not* transformed -- local and upvalue names read
-   * plainly, which is why only readConstant passes a key.
-   *
-   * That +1 is not decoration in stock Lua: it is what lets 0 mean "no
-   * string at all" (`loadStringN` returns NULL), which `source`, local
-   * names and upvalue names all rely on. The scrambled branch spends it,
-   * so inside a scrambled function a stored 0 is the empty string rather
-   * than absence -- confirmed by round-tripping `local x = ""` through
-   * `string.dump` and `load` in the running kernel, which yields `""` and
-   * not nil. Both sides agree today. They agree by accident of being
-   * written together, not because anything checks.
+   * Lua 5.5 inverted the convention: still most significant first, but now
+   * the high bit is a *continuation* bit, so the last byte is the one with
+   * it clear. Reading a 5.5 chunk with the 5.4 rule does not fail, it
+   * silently returns a different number — which is most of why this file
+   * refuses to have a default dialect.
    */
-  string(xorKey = 0) {
-    const size = this.unsigned();
-    if (size === 0) return null;
-    const raw = this.take(xorKey ? size : size - 1);
-    const bytes = xorKey ? raw.map((b) => b ^ xorKey) : raw;
-    return new TextDecoder('utf-8', { fatal: false }).decode(bytes);
+  varint55() {
+    let value = 0;
+    let b;
+    do {
+      b = this.byte();
+      value = (value * 128) + (b & 0x7f);
+    } while ((b & 0x80) !== 0);
+    return value;
   }
 
-  integer() { this.need(8); const v = this.view.getBigInt64(this.at, true); this.at += 8; return v; }
-  number() { this.need(8); const v = this.view.getFloat64(this.at, true); this.at += 8; return v; }
-  instruction() { this.need(4); const v = this.view.getUint32(this.at, true); this.at += 4; return v; }
-
   /**
-   * Same, for the functions Diluvium stores scrambled.
-   *
-   * Note this XORs each of the four bytes with the *same* key rather than
-   * the word with a 32-bit one, which is what the compiler does and is
-   * worth stating because the two are easy to confuse. A 32-bit key of
-   * 0xCAFEBABE would put 0xbe in the low byte and 0xba, 0xfe, 0xca in the
-   * others; every sample from this artifact has 0xbe in all four
-   * positions.
+   * The same, in BigInt. Integer *constants* are varints in 5.5, and a
+   * Lua integer is 64 bits — `math.maxinteger` zigzags to 2^64 - 2, which
+   * a JS number rounds. Counts and sizes are small enough not to care;
+   * constants are not.
    */
-  instructionXor(key) {
-    this.need(4);
-    let word = 0;
-    for (let i = 3; i >= 0; i--) word = ((word << 8) | (this.bytes[this.at + i] ^ key)) >>> 0;
-    this.at += 4;
-    return word;
+  varint55Big() {
+    let value = 0n;
+    let b;
+    do {
+      b = this.byte();
+      value = (value << 7n) | BigInt(b & 0x7f);
+    } while ((b & 0x80) !== 0);
+    return value;
   }
 }
 
-function readHeader(reader) {
-  const signature = String.fromCharCode(...reader.take(4));
-  if (signature !== LUA_SIGNATURE) {
-    throw new BytecodeError('this is not compiled Lua: the \\x1bLua signature is missing');
-  }
-  const version = reader.byte();
-  const format = reader.byte();
-  const data = Array.from(reader.take(6));
+const decode = (bytes) => new TextDecoder('utf-8', { fatal: false }).decode(bytes);
+const unscramble = (bytes) => bytes.map((b) => b ^ SCRAMBLE_KEY);
+
+// --- 5.4 -------------------------------------------------------------
+
+function readHeader54(reader) {
   const sizeInstruction = reader.byte();
   const sizeInteger = reader.byte();
   const sizeNumber = reader.byte();
-  const checkInteger = reader.integer();
-  const checkNumber = reader.number();
+  const checkInteger = reader.i64();
+  const checkNumber = reader.f64();
 
   const problems = [];
-  if (version !== LUAC_VERSION) {
-    problems.push(`bytecode version 0x${version.toString(16)}, not 0x54 (Lua 5.4)`);
-  }
-  if (LUAC_DATA.some((b, i) => data[i] !== b)) problems.push('the LUAC_DATA guard bytes are wrong');
   if (sizeInstruction !== 4) problems.push(`instructions are ${sizeInstruction} bytes, not 4`);
   if (sizeInteger !== 8) problems.push(`integers are ${sizeInteger} bytes, not 8`);
   if (sizeNumber !== 8) problems.push(`numbers are ${sizeNumber} bytes, not 8`);
-  if (checkInteger !== LUAC_INT) problems.push('the integer endianness check failed');
-  if (checkNumber !== LUAC_NUM) problems.push('the float format check failed');
-  if (problems.length) throw new BytecodeError(problems.join('; '));
-
-  return {
-    version,
-    format,
-    // Reported rather than enforced: a chunk from stock Lua parses fine
-    // here, and saying whose it is beats pretending they are the same.
-    dialect: format === DILUVIUM_FORMAT ? 'diluvium' : (format === 0 ? 'lua' : `format 0x${format.toString(16)}`),
-    sizeInstruction,
-    sizeInteger,
-    sizeNumber,
-  };
-}
-
-function readConstant(reader, xorKey) {
-  const tag = reader.byte();
-  switch (tag) {
-    case TAG.NIL: return { type: 'nil', value: null };
-    case TAG.FALSE: return { type: 'boolean', value: false };
-    case TAG.TRUE: return { type: 'boolean', value: true };
-    case TAG.NUMINT: return { type: 'integer', value: reader.integer() };
-    case TAG.NUMFLT: return { type: 'float', value: reader.number() };
-    case TAG.SHRSTR:
-    case TAG.LNGSTR: return { type: 'string', value: reader.string(xorKey) ?? '' };
-    default: throw new BytecodeError(`unknown constant tag 0x${tag.toString(16)}`);
-  }
+  if (checkInteger !== 0x5678n) problems.push('the integer endianness check failed');
+  if (checkNumber !== 370.5) problems.push('the float format check failed');
+  return { problems, sizeInstruction, sizeInteger, sizeNumber };
 }
 
 /**
- * Diluvium prefixes every function with one byte that stock Lua does not
- * write. It is `Proto::is_encrypted`, and when it is 1 both the
- * instruction bytes and the string-constant bytes are stored XORed with
- * 0xbe. (Confirmed against the compiler source, 2026-08-08. Everything
- * below was derived from the artifact first, which is why the evidence is
- * kept: it is what will catch the next change.)
+ * A string in 5.4: a size, then that many bytes minus one, with no
+ * terminator stored.
  *
- * `function(a) return a end` compiled as a nested function stores
- * `f6 be bc be 79 be bf be`; XORed with 0xbe that is `48 00 02 00`
- * `47 00 01 00`, which decodes to `RETURN1 0 2` / `RETURN0 0 1` — exactly
- * what the same source produces at the top level, where the flag is 0 and
- * the bytes are stored plainly.
- *
- * The key is one byte applied to every byte, *not* a 32-bit word key. An
- * earlier draft of the compiler XORed instruction words with 0xCAFEBABE;
- * the shipped 5.4.7 does not, and `f6 be bc be` is how you tell — a
- * 32-bit 0xCAFEBABE would leave 0xba in the second position.
- *
- * Which functions get the flag is a separate question from what the flag
- * does, and the answer looks accidental. Across every shape tried, the
- * *first* nested function of a chunk and its entire subtree carry 1, and
- * the main chunk plus everything compiled after that subtree closes
- * carries 0:
- *
- *     local function a() local function a1() end end   -- a=1, a1=1
- *     local function b() local function b1() end end   -- b=0, b1=0
- *
- * That is a latch, not a policy: it means one arbitrary subtree of any
- * real program ships scrambled and the rest ships plain. `test/bytecode.
- * spec.js` pins the rule so that a build which changes it says so.
+ * For a constant inside a scrambled function the stored size is the exact
+ * length instead, and the bytes are XORed: `04 85 ce cc d7 d0 ca` is a
+ * short-string constant whose five content bytes XOR to `print`. That
+ * asymmetry spends the encoding stock Lua uses for "no string", which is
+ * why it only applies where a string is never absent.
  */
-const SCRAMBLE_KEY = 0xbe;
+function readString54(ctx, { scrambled = false } = {}) {
+  const size = ctx.reader.varint54();
+  if (size === 0) return null;
+  const raw = ctx.reader.take(scrambled ? size : size - 1);
+  return decode(scrambled ? unscramble(raw) : raw);
+}
 
-function readFunction(reader, parentSource) {
+function readFunction54(ctx, parentSource) {
+  const { reader } = ctx;
   const flag = reader.byte();
-  const xorKey = flag === 1 ? SCRAMBLE_KEY : 0;
-  const source = reader.string() ?? parentSource;
-  const lineDefined = reader.int();
-  const lastLineDefined = reader.int();
+  const scrambled = flag === 1;
+
+  const source = readString54(ctx) ?? parentSource;
+  const lineDefined = reader.varint54();
+  const lastLineDefined = reader.varint54();
   const numParams = reader.byte();
-  const isVararg = reader.byte();
+  const isVararg = reader.byte() !== 0;
   const maxStackSize = reader.byte();
 
   const code = [];
-  const codeCount = reader.int();
+  const codeCount = reader.varint54();
   for (let i = 0; i < codeCount; i++) {
-    code.push(flag === 1 ? reader.instructionXor(SCRAMBLE_KEY) : reader.instruction());
+    code.push(scrambled ? readScrambledWord(reader) : reader.u32());
   }
 
   const constants = [];
-  const constantCount = reader.int();
-  for (let i = 0; i < constantCount; i++) constants.push(readConstant(reader, xorKey));
+  const constantCount = reader.varint54();
+  for (let i = 0; i < constantCount; i++) {
+    const tag = reader.byte();
+    switch (tag) {
+      case TAG.NIL: constants.push({ type: 'nil', value: null }); break;
+      case TAG.FALSE: constants.push({ type: 'boolean', value: false }); break;
+      case TAG.TRUE: constants.push({ type: 'boolean', value: true }); break;
+      case TAG.NUMINT: constants.push({ type: 'integer', value: reader.i64() }); break;
+      case TAG.NUMFLT: constants.push({ type: 'float', value: reader.f64() }); break;
+      case TAG.SHRSTR:
+      case TAG.LNGSTR: constants.push({ type: 'string', value: readString54(ctx, { scrambled }) ?? '' }); break;
+      default: throw new BytecodeError(`unknown constant tag 0x${tag.toString(16)}`);
+    }
+  }
 
   const upvalues = [];
-  const upvalueCount = reader.int();
+  const upvalueCount = reader.varint54();
   for (let i = 0; i < upvalueCount; i++) {
     upvalues.push({ inStack: reader.byte() === 1, index: reader.byte(), kind: reader.byte(), name: null });
   }
 
   const protos = [];
-  const protoCount = reader.int();
-  for (let i = 0; i < protoCount; i++) protos.push(readFunction(reader, source));
+  const protoCount = reader.varint54();
+  for (let i = 0; i < protoCount; i++) protos.push(readFunction54(ctx, source));
 
-  // --- debug ---------------------------------------------------------
+  // --- debug: never scrambled in 5.4 ---------------------------------
   const lineInfo = [];
-  const lineInfoCount = reader.int();
+  const lineInfoCount = reader.varint54();
   for (let i = 0; i < lineInfoCount; i++) {
     const b = reader.byte();
     lineInfo.push(b > 127 ? b - 256 : b);      // signed delta
   }
 
   const absLineInfo = [];
-  const absCount = reader.int();
-  for (let i = 0; i < absCount; i++) absLineInfo.push({ pc: reader.int(), line: reader.int() });
+  const absCount = reader.varint54();
+  for (let i = 0; i < absCount; i++) absLineInfo.push({ pc: reader.varint54(), line: reader.varint54() });
 
   const locals = [];
-  const localCount = reader.int();
+  const localCount = reader.varint54();
   for (let i = 0; i < localCount; i++) {
-    locals.push({ name: reader.string(), startpc: reader.int(), endpc: reader.int() });
+    locals.push({ name: readString54(ctx), startpc: reader.varint54(), endpc: reader.varint54() });
   }
 
-  const upvalueNameCount = reader.int();
+  const upvalueNameCount = reader.varint54();
   for (let i = 0; i < upvalueNameCount; i++) {
-    const name = reader.string();
+    const name = readString54(ctx);
     if (upvalues[i]) upvalues[i].name = name;
   }
 
+  return finish(ctx, {
+    flag, source, lineDefined, lastLineDefined, numParams, isVararg, maxStackSize,
+    code, constants, upvalues, protos, lineInfo, absLineInfo, locals,
+  });
+}
+
+// --- 5.5 -------------------------------------------------------------
+
+/**
+ * `dumpNumInfo`: a size byte, then a check value of that width.
+ *
+ * A wrong width means the rest of the header cannot be located, so this
+ * stops there rather than collecting further problems it would be
+ * guessing at.
+ */
+function checkNum(reader, width, read, expected, label, problems) {
+  const size = reader.byte();
+  if (size !== width) {
+    throw new BytecodeError(
+      [...problems, `${label} is ${size} bytes, not ${width}`].join('; '));
+  }
+  if (read(reader) !== expected) problems.push(`the ${label} check value is wrong`);
+}
+
+function readHeader55(reader) {
+  const problems = [];
+  checkNum(reader, 4, (r) => r.i32(), -0x5678, 'int', problems);
+  checkNum(reader, 4, (r) => r.u32(), 0x12345678, 'instruction', problems);
+  checkNum(reader, 8, (r) => r.i64(), -0x5678n, 'Lua integer', problems);
+  checkNum(reader, 8, (r) => r.f64(), -370.5, 'Lua number', problems);
+  return { problems, sizeInstruction: 4, sizeInteger: 8, sizeNumber: 8 };
+}
+
+/**
+ * A string in 5.5, where the format grew a saved-string table.
+ *
+ * A stored size of 0 is followed by an index: 0 means NULL, anything else
+ * means "the string saved under that number". Otherwise the real length is
+ * size - 1 and the terminating NUL *is* written, so `size` bytes follow.
+ *
+ * Note where the scramble sits relative to the dedup: back-references
+ * carry no bytes, so they are never scrambled. A string first written
+ * inside a plain function and reused inside a secure one is therefore
+ * stored in the clear. That is the compiler's behaviour and this reader
+ * only has to mirror it — but it is the reason `encrypted` is checked
+ * *after* the size, not before.
+ */
+function readString55(ctx) {
+  const { reader } = ctx;
+  const size = reader.varint55();
+  if (size === 0) {
+    const index = reader.varint55();
+    if (index === 0) return null;
+    if (index > ctx.strings.length) throw new BytecodeError(`string index ${index} has not been seen yet`);
+    return ctx.strings[index - 1];
+  }
+  const length = size - 1;
+  const raw = reader.take(length + 1);                 // content plus the NUL
+  const bytes = ctx.encrypted ? unscramble(raw) : raw;
+  const value = decode(bytes.subarray(0, length));
+  ctx.strings.push(value);
+  return value;
+}
+
+/** Zigzag: 0 => 0, -1 => 1, 1 => 2, -2 => 3, ... */
+function readZigzag55(reader) {
+  const coded = reader.varint55Big();
+  return (coded & 1n) === 0n ? coded / 2n : -(coded >> 1n) - 1n;
+}
+
+function readFunction55(ctx, parentSource) {
+  const { reader } = ctx;
+  const outer = ctx.encrypted;
+  const flag = reader.byte();
+  const scrambled = flag === 1;
+  ctx.encrypted = scrambled;
+
+  const lineDefined = reader.varint55();
+  const lastLineDefined = reader.varint55();
+  const numParams = reader.byte();
+  const protoFlag = reader.byte();
+  // PF_VAHID (1) | PF_VATAB (2); PF_FIXED (4) is a load-time thing.
+  const isVararg = (protoFlag & 0x3) !== 0;
+  const maxStackSize = reader.byte();
+
+  const code = [];
+  const codeCount = reader.varint55();
+  reader.align(4);
+  for (let i = 0; i < codeCount; i++) {
+    code.push(scrambled ? readScrambledWord(reader) : reader.u32());
+  }
+
+  const constants = [];
+  const constantCount = reader.varint55();
+  for (let i = 0; i < constantCount; i++) {
+    const tag = reader.byte();
+    switch (tag) {
+      case TAG.NIL: constants.push({ type: 'nil', value: null }); break;
+      case TAG.FALSE: constants.push({ type: 'boolean', value: false }); break;
+      case TAG.TRUE: constants.push({ type: 'boolean', value: true }); break;
+      case TAG.NUMINT: constants.push({ type: 'integer', value: readZigzag55(reader) }); break;
+      case TAG.NUMFLT: constants.push({ type: 'float', value: reader.f64() }); break;
+      case TAG.SHRSTR:
+      case TAG.LNGSTR: constants.push({ type: 'string', value: readString55(ctx) ?? '' }); break;
+      default: throw new BytecodeError(`unknown constant tag 0x${tag.toString(16)}`);
+    }
+  }
+
+  const upvalues = [];
+  const upvalueCount = reader.varint55();
+  for (let i = 0; i < upvalueCount; i++) {
+    upvalues.push({ inStack: reader.byte() === 1, index: reader.byte(), kind: reader.byte(), name: null });
+  }
+
+  // Children come before this function's own source, and each restores
+  // `encrypted` on the way out so the trailing fields below still read
+  // under *this* function's flag.
+  const protos = [];
+  const protoCount = reader.varint55();
+  for (let i = 0; i < protoCount; i++) protos.push(readFunction55(ctx, null));
+
+  const source = readString55(ctx) ?? parentSource;
+
+  // --- debug: scrambled along with everything else when secure --------
+  const lineInfo = [];
+  const lineInfoCount = reader.varint55();
+  for (let i = 0; i < lineInfoCount; i++) {
+    const b = reader.byte();
+    lineInfo.push(b > 127 ? b - 256 : b);
+  }
+
+  const absLineInfo = [];
+  const absCount = reader.varint55();
+  if (absCount > 0) {
+    reader.align(4);
+    for (let i = 0; i < absCount; i++) absLineInfo.push({ pc: reader.i32(), line: reader.i32() });
+  }
+
+  const locals = [];
+  const localCount = reader.varint55();
+  for (let i = 0; i < localCount; i++) {
+    locals.push({ name: readString55(ctx), startpc: reader.varint55(), endpc: reader.varint55() });
+  }
+
+  const upvalueNameCount = reader.varint55();
+  for (let i = 0; i < upvalueNameCount; i++) {
+    const name = readString55(ctx);
+    if (upvalues[i]) upvalues[i].name = name;
+  }
+
+  ctx.encrypted = outer;
+  return finish(ctx, {
+    flag, source, lineDefined, lastLineDefined, numParams, isVararg, maxStackSize,
+    code, constants, upvalues, protos, lineInfo, absLineInfo, locals,
+  });
+}
+
+// --- shared ----------------------------------------------------------
+
+/** Four bytes, each XORed with the key, reassembled little-endian. */
+function readScrambledWord(reader) {
+  reader.need(4);
+  let word = 0;
+  for (let i = 3; i >= 0; i--) word = ((word << 8) | (reader.bytes[reader.at + i] ^ SCRAMBLE_KEY)) >>> 0;
+  reader.at += 4;
+  return word;
+}
+
+function finish(ctx, proto) {
   return {
-    flag,
-    encrypted: flag === 1,   // Proto::is_encrypted, as the compiler names it
-    source,
-    lineDefined,
-    lastLineDefined,
-    numParams,
-    isVararg: isVararg !== 0,
-    maxStackSize,
-    code,
-    instructions: code.map(decodeInstruction),
-    constants,
-    upvalues,
-    protos,
-    lineInfo,
-    absLineInfo,
-    locals,
-    lines: absoluteLines(lineInfo, absLineInfo, lineDefined),
+    ...proto,
+    encrypted: proto.flag === 1,   // Proto::is_encrypted, as the compiler names it
+    instructions: proto.code.map((word) => decodeInstruction(word, ctx.set)),
+    lines: absoluteLines(proto.lineInfo, proto.absLineInfo, proto.lineDefined),
   };
 }
+
+const PROFILES = {
+  0x54: { lua: '5.4', readHeader: readHeader54, readFunction: readFunction54 },
+  0x55: { lua: '5.5', readHeader: readHeader55, readFunction: readFunction55 },
+};
 
 /**
  * Lua stores one signed byte per instruction, as a delta from the previous
@@ -294,7 +445,7 @@ function absoluteLines(lineInfo, absLineInfo, lineDefined) {
 }
 
 /**
- * Parse a compiled chunk.
+ * Parse a compiled chunk, of either dialect.
  *
  * Throws unless every byte is accounted for. A binary parser that stops
  * early has almost certainly gone wrong somewhere in the middle, and
@@ -303,24 +454,55 @@ function absoluteLines(lineInfo, absLineInfo, lineDefined) {
  */
 export function readChunk(bytes) {
   const reader = new Reader(bytes);
-  const header = readHeader(reader);
+
+  const signature = String.fromCharCode(...reader.take(4));
+  if (signature !== LUA_SIGNATURE) {
+    throw new BytecodeError('this is not compiled Lua: the \\x1bLua signature is missing');
+  }
+  const version = reader.byte();
+  const format = reader.byte();
+  const data = Array.from(reader.take(6));
+
+  const profile = PROFILES[version];
+  const set = instructionSet(version);
+  if (!profile || !set) {
+    throw new BytecodeError(
+      `bytecode version 0x${version.toString(16)} — this reader knows Lua 5.4 (0x54) and 5.5 (0x55). `
+      + 'A newer Diluvium would need its container adding here.');
+  }
+
+  const { problems, ...sizes } = profile.readHeader(reader);
+  if (LUAC_DATA.some((b, i) => data[i] !== b)) problems.unshift('the LUAC_DATA guard bytes are wrong');
+  if (problems.length) throw new BytecodeError(problems.join('; '));
+
+  const header = {
+    version,
+    format,
+    lua: profile.lua,
+    // Reported rather than enforced: a chunk from stock Lua parses fine
+    // here, and saying whose it is beats pretending they are the same.
+    dialect: format === DILUVIUM_FORMAT ? 'diluvium' : (format === 0 ? 'lua' : `format 0x${format.toString(16)}`),
+    ...sizes,
+  };
+
+  const ctx = { reader, set, strings: [], encrypted: false };
   const sizeUpvalues = reader.byte();
-  const main = readFunction(reader, null);
+  const main = profile.readFunction(ctx, null);
 
   if (reader.at !== bytes.length) {
     throw new BytecodeError(
       `parsed ${reader.at} of ${bytes.length} bytes — the reader and this chunk disagree about its layout`);
   }
 
-  // Two self-checks, because the container format above was reverse
-  // engineered and a plausible-looking wrong disassembly would be worse
+  // Two self-checks, because both containers were derived rather than
+  // specified and a plausible-looking wrong disassembly would be worse
   // than an error. A misaligned parse essentially never ends exactly on
   // the last byte *and* yields only real opcodes.
   for (const { path, proto } of flattenProtos(main)) {
     const bad = proto.instructions.find((i) => i.name.startsWith('UNKNOWN_'));
     if (bad) {
       throw new BytecodeError(
-        `${path} decodes to opcode ${bad.opcode}, which does not exist in Lua 5.4. `
+        `${path} decodes to opcode ${bad.opcode}, which does not exist in Lua ${profile.lua}. `
         + 'This build stores bytecode differently from the one this reader was derived from.');
     }
   }

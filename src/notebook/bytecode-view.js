@@ -133,7 +133,10 @@ export class BytecodeView {
       this.tabButton('paste', 'Read hex'),
       el('span', { class: 'bc-summary', 'data-bc-summary': true }, [
         `${byteLength} bytes · ${flat.length} function${flat.length === 1 ? '' : 's'} · `
-        + `format 0x${header.format.toString(16)} (${header.dialect})`,
+        // Which container, not just whose: 5.4 and 5.5 chunks look alike
+        // and are read completely differently, so pasting one in should
+        // say which one it turned out to be.
+        + `Lua ${header.lua} · format 0x${header.format.toString(16)} (${header.dialect})`,
       ]),
     ]);
 

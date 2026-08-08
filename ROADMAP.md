@@ -438,6 +438,64 @@ plausible disassembly of a format it has misread. That check was written
 when the flag was a mystery, and it stays now that it is not: it is what
 turns the next format change into an error message.
 
+#### Reading 5.5 as well ✅ done
+
+It turned the next format change into an error message about a week
+later. Diluvium 5.5 rebased onto Lua 5.5 and the container moved:
+
+| | 5.4 | 5.5 |
+| :-- | :-- | :-- |
+| varint terminator | high bit **set** on the last byte | high bit **clear** on the last byte |
+| integer constants | raw 8-byte little-endian | zigzag varint |
+| strings | inline, every time | interned: `size 0` means "reuse #n" |
+| `source` | first field of a function | after the nested protos |
+| vararg | its own byte | bits 0–1 of a `flag` byte |
+| code section | packed | aligned to 4 first |
+| `abslineinfo` | pairs of varints | aligned pairs of raw int32 |
+| opcodes | 83 | 85, and renumbered |
+| scramble covers | code and string constants | code and *every* string |
+
+None of those is detectable from the bytes; the version byte in the
+header is the only thing that says which set of rules applies. So
+`src/analysis/luac.js` dispatches on it into one of two profiles, and
+`src/analysis/opcodes.js` carries two instruction tables with **no
+default** — `decodeInstruction` takes the set as an argument, because
+`SHRI` and `SHLI` swapped opcode numbers and a wrong guess disassembles
+into confident nonsense rather than into an error.
+
+Verification is the part worth recording. The Lab never builds Diluvium,
+but a container reader checked only against its author's reading of
+`ldump.c` is not checked at all. So the 5.5.1 source was compiled to a
+native interpreter once, `scripts/make-bytecode-fixtures.lua` dumped 21
+real chunks with it, and `test/fixtures/bytecode-5.5.json` holds the
+bytes. `test/bytecode-5.5.spec.js` parses all of them stripped and
+unstripped. Regenerating that file is the documented way to re-verify
+against a new release.
+
+Two things fell out of having real 5.5 bytes to hand:
+
+- **The 5.4.7 latch is gone.** `is_encrypted` is now opt-in per function
+  via `~function` / `local ~function`, set by `ls->encrypted_flag` and
+  inherited by everything lexically inside. The 5.4.7 behaviour was that
+  same flag starting life set; `llex.c:198` initialises it now. A 5.5
+  chunk with no `~` in it has no secure functions, and there is a test
+  that says so.
+- **A secure function does not hide a literal it shares with a plain
+  one.** `dumpString` consults the saved-string table before it checks
+  whether it is inside a secure function, so an already-written string is
+  emitted as a bare index and the only stored copy is the plain one. And
+  since a function's own constants are dumped before its nested protos,
+  any literal shared with the enclosing function is *always* the plain
+  copy. Confirmed against the real build: `"shared-secret"` used in both
+  the main chunk and a `~function` appears in the dump verbatim. It loads
+  correctly — this is a confidentiality gap, not a correctness bug — but
+  the feature reads stronger than it is. Pinned in
+  test/bytecode-5.5.spec.js so a release that fixes it is noticed.
+
+**The Lab cannot yet *run* 5.5.** This is the bytecode reader only. A 5.5
+kernel needs `libdiluvium_wasi.wasm` published for a 5.5 tag, and the
+version dropdown needs the mirror to index it.
+
 Compiling is not running: the panel loads and dumps the chunk and executes
 nothing, which is what makes "paste bytecode someone sent you" a safe thing
 to offer.

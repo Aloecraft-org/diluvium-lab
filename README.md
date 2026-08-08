@@ -66,18 +66,30 @@ disassembles it. So a compiled chunk someone sends you can be read in a
 browser with nothing installed — and since it is only compiled and read,
 never run, that is safe to do with a blob you have not vetted.
 
-The container is Lua 5.4's, with Diluvium's own `LUAC_FORMAT` byte of
-`0x44` — stock Lua writes `0` there and refuses anything else, so the two
-are deliberately not interchangeable. Diluvium also writes one byte per
-function that stock Lua does not, `Proto::is_encrypted`, and when it is set
-that function's instruction and string-constant bytes are stored XORed with
-`0xbe`; the reader undoes it, so a scrambled function disassembles like any
-other.
+Two containers are read: Diluvium 5.4's, which is Lua 5.4's, and Diluvium
+5.5's, which is Lua 5.5's. They differ in almost every primitive — the
+varint terminator is inverted, integers became zigzag varints, strings are
+interned, `source` moved, sections are aligned, and two opcodes were
+inserted so the numbering shifts. Nothing in the bytes announces which set
+of rules applies except the version byte in the header, so that is what the
+reader dispatches on, and there is no default instruction set anywhere in
+the code.
 
-`src/analysis/luac.js` was derived from the shipped artifact rather than
-from a specification, and it verifies its own output: the parse must
-consume every byte and every opcode must exist, or it refuses. A
-disassembly that looks right and is not would be worse than none.
+Both carry Diluvium's own `LUAC_FORMAT` byte of `0x44` — stock Lua writes
+`0` there and refuses anything else, so a Diluvium chunk and a PUC-Rio
+chunk of the same Lua version are deliberately not interchangeable.
+
+Diluvium also writes one byte per function that stock Lua does not,
+`Proto::is_encrypted`. In 5.5 it is the `~function` marker; when it is set,
+that function's instructions and strings are stored XORed with `0xbe`. The
+reader undoes it, so a secure function disassembles like any other — which
+is worth knowing before relying on it to hide anything.
+
+`src/analysis/luac.js` verifies its own output: the parse must consume
+every byte and every opcode must exist, or it refuses. A disassembly that
+looks right and is not would be worse than none. The 5.4 path is tested
+against the live kernel; the 5.5 path against committed dumps from a real
+5.5.1 build (`scripts/make-bytecode-fixtures.lua`).
 
 ## Running against another Diluvium build
 

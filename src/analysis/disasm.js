@@ -26,9 +26,15 @@ const constantAt = (proto, i) => showConstant(proto.constants[i]);
 /**
  * The comment for one instruction, or null.
  *
- * Deliberately not exhaustive across all 83 opcodes: an annotation that is
- * wrong is worse than none, so this covers the ones whose operands have an
- * unambiguous referent and says nothing about the rest.
+ * Deliberately not exhaustive: an annotation that is wrong is worse than
+ * none, so this covers the ones whose operands have an unambiguous
+ * referent and says nothing about the rest.
+ *
+ * Shared by both dialects. `NEWTABLE` and `SETLIST` changed operand
+ * *widths* between 5.4 and 5.5 but not operand *meanings*, and the reader
+ * has already put vB/vC into B/C, so one case serves both. `GETVARG` and
+ * `ERRNNIL` exist only in 5.5, which costs nothing here — the names simply
+ * never come up when disassembling a 5.4 chunk.
  */
 export function annotate(instruction, proto, pc) {
   const { name, A, B, C, k } = instruction;
@@ -50,8 +56,18 @@ export function annotate(instruction, proto, pc) {
 
     case 'JMP': return `to ${pc + 1 + instruction.sJ + 1}`;
     case 'FORLOOP': return `to ${pc + 1 - instruction.Bx + 1}`;
-    case 'FORPREP': case 'TFORPREP': return `to ${pc + 1 + instruction.Bx + 1 + 1}`;
+    // FORPREP jumps Bx + 1 to skip the loop body; TFORPREP jumps Bx flat.
+    // They look alike and are not, so they do not share a case.
+    case 'FORPREP': return `to ${pc + 1 + instruction.Bx + 1 + 1}`;
+    case 'TFORPREP': return `to ${pc + 1 + instruction.Bx + 1}`;
     case 'TFORLOOP': return `to ${pc + 1 - instruction.Bx + 1}`;
+
+    case 'NEWTABLE': return tableShape(B, C, k);
+    case 'SETLIST': return `${B === 0 ? 'every value up to the top' : `${B} value${B === 1 ? '' : 's'}`}`
+      + `, starting at index ${C + 1}`;
+    case 'GETVARG': return 'index into `...`';
+    case 'ERRNNIL': return instruction.Bx > 0 ? `${constantAt(proto, instruction.Bx - 1)} is not declared` : null;
+    case 'VARARG': return C === 0 ? 'all of `...`' : `${C - 1} value${C - 1 === 1 ? '' : 's'} from \`...\``;
 
     case 'EQK': return constantAt(proto, B);
     case 'ADDK': case 'SUBK': case 'MULK': case 'MODK': case 'POWK':
@@ -67,6 +83,16 @@ export function annotate(instruction, proto, pc) {
     default:
       return K_SELECTS_CONSTANT.has(name) && k ? constantAt(proto, C) : null;
   }
+}
+
+/** B is log2(hash size) + 1, C is the array size — in both dialects. */
+function tableShape(B, C, k) {
+  const hash = B > 0 ? 2 ** (B - 1) : 0;
+  const parts = [];
+  if (C) parts.push(`${C} array slot${C === 1 ? '' : 's'}`);
+  if (hash) parts.push(`${hash} hash slot${hash === 1 ? '' : 's'}`);
+  if (k) parts.push('plus the next EXTRAARG');
+  return parts.length ? parts.join(', ') : 'empty';
 }
 
 function callShape(B, C) {
