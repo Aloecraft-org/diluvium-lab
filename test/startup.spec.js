@@ -206,3 +206,62 @@ test.describe('a stale cache announces itself', () => {
     await expect(page.locator('[data-about]')).toContainText('agree');
   });
 });
+
+test.describe('the stale-scripts banner', () => {
+  // The version display and the staleness check both live inline in
+  // index.html rather than in a module, and that is the whole point: the
+  // first attempt put the check inside src/app.js, which is precisely the
+  // file that goes stale. In the one situation it existed for, it was not
+  // there to run.
+
+  test('the version is on the page, not behind a button', async ({ page }) => {
+    await page.addInitScript(() => indexedDB.deleteDatabase('diluvium-lab'));
+    await boot(page);
+    // A version reachable only through the About dialog is no use when the
+    // thing that broke is what binds the About button.
+    await expect(page.locator('[data-build-version]')).toBeVisible();
+    await expect(page.locator('[data-build-version]')).toHaveText(/^v\d+\.\d+\.\d+/);
+  });
+
+  test('no banner when the page and its scripts agree', async ({ page }) => {
+    await page.addInitScript(() => indexedDB.deleteDatabase('diluvium-lab'));
+    await boot(page);
+    await page.waitForTimeout(9000);
+    await expect(page.locator('[data-stale-banner]')).toBeHidden();
+  });
+
+  test('a banner when the running code is an older version', async ({ page }) => {
+    await page.addInitScript(() => indexedDB.deleteDatabase('diluvium-lab'));
+    await boot(page);
+    // Stand in for a cache serving yesterday's app.js: the app boots
+    // normally, but the version compiled into it is not the one this page
+    // expects. Set after boot, because the real app assigns window.lab.
+    await page.evaluate(() => { window.lab.labVersion = '0.0.9-stale'; });
+    const banner = page.locator('[data-stale-banner]');
+    await expect(banner).toBeVisible({ timeout: 20_000 });
+    await expect(banner).toContainText('0.0.9-stale');
+    await expect(banner).toContainText('cached copy');
+  });
+
+  test('a banner when the scripts never ran at all', async ({ page }) => {
+    // The worse case: nothing booted, so there is no version to compare.
+    // A blank page that says nothing is what sent this investigation after
+    // the wrong browser for two rounds.
+    await page.route('**/src/app.js', (route) => route.abort('failed'));
+    await page.goto('/');
+    const banner = page.locator('[data-stale-banner]');
+    await expect(banner).toBeVisible({ timeout: 20_000 });
+    await expect(banner).toContainText('did not finish starting');
+  });
+
+  test('its reload button adds a query the cache has never seen', async ({ page }) => {
+    // `location.reload(true)` has been a no-op for years; a fresh URL is
+    // what actually re-fetches through a CDN that is holding an old copy.
+    await page.route('**/src/app.js', (route) => route.abort('failed'));
+    await page.goto('/');
+    await expect(page.locator('[data-stale-banner]')).toBeVisible({ timeout: 20_000 });
+    await page.locator('[data-stale-banner] button').click();
+    await page.waitForURL(/cachebust=/, { timeout: 10_000 });
+    expect(page.url()).toMatch(/[?&]cachebust=/);
+  });
+});

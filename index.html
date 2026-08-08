@@ -11,6 +11,66 @@
      quietly lack the newer half of the page. scripts/check-version.mjs
      keeps this in step with package.json and src/version.js. -->
 <meta name="diluvium-lab-build" content="0.1.0">
+<script>
+/* Deliberately NOT a module, and deliberately in this file.
+ *
+ * index.html is the only thing guaranteed fresh: it is uncacheable in
+ * practice, while everything under src/ can be held by a browser or a CDN
+ * from an older deploy. The first version of this check lived in
+ * src/app.js -- inside the very file that goes stale -- so in the one
+ * situation it existed for, it was not there to run. That was the bug in
+ * the design, not a detail.
+ *
+ * So this runs with no imports, no dependencies, and no assumptions about
+ * anything else having worked. */
+(function () {
+  var EXPECTED = '0.1.0';   // kept in step by scripts/check-version.mjs
+  window.DILUVIUM_LAB_EXPECTED = EXPECTED;
+
+  function show(title, detail) {
+    var el = document.querySelector('[data-stale-banner]');
+    if (!el) return;
+    el.textContent = '';
+    var strong = document.createElement('strong');
+    strong.textContent = title;
+    var p = document.createElement('span');
+    p.textContent = ' ' + detail;
+    var button = document.createElement('button');
+    button.type = 'button';
+    button.textContent = 'Reload ignoring the cache';
+    /* location.reload(true) has been a no-op for years. Adding a query the
+     * cache has never seen is what actually re-fetches. */
+    button.onclick = function () {
+      var u = new URL(window.location.href);
+      u.searchParams.set('cachebust', Date.now().toString(36));
+      window.location.replace(u.href);
+    };
+    el.append(strong, p, button);
+    el.hidden = false;
+  }
+
+  document.addEventListener('DOMContentLoaded', function () {
+    var slot = document.querySelector('[data-build-version]');
+    if (slot) slot.textContent = 'v' + EXPECTED;
+  });
+
+  /* Give the module graph time to load and boot, then ask whether the code
+   * that is actually running agrees with the page it is running in. */
+  setTimeout(function () {
+    var running = window.lab && window.lab.labVersion;
+    if (running === EXPECTED) return;
+    if (!running) {
+      show('This page did not finish starting.',
+        'Its scripts are missing, stale, or failed to load — which usually means a cache '
+        + 'is serving an older copy of them than this page.');
+    } else {
+      show('Stale scripts.',
+        'This page is version ' + EXPECTED + ' but the code running in it is ' + running
+        + '. Something is serving a cached copy from an older deploy.');
+    }
+  }, 8000);
+}());
+</script>
 <style>
   :root {
     color-scheme: light dark;
@@ -337,12 +397,31 @@
     dialog[data-about] dt { margin-top: .45rem; }
   }
 
+  .build {
+    font-family: var(--mono); font-size: .74rem; color: var(--quiet);
+    padding: .1rem .35rem; border: 1px solid var(--edge); border-radius: 999px;
+  }
+  [data-stale-banner] {
+    display: flex; align-items: center; gap: .5rem; flex-wrap: wrap;
+    padding: .55rem .9rem; font-size: .86rem;
+    background: #7f1d1d; color: #fff;
+  }
+  [data-stale-banner] button {
+    font: inherit; font-size: .8rem; padding: .2rem .6rem; cursor: pointer;
+    border: 1px solid rgb(255 255 255 / .5); border-radius: 6px;
+    background: transparent; color: inherit;
+  }
+
 </style>
 </head>
 <body>
 
 <header class="toolbar">
   <span class="title">Diluvium Lab</span>
+  <!-- Printed by the inline script below, from the constant in this file
+       rather than from a module. A version that lives only behind a button
+       is no use when the thing that broke is what binds the button. -->
+  <span class="build" data-build-version title="Lab version"></span>
   <button type="button" data-toolbar="add-code">+ Code</button>
   <button type="button" data-toolbar="add-markdown">+ Markdown</button>
   <span class="sep"></span>
@@ -405,6 +484,7 @@
   </div>
 </section>
 
+<div data-stale-banner hidden role="alert"></div>
 <div data-toast hidden role="status" aria-live="polite"></div>
 
 <script type="module">

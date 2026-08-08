@@ -138,6 +138,10 @@ export class App {
    * page that stops and does not.
    */
   async start() {
+    // Read by the inline script in index.html, which is the only code
+    // guaranteed not to be stale. If these disagree, the page is running
+    // modules from an older deploy than the HTML that loaded them.
+    this.labVersion = LAB_VERSION;
     this.startupProblems = [];
     const phase = async (what, fn) => {
       try {

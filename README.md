@@ -291,11 +291,29 @@ disables browser caching. Check it with:
 curl -sI <base>/src/app.js | grep -i 'cache-control\|cf-cache-status'
 ```
 
-The Lab defends itself as far as it can: `index.html` carries a
-`diluvium-lab-build` meta tag and the running scripts compare it against
-their own version at startup. If they disagree it says so, names both
-versions, and tells the reader to reload bypassing the cache. That turns a
-silent failure into a sentence, but it cannot fix the cause.
+**Purging matters as much as the header.** Changing `Cache-Control`
+governs what gets stored *next*; it does not evict what a CDN already
+holds. After a deploy, purge — and then check that the edge agrees with
+the origin, because a header set at the origin can also be overridden by
+the CDN's own browser-cache setting:
+
+```sh
+curl -sI <base>/src/app.js | grep -i 'etag\|cache-control\|cf-cache-status'
+curl -sI '<base>/src/app.js?bust=1' | grep -i etag   # what the origin really has
+```
+
+Two different etags means the edge is serving something the origin no
+longer has.
+
+The Lab defends itself as far as it can. The version is printed in the
+toolbar, and `index.html` carries an **inline, non-module** script that
+compares it against the version compiled into the running code. That
+placement is the whole point: `index.html` is the one file always fetched
+fresh, so it is the only place a staleness check can live and still be
+there when everything under `src/` is old. If they disagree — or if
+nothing booted at all — a banner says so and offers a reload that appends
+a query string, since `location.reload(true)` has been a no-op for years
+and only a URL the cache has never seen actually re-fetches.
 
 ## Security
 

@@ -1122,3 +1122,35 @@ package.json, src/version.js and index.html — because a mismatch between
 
 It only detects a skew across a version bump, which is a real limit and an
 argument for bumping the version on every deploy. It cannot fix the cause.
+
+#### The detector was in the wrong file ✅ fixed
+
+The build-mismatch check shipped inside `src/app.js` — the very file that
+goes stale. In the one situation it existed for, it was not there to run.
+That is a design error rather than a detail, and it was caught by the
+thing itself failing to fire on a live stale deploy.
+
+It now lives **inline in `index.html`**, as a plain non-module script with
+no imports and no dependency on anything having worked. `index.html` is
+the one file always fetched fresh, so it is the only place such a check
+can survive its own failure case. It reports two conditions:
+
+- the running code's version disagrees with the page's, or
+- nothing booted at all, so there is no version to compare —
+
+and shows a banner rather than a line in a dialog. **The version is also
+printed in the toolbar now.** Putting it behind the About button was the
+second half of the same mistake: the button is bound by the code that goes
+stale, so in exactly the case the version matters, it cannot be reached.
+
+Its reload button appends a query rather than calling
+`location.reload(true)`, which has been a no-op for years. Only a URL the
+cache has never seen actually re-fetches — measured on the live host:
+`/lab/src/app.js` returned `cf-cache-status: HIT` with a 23126-byte
+build, while `/lab/src/app.js?bust=…` returned `MISS` with the correct
+29089-byte one.
+
+`scripts/check-version.mjs` now keeps four sources in step: package.json,
+`src/version.js`, the `diluvium-lab-build` meta tag, and the inline
+constant — because that constant is what decides whether every visitor
+sees a banner.

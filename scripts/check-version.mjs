@@ -30,6 +30,17 @@ if (!/^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$/.test(declared)) {
 }
 const html = await readFile(new URL('index.html', root), 'utf8');
 const meta = /<meta name="diluvium-lab-build" content="([^"]+)"/.exec(html)?.[1];
+// The inline script is the one that actually shows the banner, and it
+// carries its own copy because it must not import anything -- importing is
+// the thing that can be stale. So it has to be checked too.
+const inline = /var EXPECTED = '([^']+)'/.exec(html)?.[1];
+if (inline !== declared) {
+  console.error('check-version: the inline check in index.html disagrees with src/version.js');
+  console.error(`  index.html inline  ${inline ?? '(missing)'}`);
+  console.error(`  src/version.js     ${declared}`);
+  console.error('  This is what decides whether every visitor sees a "stale scripts" banner.');
+  process.exit(1);
+}
 if (meta !== declared) {
   console.error('check-version: index.html disagrees with src/version.js');
   console.error(`  index.html      ${meta ?? '(missing)'}`);
