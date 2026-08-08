@@ -108,31 +108,50 @@ violate. A page does.
 
 ```sh
 scripts/build-mirror.sh mirror v5.4.7_release      # downloads and verifies
-# upload mirror/ so index.json lands at the URL the Lab points to
+# upload mirror/ so releases.json lands at the URL the Lab points to
 ```
 
 The layout is plain files:
 
 ```
-<base>/index.json
+<base>/releases.json
 <base>/<tag>/libdiluvium_wasi.wasm
 <base>/<tag>/SHA256SUMS.txt        (or BUILDINFO.txt)
 ```
 
-`index.json` is the only file the Lab cannot do without — it is how the
+`releases.json` is the only file the Lab cannot do without — it is how the
 dropdown learns which tags exist, and there is no way to enumerate a
-static directory from a browser. The checksum may come from either
-`SHA256SUMS.txt` or `BUILDINFO.txt`, since the release job publishes both
-and the build manifest embeds the same `<sha256>  <filename>` lines.
+static directory from a browser. `index.json` is accepted as an alias.
+
+The checksum can come from three places: `SHA256SUMS.txt`, `BUILDINFO.txt`
+— whose `Artifacts` section is the same `sha256sum` output — or the
+index's own `assets[].sha256`. The first two win, since they are what the
+release job publishes and what `scripts/fetch-runtime.sh` checks. When
+more than one is present **they must agree**: a mirror that contradicts
+itself is half-updated, and choosing between two hashes is choosing which
+binary to execute on no evidence.
 
 ```json
 {
-  "schema": 1,
+  "repo": "Aloecraft-org/diluvium",
+  "latest": "v5.5.1_build1",
   "releases": [
-    { "tag": "v5.4.7_release", "version": "5.4.7", "published": "2026-08-05T22:53:34Z" }
+    {
+      "tag": "v5.5.1_build1",
+      "name": "Diluvium 5.5.1_build1",
+      "published_at": "2026-08-07T18:14:33Z",
+      "prerelease": false,
+      "assets": [
+        { "name": "libdiluvium_wasi.wasm", "size": 945830, "sha256": "15e5a2..." }
+      ]
+    }
   ]
 }
 ```
+
+The dropdown label comes from `name` rather than the tag, because no rule
+applied to tags alone turns both `v5.4.7_release` into `5.4.7` and
+`v5.5.1_build1` into `5.5.1_build1`. An explicit `version` overrides it.
 
 The host must do exactly one thing, on every file above:
 
@@ -143,7 +162,7 @@ Access-Control-Allow-Origin: *
 No API, no redirects, no auth, no dynamic anything. Check it with:
 
 ```sh
-curl -sI -H 'Origin: https://example.org' <base>/index.json | grep -i access-control
+curl -sI -H 'Origin: https://example.org' <base>/releases.json | grep -i access-control
 ```
 
 The Lab verifies every download against that release's own
@@ -158,11 +177,8 @@ only, on purpose: the Lab downloads a binary and executes it, so a query
 parameter that redirects where that binary comes from would turn any link
 into "run this wasm".
 
-**Today the mirror will list one build.** Nineteen tags exist on the
-Diluvium repository, but only `v5.4.7_release` attaches
-`libdiluvium_wasi.wasm` to its release — including `v5.5.0` and
-`v5.5.1_rc1`, which do not. The dropdown is waiting on the release job, not
-on the Lab.
+The mirror at `diluvium.aloecraft.org/release/` carries `v5.4.7_release`
+and `v5.5.1_build1`, both with the kernel artifact.
 
 ## Layout
 

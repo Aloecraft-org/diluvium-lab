@@ -47,19 +47,31 @@ export class ReleaseSource {
 /**
  * A static mirror. Everything it needs is plain files behind CORS:
  *
- *   <base>/index.json
+ *   <base>/releases.json
  *   <base>/<tag>/libdiluvium_wasi.wasm
  *   <base>/<tag>/SHA256SUMS.txt      (or BUILDINFO.txt -- see below)
  *
- * index.json is `{ "schema": 1, "releases": [ { "tag", "version",
- * "published" } ] }`. Nothing else is required of the host: no API, no
- * redirects, no auth. See README for the full contract.
+ * `releases.json` is the index the publishing job writes:
  *
- * The checksum can come from either `SHA256SUMS.txt` or `BUILDINFO.txt`,
- * because the release job publishes both and BUILDINFO.txt embeds the same
- * `<sha256>  <filename>` lines under an `Artifacts` heading. Accepting
- * both means a mirror that carries only the build manifest still works,
- * and it costs one extra request only when the first file is absent.
+ *   { "repo", "latest", "latest_prerelease", "generated_at",
+ *     "releases": [ { "tag", "name", "published_at", "prerelease",
+ *                     "assets": [ { "name", "size", "sha256" } ] } ] }
+ *
+ * `index.json` is accepted as an alias with `published` in place of
+ * `published_at`, because that is what earlier versions of
+ * `scripts/build-mirror.sh` wrote. Both normalise to the same thing.
+ *
+ * Nothing else is required of the host: no API, no redirects, no auth.
+ * See README for the full contract.
+ *
+ * The checksum can come from three places, in descending order of
+ * authority: `SHA256SUMS.txt`, `BUILDINFO.txt` (whose `Artifacts` section
+ * is the same sha256sum output), and the index's own `assets[].sha256`.
+ * The first two are what the release job publishes and what
+ * `scripts/fetch-runtime.sh` checks, so they win; the index is a fallback
+ * for a mirror that carries only a manifest. When more than one is
+ * present they must agree, and a mirror that contradicts itself is
+ * refused rather than resolved.
  */
 export class MirrorSource extends ReleaseSource {
   constructor(baseUrl = DEFAULT_MIRROR) {
@@ -98,16 +110,23 @@ export class MirrorSource extends ReleaseSource {
   }
 
   async list() {
-    const index = await (await this._get('index.json', 'the release index')).json();
+    const response = await this._getOptional('releases.json')
+      ?? await this._get('index.json', 'the release index (releases.json or index.json)');
+    const index = await response.json();
     if (!Array.isArray(index?.releases)) {
       throw new ReleaseError('the mirror index is not in the expected shape (no `releases` array)');
     }
+    this.latest = typeof index.latest === 'string' ? index.latest : null;
     return index.releases
       .filter((r) => typeof r.tag === 'string')
       .map((r) => ({
         tag: r.tag,
-        version: r.version ?? r.tag,
-        published: r.published ?? null,
+        version: versionOf(r),
+        published: r.published_at ?? r.published ?? null,
+        prerelease: r.prerelease === true,
+        // Kept so fetchKernel can cross-check the index against the
+        // release's own checksum files rather than trusting either alone.
+        assets: assetChecksums(r.assets),
         notes: r.notes ?? null,
       }));
   }
@@ -117,29 +136,53 @@ export class MirrorSource extends ReleaseSource {
    *
    * SHA256SUMS.txt first, because it is the file `scripts/fetch-runtime.sh`
    * checks, so the browser path and the shell path agree on what "correct"
-   * means. BUILDINFO.txt carries the identical lines and is the fallback.
+   * means. BUILDINFO.txt carries the identical lines. The index's own
+   * `assets[].sha256` is last, and is also used to cross-check: two
+   * sources that disagree mean a stale mirror, and guessing which half is
+   * current is exactly the wrong instinct when the answer decides which
+   * binary gets executed.
+   *
+   * @param {string} tag
+   * @param {string|null} [fromIndex] the sha256 the index claimed
    */
-  async checksumFor(tag) {
+  async checksumFor(tag, fromIndex = null) {
     const dir = encodeURIComponent(tag);
+    const claims = new Map();
+    if (fromIndex) claims.set('the release index', fromIndex.toLowerCase());
+
     for (const file of ['SHA256SUMS.txt', 'BUILDINFO.txt']) {
       const response = await this._getOptional(`${dir}/${file}`);
       if (!response) continue;
       const found = parseChecksums(await response.text()).get(KERNEL_ARTIFACT);
-      if (found) return found;
+      if (found) claims.set(file, found);
     }
-    return null;
+    if (claims.size === 0) return null;
+
+    const distinct = new Set(claims.values());
+    if (distinct.size > 1) {
+      const detail = [...claims].map(([where, sum]) => `  ${sum}  (${where})`).join('\n');
+      throw new ReleaseError(
+        `${tag} publishes more than one checksum for ${KERNEL_ARTIFACT} and they disagree, `
+        + `so the mirror is stale or damaged and nothing was loaded:\n${detail}`);
+    }
+    // Preference order is insertion order minus the index, which is only
+    // authoritative when it is all there is.
+    for (const file of ['SHA256SUMS.txt', 'BUILDINFO.txt']) {
+      if (claims.has(file)) return claims.get(file);
+    }
+    return claims.get('the release index');
   }
 
   /**
    * Download and verify. The Lab fetches a binary and then executes it, so
    * the checksum is not a nicety.
    */
-  async fetchKernel(tag) {
-    const expected = await this.checksumFor(tag);
+  async fetchKernel(tag, { indexChecksum = null } = {}) {
+    const expected = await this.checksumFor(tag, indexChecksum);
     if (!expected) {
       throw new ReleaseError(
-        `${tag} publishes no checksum for ${KERNEL_ARTIFACT}. Looked for `
-        + `SHA256SUMS.txt and BUILDINFO.txt under ${this.url(`${encodeURIComponent(tag)}/`)}. `
+        `${tag} publishes no checksum for ${KERNEL_ARTIFACT}. Looked in the release index, `
+        + `and for SHA256SUMS.txt and BUILDINFO.txt under ${this.url(`${encodeURIComponent(tag)}/`)}. `
         + 'A runtime that cannot be verified is not loaded.');
     }
 
@@ -153,6 +196,35 @@ export class MirrorSource extends ReleaseSource {
     }
     return bytes;
   }
+}
+
+/**
+ * What to call a release in the dropdown.
+ *
+ * Layered so each step is a fact rather than a pattern, as far as it can
+ * be. An explicit `version` wins. Otherwise the publishing job's `name`
+ * ("Diluvium 5.5.1_build1") carries exactly what BUILDINFO.txt's
+ * `version` field says, for both `v5.4.7_release` -> `5.4.7` and
+ * `v5.5.1_build1` -> `5.5.1_build1`, which no rule applied to the tag
+ * alone gets right. The tag is the last resort.
+ */
+export function versionOf(release) {
+  if (typeof release.version === 'string' && release.version) return release.version;
+  const named = /^\s*Diluvium\s+(\S+)\s*$/.exec(release.name ?? '');
+  if (named) return named[1];
+  return String(release.tag).replace(/^v/, '').replace(/_release$/, '');
+}
+
+/** `{ name: sha256 }` from an index's asset array, lowercased. */
+function assetChecksums(assets) {
+  const out = {};
+  if (!Array.isArray(assets)) return out;
+  for (const asset of assets) {
+    if (typeof asset?.name === 'string' && /^[0-9a-f]{64}$/i.test(asset?.sha256 ?? '')) {
+      out[asset.name] = asset.sha256.toLowerCase();
+    }
+  }
+  return out;
 }
 
 /**

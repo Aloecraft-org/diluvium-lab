@@ -1,0 +1,63 @@
+{
+  "_comment": [
+    "The real index from https://diluvium.aloecraft.org/release/releases.json,",
+    "captured 2026-08-08. Asset arrays are trimmed to the kernel artifact plus",
+    "one neighbour -- the full lists run to 28 entries each and the Lab reads",
+    "only `name` and `sha256`. Every other field is verbatim.",
+    "",
+    "This exists to pin `versionOf`, which is the one place the Lab guesses:",
+    "neither release carries a `version` field, and no rule applied to the tag",
+    "alone turns both v5.4.7_release into 5.4.7 and v5.5.1_build1 into",
+    "5.5.1_build1. The `name` field does, and this is where that stays true."
+  ],
+  "repo": "Aloecraft-org/diluvium",
+  "latest": "v5.5.1_build1",
+  "latest_prerelease": "v5.5.1_build1",
+  "generated_at": "2026-08-08T02:55:23Z",
+  "releases": [
+    {
+      "tag": "v5.5.1_build1",
+      "name": "Diluvium 5.5.1_build1",
+      "published_at": "2026-08-07T18:14:33Z",
+      "prerelease": false,
+      "sums": "SHA256SUMS.txt",
+      "verified_upstream": true,
+      "assets": [
+        {
+          "name": "SHA256SUMS.txt",
+          "size": 2519,
+          "sha256": "50559e652abd48cc94b2082857ab8de71d92af085e70c02499d6aa73043ce4f2",
+          "verified": false
+        },
+        {
+          "name": "libdiluvium_wasi.wasm",
+          "size": 945830,
+          "sha256": "15e5a20ca98e3fbfa600ff03bf60bfd5bd9b03d2d793810f27cbe645b6912426",
+          "verified": true
+        }
+      ]
+    },
+    {
+      "tag": "v5.4.7_release",
+      "name": "Diluvium 5.4.7",
+      "published_at": "2026-08-05T22:53:58Z",
+      "prerelease": false,
+      "sums": "SHA256SUMS.txt",
+      "verified_upstream": true,
+      "assets": [
+        {
+          "name": "SHA256SUMS.txt",
+          "size": 2519,
+          "sha256": "4891fee749ea5ca5d2cbf02d4f9ee521075b54d4c6480ae9a9af42bb9edecebe",
+          "verified": false
+        },
+        {
+          "name": "libdiluvium_wasi.wasm",
+          "size": 895771,
+          "sha256": "c3da069ea47704d598291187296112969bab89253c10a2bb01bb04784ff047eb",
+          "verified": true
+        }
+      ]
+    }
+  ]
+}

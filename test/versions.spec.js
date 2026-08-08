@@ -1,5 +1,6 @@
 import { test, expect } from '@playwright/test';
 import { readFile } from 'node:fs/promises';
+import { readFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 
 // Stage 2: version switching.
@@ -13,7 +14,12 @@ import { createHash } from 'node:crypto';
 // It has to be stubbed, for three reasons. The Lab must make no request at
 // load, so tests that hit a real host would be testing the wrong thing;
 // unauthenticated GitHub allows 60 requests an hour, which a test suite
-// eats in a minute; and the mirror does not exist yet.
+// eats in a minute; and a suite that needs the network is a suite that
+// fails for reasons that are not about the code.
+//
+// The mirror does now exist. Its published index is committed under
+// fixtures/ and exercised at the bottom of this file, so the *shape* is
+// checked against the real thing even though the transport is not.
 
 // Imported rather than repeated: this const used to be a copy, and when
 // the real mirror turned out to serve /release/ rather than /releases/,
@@ -28,6 +34,18 @@ const EMPTY_MODULE = Buffer.from([0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00
 
 function sumsFor(buf, name = 'libdiluvium_wasi.wasm') {
   return `${sha256(buf)}  ${name}\n${sha256(Buffer.from('other'))}  diluvium_wasi.wasm\n`;
+}
+
+/**
+ * The kernel checksum a stubbed mirror is claiming for `tag` — read out of
+ * whatever SHA256SUMS.txt the test declared, so the index agrees with it.
+ * Falls back to the real vendored kernel, which is the default body.
+ */
+function declaredSum(bodies, tag) {
+  const override = bodies[`${tag}/SHA256SUMS.txt`];
+  const text = typeof override === 'string' ? override : null;
+  const line = text && /^([0-9a-f]{64})\s+libdiluvium_wasi\.wasm\s*$/im.exec(text);
+  return line ? line[1] : sha256(kernelBytes);
 }
 
 /** The release job's build manifest, in the shape vendor/BUILDINFO.txt has. */
@@ -52,10 +70,29 @@ function buildinfoFor(buf) {
  * not fetch at load, and did not fetch twice when it had a cache.
  */
 async function stubMirror(page, {
+  // The shape the real mirror publishes: `name` rather than `version`,
+  // `published_at` rather than `published`, and per-asset checksums.
   releases = [
-    { tag: 'v5.4.7_release', version: '5.4.7', published: '2026-08-05T22:53:34Z' },
-    { tag: 'v5.5.0', version: '5.5.0', published: '2026-08-06T10:00:00Z' },
+    {
+      tag: 'v5.4.7_release',
+      name: 'Diluvium 5.4.7',
+      published_at: '2026-08-05T22:53:58Z',
+      prerelease: false,
+      assets: [{ name: 'libdiluvium_wasi.wasm', size: kernelBytes.length, sha256: sha256(kernelBytes) }],
+    },
+    {
+      tag: 'v5.5.0',
+      name: 'Diluvium 5.5.0',
+      published_at: '2026-08-06T10:00:00Z',
+      prerelease: false,
+      assets: [{ name: 'libdiluvium_wasi.wasm', size: kernelBytes.length, sha256: sha256(kernelBytes) }],
+    },
   ],
+  indexName = 'releases.json',
+  // Whether the index carries per-asset checksums. A mirror that lists
+  // releases without them is legal, and is the only way a release ends up
+  // with no checksum anywhere.
+  indexAssets = true,
   bodies = {},
   fail = null,
 } = {}) {
@@ -74,9 +111,27 @@ async function stubMirror(page, {
         ? override : { body: override };
       return route.fulfill({ status, body, contentType: 'application/octet-stream' });
     }
-    if (path === 'index.json') {
+    if (path === indexName) {
+      // A real mirror's index and its SHA256SUMS.txt describe the same
+      // bytes, and the Lab now refuses a mirror where they disagree. So
+      // the stub derives the index's asset checksums from whatever
+      // SHA256SUMS.txt this test declared, rather than letting the two
+      // drift apart and testing a self-contradiction by accident.
+      const consistent = releases.map((r) => ({
+        ...r,
+        assets: indexAssets ? [{
+          name: 'libdiluvium_wasi.wasm',
+          size: kernelBytes.length,
+          sha256: declaredSum(bodies, r.tag),
+        }] : [],
+      }));
       return route.fulfill({ status: 200, contentType: 'application/json',
-        body: JSON.stringify({ schema: 1, releases }) });
+        body: JSON.stringify({
+          repo: 'Aloecraft-org/diluvium',
+          latest: releases[0]?.tag ?? null,
+          generated_at: '2026-08-08T02:55:23Z',
+          releases: consistent,
+        }) });
     }
     if (path.endsWith('/SHA256SUMS.txt')) {
       return route.fulfill({ status: 200, contentType: 'text/plain', body: sumsFor(kernelBytes) });
@@ -134,7 +189,7 @@ test.describe('no request at load', () => {
     await openLab(page);
     await checkVersions(page);
 
-    expect(requests).toEqual(['index.json']);
+    expect(requests).toEqual(['releases.json']);
     // The mirror lists v5.4.7_release too, but that is the bundled build --
     // showing it twice would just invite "why are there two 5.4.7s".
     await expect(select(page).locator('option')).toHaveText([/5\.4\.7 \(bundled\)/, '5.5.0']);
@@ -266,13 +321,51 @@ test.describe('integrity', () => {
     await expect(cell.locator('[data-outputs]')).toContainText('still here');
   });
 
-  test('a release with no SHA256SUMS.txt is refused rather than trusted', async ({ page }) => {
-    await stubMirror(page, { bodies: { 'v5.5.0/SHA256SUMS.txt': 'nothing useful here\n' } });
+  test('a release with no checksum anywhere is refused rather than trusted', async ({ page }) => {
+    // Nothing publishes one: the index carries no assets, SHA256SUMS.txt
+    // has no line for the kernel, BUILDINFO.txt is absent.
+    await stubMirror(page, {
+      indexAssets: false,
+      bodies: { 'v5.5.0/SHA256SUMS.txt': 'nothing useful here\n' },
+    });
     await openLab(page);
     await checkVersions(page);
 
     await select(page).selectOption('v5.5.0');
     await expect(page.locator('[data-toast]')).toContainText('SHA256SUMS.txt');
+    await expect(page.locator('[data-kernel-status]')).toHaveText('idle');
+  });
+
+  test('a mirror that contradicts itself is refused, not resolved', async ({ page }) => {
+    // The index and SHA256SUMS.txt describe different bytes, which is what
+    // a half-updated mirror looks like. Picking one would mean picking
+    // which binary to execute on no evidence.
+    await stubMirror(page, {
+      bodies: { 'v5.5.0/SHA256SUMS.txt': sumsFor(EMPTY_MODULE) },
+      // declaredSum follows SHA256SUMS.txt, so force the index to disagree.
+      releases: [
+        { tag: 'v5.5.0', name: 'Diluvium 5.5.0', published_at: '2026-08-06T10:00:00Z' },
+      ],
+      indexAssets: true,
+    });
+    await page.route(`${MIRROR}releases.json`, async (route) => route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        releases: [{
+          tag: 'v5.5.0',
+          name: 'Diluvium 5.5.0',
+          assets: [{ name: 'libdiluvium_wasi.wasm', sha256: sha256(kernelBytes) }],
+        }],
+      }),
+    }));
+    await openLab(page);
+    await checkVersions(page);
+
+    await select(page).selectOption('v5.5.0');
+    const toast = page.locator('[data-toast]');
+    await expect(toast).toContainText('disagree');
+    await expect(toast).toContainText('stale or damaged');
     await expect(page.locator('[data-kernel-status]')).toHaveText('idle');
   });
 
@@ -357,7 +450,7 @@ test.describe('when the mirror is not there', () => {
   });
 
   test('a mirror serving the wrong shape is rejected', async ({ page }) => {
-    await stubMirror(page, { bodies: { 'index.json': JSON.stringify({ hello: 'world' }) } });
+    await stubMirror(page, { bodies: { 'releases.json': JSON.stringify({ hello: 'world' }) } });
     await openLab(page);
     await checkVersions(page);
     await expect(page.locator('[data-toast]')).toContainText('not in the expected shape');
@@ -368,5 +461,52 @@ test.describe('when the mirror is not there', () => {
     await openLab(page);
     await checkVersions(page);
     await expect(page.locator('[data-toast]')).toContainText('no other builds');
+  });
+});
+
+// ---------------------------------------------------------------------
+
+test.describe('the real mirror index', () => {
+  const REAL = JSON.parse(
+    readFileSync(new URL('./fixtures/releases-mirror.json', import.meta.url), 'utf8'));
+
+  test('parses into the versions the dropdown should show', async ({ page }) => {
+    // The Lab could not reach diluvium.aloecraft.org from the session this
+    // was written in -- the environment's egress policy blocks it -- so the
+    // published index is committed and served locally instead. That is
+    // weaker than hitting the host, and it is exactly strong enough for
+    // the thing most likely to be wrong: the shape.
+    await page.route(`${MIRROR}releases.json`, async (route) => route.fulfill({
+      status: 200, contentType: 'application/json', body: JSON.stringify(REAL),
+    }));
+    await openLab(page);
+
+    const listed = await page.evaluate(async (base) => {
+      const { MirrorSource } = await import('./src/kernel/releases.js');
+      return new MirrorSource(base).list();
+    }, MIRROR);
+
+    expect(listed.map((r) => [r.tag, r.version])).toEqual([
+      ['v5.5.1_build1', '5.5.1_build1'],
+      ['v5.4.7_release', '5.4.7'],
+    ]);
+    expect(listed[0].published).toBe('2026-08-07T18:14:33Z');
+    expect(listed[0].prerelease).toBe(false);
+    expect(listed[0].assets['libdiluvium_wasi.wasm'])
+      .toBe('15e5a20ca98e3fbfa600ff03bf60bfd5bd9b03d2d793810f27cbe645b6912426');
+  });
+
+  test('the bundled 5.4.7 is not offered twice', async ({ page }) => {
+    // The mirror carries the pinned build, and its checksum is the one in
+    // vendor/SHA256SUMS.txt -- so this also confirms the two agree.
+    await page.route(`${MIRROR}releases.json`, async (route) => route.fulfill({
+      status: 200, contentType: 'application/json', body: JSON.stringify(REAL),
+    }));
+    await openLab(page);
+    await checkVersions(page);
+
+    await expect(select(page).locator('option')).toHaveText([/5\.4\.7 \(bundled\)/, '5.5.1_build1']);
+    expect(REAL.releases.find((r) => r.tag === 'v5.4.7_release')
+      .assets.find((a) => a.name === 'libdiluvium_wasi.wasm').sha256).toBe(sha256(kernelBytes));
   });
 });

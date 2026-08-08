@@ -18,15 +18,19 @@
 #
 #   Access-Control-Allow-Origin: *
 #
-# on every file below -- index.json, the .wasm and SHA256SUMS.txt alike.
+# on every file below -- releases.json, the .wasm and SHA256SUMS.txt alike.
 # Without it the Lab sees exactly what it sees from GitHub: nothing.
 #
 # Layout produced:
 #
-#   <outdir>/index.json
+#   <outdir>/releases.json
 #   <outdir>/<tag>/libdiluvium_wasi.wasm
 #   <outdir>/<tag>/SHA256SUMS.txt
-#   <outdir>/<tag>/BUILDINFO.txt      (optional, not read by the Lab)
+#   <outdir>/<tag>/BUILDINFO.txt      (a checksum fallback)
+#
+# The index is named releases.json to match what the publishing job on
+# diluvium.aloecraft.org already writes. The Lab still accepts index.json
+# as an alias, which is what this script used to emit.
 
 set -euo pipefail
 
@@ -37,7 +41,7 @@ shift || true
 
 # Tags known to publish the kernel artifact. Add to this list as releases
 # appear -- or pass them on the command line.
-DEFAULT_TAGS=(v5.4.7_release)
+DEFAULT_TAGS=(v5.4.7_release v5.5.1_build1)
 TAGS=("$@")
 [ ${#TAGS[@]} -eq 0 ] && TAGS=("${DEFAULT_TAGS[@]}")
 
@@ -82,7 +86,8 @@ for tag in "${TAGS[@]}"; do
   [ -z "$version" ] && version="${tag#v}"
   published=$(sed -n 's/^built *: *//p' "$dest/BUILDINFO.txt" 2>/dev/null | head -1)
 
-  entries+=("$(printf '{"tag":"%s","version":"%s","published":"%s"}' "$tag" "$version" "$published")")
+  entries+=("$(printf '{"tag":"%s","name":"Diluvium %s","published_at":"%s","prerelease":false}' \
+    "$tag" "$version" "$published")")
 done
 
 if [ ${#entries[@]} -eq 0 ]; then
@@ -98,14 +103,14 @@ fi
     printf '\n'
   done
   printf '  ]\n}\n'
-} > "$OUT/index.json"
+} > "$OUT/releases.json"
 
 printf '\n== Done\n'
-say "wrote $OUT/index.json with ${#entries[@]} release(s)"
+say "wrote $OUT/releases.json with ${#entries[@]} release(s)"
 say ""
-say "Upload $OUT/ so that index.json sits at the URL you give the Lab, e.g."
-say "  https://diluvium.aloecraft.org/releases/index.json"
+say "Upload $OUT/ so that releases.json sits at the URL you give the Lab, e.g."
+say "  https://diluvium.aloecraft.org/release/releases.json"
 say ""
 say "Then serve every file under it with:  Access-Control-Allow-Origin: *"
 say "Check it with:"
-say "  curl -sI -H 'Origin: https://example.org' <url>/index.json | grep -i access-control"
+say "  curl -sI -H 'Origin: https://example.org' <url>/releases.json | grep -i access-control"

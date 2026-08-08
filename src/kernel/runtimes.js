@@ -88,7 +88,11 @@ export class RuntimeRegistry {
       return { bytes: new Uint8Array(cached.bytes), fromCache: true };
     }
 
-    const bytes = await this.source.fetchKernel(id);
+    // The index may already carry the artifact's sha256. Passing it lets
+    // the source cross-check it against the release's own checksum files
+    // rather than trusting whichever it happened to read.
+    const indexChecksum = this.remote?.find((r) => r.tag === id)?.assets?.[KERNEL_ARTIFACT] ?? null;
+    const bytes = await this.source.fetchKernel(id, { indexChecksum });
     await putRuntime(key, { bytes, tag: id, storedAt: Date.now() }).catch(() => {});
     return { bytes, fromCache: false };
   }

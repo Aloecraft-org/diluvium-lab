@@ -746,3 +746,44 @@ recompiling ~900 KB per restart is latency for nothing.
   A build that could name its own reserved words — a `diluvium.keywords`
   table, or any documented list — would turn the probe from guess-and-check
   into a lookup, and is the cheapest coupling available
+
+### Stage 2, against the real mirror ✅ done
+
+`diluvium.aloecraft.org/release/` is up, and three things about it were
+not what the Lab had assumed:
+
+- **The path is `/release/`, singular.** `DEFAULT_MIRROR` said
+  `/releases/`, and `versions.spec.js` carried its own copy of the
+  constant, so the copy would have failed rather than the code. It
+  imports the real one now.
+- **The index is `releases.json`, not `index.json`,** and richer than the
+  shape here: `name`, `published_at`, `prerelease`, and a full asset list
+  with `size` and `sha256` per file. `index.json` stays as an alias, since
+  that is what earlier `scripts/build-mirror.sh` output wrote.
+- **Every release already carries per-asset checksums,** so a mirror
+  serving only an index is verifiable.
+
+Which makes the checksum a question of *sources* rather than a lookup.
+There are now three — `SHA256SUMS.txt`, `BUILDINFO.txt`, and the index —
+and rather than take the first one found, the Lab collects every claim and
+**refuses when they disagree**. A half-updated mirror is a normal failure,
+and resolving it by preference order would mean picking which binary to
+execute on no evidence. Preference order only decides which of several
+*agreeing* sources is quoted.
+
+One heuristic remains, and it is pinned in a test against the real index:
+the dropdown label comes from `name` ("Diluvium 5.5.1_build1"), because no
+rule applied to the tag alone turns both `v5.4.7_release` into `5.4.7` and
+`v5.5.1_build1` into `5.5.1_build1`. `name` matches BUILDINFO.txt's own
+`version` field for both.
+
+**Not verified against the live host.** This session's environment blocks
+egress to `diluvium.aloecraft.org` — `403` on CONNECT, from the proxy, for
+curl and WebFetch alike — so the published `releases.json` is committed
+under `test/fixtures/` and served locally instead. That checks the shape,
+which is what was most likely to be wrong, and not the transport or the
+CORS headers, which still need one `curl -sI` against the real host.
+
+**`v5.5.1_build1` publishes `libdiluvium_wasi.wasm`.** Re-pinning `vendor/`
+and running 5.5 in the page needs only that download plus `pinnedLabel` in
+`src/app.js`, both blocked on the same egress.
