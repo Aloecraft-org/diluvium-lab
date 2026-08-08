@@ -1,14 +1,19 @@
--- Generate 5.5 bytecode fixtures for test/bytecode-5.5.spec.js.
+-- Generate bytecode fixtures for test/bytecode-dialects.spec.js.
 --
--- The Lab consumes Diluvium; it does not build it. But the 5.5 container
--- reader had to be written from `ldump.c` rather than from bytes, and a
--- container reader checked only against its own author's understanding is
--- not checked at all. So: build the native 5.5.1 interpreter once, dump
--- real chunks with it, and commit the bytes.
+-- The Lab consumes Diluvium; it does not build it. Two things make these
+-- fixtures worth the exception. The 5.5 container reader was written from
+-- `ldump.c` rather than from bytes, and a reader checked only against its
+-- author's understanding is not checked at all. And the Lab can only run
+-- one kernel at a time, so a suite that tested containers through the
+-- live kernel would cover only whichever one happened to be pinned.
 --
---   gcc -O1 -std=gnu99 -DLUA_USE_LINUX -o lua5.5 <diluvium>/src/*.c   (minus
+-- So: build a native interpreter from each tag, dump the same chunks with
+-- both, and commit the bytes.
+--
+--   git -C <diluvium> checkout v5.4.7_release     # then v5.5.1_build1
+--   gcc -O1 -std=gnu99 -DLUA_USE_LINUX -o lua <diluvium>/src/*.c   (minus
 --   luac.c, onelua.c, wasm_stubs*.c, ltests.c)
---   ./lua5.5 scripts/make-bytecode-fixtures.lua > test/fixtures/bytecode-5.5.json
+--   ./lua scripts/make-bytecode-fixtures.lua > test/fixtures/bytecode-5.4.json
 --
 -- Regenerate whenever a Diluvium release changes the dump format. The
 -- fixtures are the record of what a real build actually emitted.
@@ -63,6 +68,16 @@ local out = {}
 out[#out + 1] = '{'
 out[#out + 1] = '  "lua": "' .. _VERSION .. '",'
 out[#out + 1] = '  "cases": ['
+
+-- Cases that do not compile on this build are skipped rather than fatal:
+-- the same list is run against 5.4.7 and 5.5.1, and `~function` exists
+-- only on the latter. What each dialect could compile is recorded in the
+-- file it produced.
+local usable = {}
+for _, case in ipairs(cases) do
+  if load(case.source, '=fixture', 't') then usable[#usable + 1] = case end
+end
+cases = usable
 
 for i, case in ipairs(cases) do
   local f = assert(load(case.source, '=fixture', 't'))

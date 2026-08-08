@@ -5,9 +5,11 @@ cells, a console, and kernel controls, running a Diluvium WASM build in the
 page. No framework, no bundler, no CDN — plain modules and the DOM.
 
 Cells and the console share one kernel, so state carries between them. The
-kernel is `libdiluvium_wasi.wasm` running in the tab: a real Lua 5.4 state
+kernel is `libdiluvium_wasi.wasm` running in the tab: a real Lua state
 with the full standard library, reached through a WASI shim the page
-supplies itself.
+supplies itself. The bundled build is **Diluvium 5.5.1_build1**; the
+Runtime dropdown swaps it for any other the mirror carries, including
+5.4.x.
 
 ## Development
 
@@ -21,7 +23,7 @@ npm run bake         # emit dist/diluvium-lab.html, a single double-click file
 Other scripts:
 
 ```sh
-scripts/fetch-runtime.sh v5.4.7_release   # re-pin the bundled runtime
+scripts/fetch-runtime.sh v5.5.1_build1    # re-pin the bundled runtime
 scripts/build-mirror.sh mirror            # build the runtime mirror (see below)
 ```
 
@@ -80,16 +82,19 @@ Both carry Diluvium's own `LUAC_FORMAT` byte of `0x44` — stock Lua writes
 chunk of the same Lua version are deliberately not interchangeable.
 
 Diluvium also writes one byte per function that stock Lua does not,
-`Proto::is_encrypted`. In 5.5 it is the `~function` marker; when it is set,
-that function's instructions and strings are stored XORed with `0xbe`. The
-reader undoes it, so a secure function disassembles like any other — which
-is worth knowing before relying on it to hide anything.
+`Proto::is_encrypted` — the `~function` marker. When it is set, that
+function's instructions and strings are stored XORed with `0xbe`. The
+reader undoes it, so a secure function disassembles like any other, which
+is worth knowing before relying on it to hide anything. On 5.4.7 the flag
+also lands on functions nobody marked, because the lexer field behind it
+is never initialised; 5.5 fixes that.
 
 `src/analysis/luac.js` verifies its own output: the parse must consume
 every byte and every opcode must exist, or it refuses. A disassembly that
-looks right and is not would be worse than none. The 5.4 path is tested
-against the live kernel; the 5.5 path against committed dumps from a real
-5.5.1 build (`scripts/make-bytecode-fixtures.lua`).
+looks right and is not would be worse than none. Both containers are
+tested against committed dumps from native builds of each tag
+(`scripts/make-bytecode-fixtures.lua`), because the Lab runs one kernel at
+a time and a suite tied to the pinned one would cover only half.
 
 ## Running against another Diluvium build
 
@@ -107,7 +112,7 @@ violate. A page does.
 ### Standing up the mirror
 
 ```sh
-scripts/build-mirror.sh mirror v5.4.7_release      # downloads and verifies
+scripts/build-mirror.sh mirror v5.5.1_build1      # downloads and verifies
 # upload mirror/ so releases.json lands at the URL the Lab points to
 ```
 
@@ -196,7 +201,7 @@ seam Stage 2's version dropdown and Stage 3's second backend plug into.
 The pinned runtime lives in `vendor/`. Re-pin with:
 
 ```sh
-scripts/fetch-runtime.sh v5.4.7_release
+scripts/fetch-runtime.sh v5.5.1_build1
 ```
 
 Diluvium itself is never built here — the Lab consumes published release

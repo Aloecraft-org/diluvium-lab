@@ -62,7 +62,7 @@ export class App {
 
     this.registry = options.registry ?? new RuntimeRegistry({
       mirrorUrl: options.mirrorUrl,
-      pinnedLabel: options.pinnedLabel ?? '5.4.7',
+      pinnedLabel: options.pinnedLabel ?? '5.5.1_build1',
       bundledBytes: options.moduleBytes ?? null,
       wasmUrl: options.wasmUrl ?? DEFAULT_WASM_URL,
     });

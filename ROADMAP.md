@@ -410,15 +410,17 @@ little-endian word leaves `be ba fe ca`, while every sample here reads
 
 Three things follow that the Lab should keep saying out loud:
 
-1. **The distribution looks like a latch, not a policy.** Probing eight
-   nesting shapes through the live kernel: the *first* nested function of
-   a chunk and its entire subtree carry 1, and the main chunk plus
-   everything compiled after that subtree closes carries 0. So
-   `local function a() ... end local function b() ... end` scrambles `a`
-   and `a`'s children and leaves `b` and `b`'s children plain. In any real
-   program that means one arbitrary subtree ships scrambled and the rest
-   ships readable. `test/bytecode.spec.js` pins the observed rule so a
-   build that changes it fails there rather than somewhere subtler.
+1. **The distribution is an uninitialised variable.** *Corrected later,
+   once the 5.4.7 source was to hand — the first version of this entry
+   guessed at a rule and there is not one.* `~function` exists in 5.4.7
+   and sets `LexState::encrypted_flag`, which the next `addprototype`
+   consumes and the subtree inherits. But 5.4.7's `luaX_setinput`
+   initialises every other LexState field and not that one, and LexState
+   is a stack local. So a chunk with no `~` in it still marks its first
+   nested function and everything inside it — measured identically from
+   the WASM build and from a native build of the same tag, which is what
+   makes "uninitialised" the explanation rather than a rule not yet
+   worked out. 5.5 adds the one missing line.
 2. **The string-size asymmetry is load-bearing.** Stock Lua stores
    length + 1 precisely so 0 can mean "no string"; the scrambled branch
    stores the length exactly and spends that. Both sides agree today —
@@ -474,12 +476,12 @@ against a new release.
 
 Two things fell out of having real 5.5 bytes to hand:
 
-- **The 5.4.7 latch is gone.** `is_encrypted` is now opt-in per function
-  via `~function` / `local ~function`, set by `ls->encrypted_flag` and
-  inherited by everything lexically inside. The 5.4.7 behaviour was that
-  same flag starting life set; `llex.c:198` initialises it now. A 5.5
-  chunk with no `~` in it has no secure functions, and there is a test
-  that says so.
+- **The 5.4.7 latch is gone, and it was an uninitialised field.**
+  `~function` was never new — it is in 5.4.7 too. What 5.5 adds is
+  `llex.c:198`, `ls->encrypted_flag = 0;`, the one line 5.4.7's
+  `luaX_setinput` was missing. A 5.5 chunk with no `~` in it has no
+  secure functions; the same source on 5.4.7 has a secure subtree. Both
+  are pinned in test/bytecode-dialects.spec.js.
 - **A secure function does not hide a literal it shares with a plain
   one.** `dumpString` consults the saved-string table before it checks
   whether it is inside a secure function, so an already-written string is
@@ -787,3 +789,46 @@ CORS headers, which still need one `curl -sI` against the real host.
 **`v5.5.1_build1` publishes `libdiluvium_wasi.wasm`.** Re-pinning `vendor/`
 and running 5.5 in the page needs only that download plus `pinnedLabel` in
 `src/app.js`, both blocked on the same egress.
+
+### Pinned to 5.5.1_build1 ✅ done
+
+The mirror's egress was allowlisted, so the 5.5.1 kernel could finally be
+downloaded, verified and run rather than reasoned about. All three
+checksum sources — `releases.json`, `SHA256SUMS.txt` and the bytes —
+agree, the capability probe passes, and the module carries the same 45
+`wasi_snapshot_preview1` imports and the same exports as 5.4.7. `vendor/`
+is now `v5.5.1_build1` and `scripts/fetch-runtime.sh` defaults to it,
+pulling from the mirror rather than GitHub because GitHub does not attach
+the artifact to that tag.
+
+**The suite passed 251 of 263 on the new kernel before anything was
+changed.** Of the twelve failures, eleven were tests asserting 5.4-ness —
+a keyword count, a dropdown label, a version byte — and one was a real
+bug:
+
+- **`cleanTraceback` stopped cutting.** It matched the literal phrase
+  `[C]: in function 'xpcall'`; 5.5 writes `[C]: in global 'xpcall'`, so
+  the harness frame started leaking back into user-facing tracebacks. Not
+  a crash — a quiet regression in exactly the thing that pass was for. It
+  now matches on the name, and drops the `(...tail calls...)` frame 5.5
+  reports directly above it, but only the trailing one: a tail call
+  further up the stack is the user's own.
+
+The rest of the churn was structural and worth doing anyway. Container
+assertions used to run against whichever kernel happened to be pinned,
+which meant re-pinning silently dropped coverage of the other dialect.
+They now run against committed dumps from native builds of **both** tags
+(`test/bytecode-dialects.spec.js`, `test/fixtures/bytecode-5.{4,5}.json`),
+and `test/bytecode.spec.js` keeps driving the live kernel with assertions
+that hold either way.
+
+End to end, in one page: switching from the bundled 5.5.1 to a real 5.4.7
+takes the keyword set from 26 to 22, stops colouring `switch`, runs a cell
+that prints `diluvium (lua) 5.4`, and flips the bytecode viewer to the 5.4
+container. Nothing about that is configured; it all follows the kernel.
+
+**Still outstanding: the mirror sends no `Access-Control-Allow-Origin`.**
+Confirmed from here — `200`, `server: cloudflare`, no such header — so the
+dropdown cannot fetch in a browser even though curl can. That is one line
+of server config, and it is the last thing between Stage 2 and working
+against the real host.

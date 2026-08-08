@@ -351,10 +351,22 @@ export function cleanTraceback(traceback, nonce) {
   const lines = [];
   for (const line of traceback.split('\n')) {
     if (line.trim() === '') continue;
-    if (/^\s*\[C\]: in function 'xpcall'/.test(line)) break;
+    // The frame that calls the user's chunk, and everything below it, is
+    // ours. Matched on the name rather than on the whole phrase because
+    // the phrase moves: 5.4 writes "[C]: in function 'xpcall'" and 5.5
+    // writes "[C]: in global 'xpcall'". A pattern tied to one of those
+    // silently stops cutting on the other, which is not a crash -- it is
+    // a traceback that quietly starts showing the harness again.
+    if (/^\s*\[C\]:.*\bxpcall\b/.test(line)) break;
     if (nonce && line.includes(nonce)) continue;
     lines.push(line);
   }
+  // 5.5 reports the harness's tail call into the chunk as its own frame,
+  // immediately above the xpcall we just cut at. Only the trailing one is
+  // dropped: a `(...tail calls...)` further up is the user's own and is
+  // exactly the kind of thing the bytecode viewer teaches people to look
+  // for.
+  while (lines.length && /^\s*\(\.\.\.tail calls\.\.\.\)\s*$/.test(lines.at(-1))) lines.pop();
   return lines;
 }
 

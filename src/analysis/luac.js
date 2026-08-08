@@ -54,6 +54,17 @@ const TAG = {
  * with the debug section left plain. In 5.5 `DumpState::encrypted` gates
  * `dumpString` itself, so the source name and every local and upvalue
  * name are scrambled too.
+ *
+ * *Which* functions carry the flag is a separate question, and on 5.4.7
+ * the answer is a bug rather than a rule. `~function` exists in both
+ * dialects and sets `LexState::encrypted_flag`, which the next
+ * `addprototype` consumes and the resulting subtree inherits. But 5.4.7's
+ * `luaX_setinput` initialises every other LexState field and not that
+ * one, and LexState is a stack local — so a chunk containing no `~` at
+ * all still marks its first nested function and everything inside it.
+ * 5.5 adds the missing initialisation and the same source marks nothing.
+ * Both behaviours are pinned against committed dumps in
+ * test/bytecode-dialects.spec.js.
  */
 const SCRAMBLE_KEY = 0xbe;
 

@@ -190,10 +190,10 @@ test.describe('no request at load', () => {
     await checkVersions(page);
 
     expect(requests).toEqual(['releases.json']);
-    // The mirror lists v5.4.7_release too, but that is the bundled build --
-    // showing it twice would just invite "why are there two 5.4.7s".
-    await expect(select(page).locator('option')).toHaveText([/5\.4\.7 \(bundled\)/, '5.5.0']);
-    await expect(select(page)).toHaveAttribute('data-count', '2');
+    // Both mirror entries are offered: neither is the bundled build,
+    // which is 5.5.1_build1. The dedup case has its own test below.
+    await expect(select(page).locator('option')).toHaveText([/\(bundled\)/, '5.4.7', '5.5.0']);
+    await expect(select(page)).toHaveAttribute('data-count', '3');
   });
 
   test('a mirror build that is not the bundled one is offered', async ({ page }) => {
@@ -206,7 +206,7 @@ test.describe('no request at load', () => {
     });
     await openLab(page);
     await checkVersions(page);
-    await expect(select(page).locator('option')).toHaveText([/bundled/, '5.5.0', '5.5.1-rc1']);
+    await expect(select(page).locator('option')).toHaveText([/bundled/, '5.4.7', '5.5.0', '5.5.1-rc1']);
   });
 });
 
@@ -496,7 +496,7 @@ test.describe('the real mirror index', () => {
       .toBe('15e5a20ca98e3fbfa600ff03bf60bfd5bd9b03d2d793810f27cbe645b6912426');
   });
 
-  test('the bundled 5.4.7 is not offered twice', async ({ page }) => {
+  test('the bundled build is not offered twice', async ({ page }) => {
     // The mirror carries the pinned build, and its checksum is the one in
     // vendor/SHA256SUMS.txt -- so this also confirms the two agree.
     await page.route(`${MIRROR}releases.json`, async (route) => route.fulfill({
@@ -505,8 +505,8 @@ test.describe('the real mirror index', () => {
     await openLab(page);
     await checkVersions(page);
 
-    await expect(select(page).locator('option')).toHaveText([/5\.4\.7 \(bundled\)/, '5.5.1_build1']);
-    expect(REAL.releases.find((r) => r.tag === 'v5.4.7_release')
+    await expect(select(page).locator('option')).toHaveText([/5\.5\.1_build1 \(bundled\)/, '5.4.7']);
+    expect(REAL.releases.find((r) => r.tag === 'v5.5.1_build1')
       .assets.find((a) => a.name === 'libdiluvium_wasi.wasm').sha256).toBe(sha256(kernelBytes));
   });
 });

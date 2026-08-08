@@ -2,17 +2,24 @@
 #
 # Pin a Diluvium runtime into vendor/.
 #
-#   scripts/fetch-runtime.sh [tag]        default: v5.4.7_release
+#   scripts/fetch-runtime.sh [tag]        default: v5.5.1_build1
 #
 # Downloads the kernel module plus the release's checksum and build
 # manifest, and verifies the module against the former. This is the
-# Stage 2 mechanism in miniature -- when the version dropdown arrives it
-# does the same three steps in the browser.
+# Stage 2 mechanism in miniature -- the version dropdown does the same
+# three steps in the browser.
+#
+# Pulls from the mirror rather than from GitHub, because the mirror is
+# where the artifacts reliably are: of the tags that exist upstream, only
+# v5.4.7_release attaches libdiluvium_wasi.wasm to its GitHub release, and
+# v5.5.1_build1 -- the one you most likely want -- does not. Set
+# DILUVIUM_RELEASE_BASE to point somewhere else.
 
 set -euo pipefail
 
-TAG="${1:-v5.4.7_release}"
-BASE="https://github.com/Aloecraft-org/diluvium/releases/download/$TAG"
+TAG="${1:-v5.5.1_build1}"
+MIRROR="${DILUVIUM_RELEASE_BASE:-https://diluvium.aloecraft.org/release}"
+BASE="$MIRROR/$TAG"
 DEST="$(cd "$(dirname "$0")/.." && pwd)/vendor"
 
 mkdir -p "$DEST"

@@ -48,10 +48,16 @@ const analyse = (page, source, options = {}) => page.evaluate(async ([src, opts]
 const codeCell = (page) => page.locator('.cell[data-cell-type="code"]').first();
 
 test.describe('the container', () => {
-  test('is Lua 5.4 with Diluvium\'s own format byte', async ({ page }) => {
+  test('is whichever Lua the running kernel is, with Diluvium\'s own format byte', async ({ page }) => {
     await openLab(page);
     const { header } = await analyse(page, 'return 1', { strip: true });
-    expect(header.version).toBe(0x54);
+    // Deliberately not pinned to one version. This file drives the *live*
+    // kernel, so asserting 5.4 here would mean re-pinning the runtime
+    // breaks tests that are not about the runtime. The container-level
+    // differences between dialects are pinned against committed dumps in
+    // bytecode-dialects.spec.js instead, where they cannot drift.
+    expect([0x54, 0x55]).toContain(header.version);
+    expect(header.lua).toBe(`5.${header.version & 0xf}`);
     // 0x44 is 'D'. Stock Lua writes 0 here and refuses anything else, so
     // this is a deliberate compatibility fence, not decoration.
     expect(header.format).toBe(0x44);
@@ -128,67 +134,6 @@ test.describe('instructions', () => {
     const child = functions.find((f) => f.path !== 'main');
     expect(child.isVararg).toBe(true);
     expect(child.ops).toContain('VARARGPREP');
-  });
-});
-
-// Diluvium writes one byte per function that stock Lua does not:
-// `Proto::is_encrypted`. When it is set, the instruction bytes and the
-// string-constant bytes are stored XORed with 0xbe.
-//
-// These tests exist for two different reasons. The first two pin the
-// *mechanism* — the reader has to decode a scrambled function and get the
-// same answer as an unscrambled one, or the disassembler is lying. The
-// third pins the *distribution*, which is a much weaker claim: it is a
-// description of what 5.4.7 happens to do, recorded so that a build which
-// does something else fails here instead of somewhere subtler.
-test.describe('scrambled functions', () => {
-  test('decode to the same instructions as unscrambled ones', async ({ page }) => {
-    await openLab(page);
-    // Identical bodies, one scrambled and one not, in a single chunk.
-    const { functions } = await analyse(
-      page, 'local function a(x) return x end local function b(x) return x end', { strip: true });
-    const a = functions.find((f) => f.path === 'main/0');
-    const b = functions.find((f) => f.path === 'main/1');
-    expect(a.encrypted).toBe(true);
-    expect(b.encrypted).toBe(false);
-    expect(a.ops).toEqual(b.ops);
-    expect(a.ops).toEqual(['RETURN1', 'RETURN0']);
-  });
-
-  test('have readable string constants, and the debug section stays plain', async ({ page }) => {
-    await openLab(page);
-    const { functions } = await analyse(page, 'local function a() local greeting = "hello" return greeting end return a');
-    const a = functions.find((f) => f.path === 'main/0');
-    expect(a.encrypted).toBe(true);
-    expect(a.constants.map((c) => c.value)).toContain('hello');
-    // The empty string is the interesting case: the scrambled branch
-    // stores the length exactly rather than length + 1, so "" is stored
-    // as a size of 0 — the same encoding stock Lua uses for "no string".
-    const { functions: withEmpty } = await analyse(page, 'local function a() return "" end return a');
-    const e = withEmpty.find((f) => f.path === 'main/0');
-    expect(e.constants.map((c) => c.value)).toContain('');
-  });
-
-  test('are the first nested function and its subtree, and nothing else', async ({ page }) => {
-    await openLab(page);
-    const flags = async (src) => Object.fromEntries(
-      (await analyse(page, src, { strip: true })).functions.map((f) => [f.path, f.encrypted]));
-
-    expect(await flags('return 1')).toEqual({ main: false });
-
-    // Siblings: only the first one.
-    expect(await flags('local function a() end local function b() end local function c() end'))
-      .toEqual({ main: false, 'main/0': true, 'main/1': false, 'main/2': false });
-
-    // Depth: the whole subtree under the first child, however deep.
-    expect(await flags('local function a() local function b() local function c() end end end'))
-      .toEqual({ main: false, 'main/0': true, 'main/0/0': true, 'main/0/0/0': true });
-
-    // Both at once, which is what makes this look like a latch rather
-    // than a rule: b's subtree is plain even though a's is not.
-    expect(await flags(
-      'local function a() local function a1() end end local function b() local function b1() end end'))
-      .toEqual({ main: false, 'main/0': true, 'main/0/0': true, 'main/1': false, 'main/1/0': false });
   });
 });
 
@@ -317,7 +262,9 @@ test.describe('the panel', () => {
     await cell.locator('[data-editor]').fill('return 1');
     await cell.locator('[data-action="bytecode"]').click();
     await cell.locator('[data-bc-tab="hex"]').click();
-    await expect(cell.locator('[data-bc-hex]')).toContainText('1b 4c 75 61 54 44');
+    // \x1bLua, then the version byte, then 0x44. The version moves with
+    // the pinned runtime; the signature and the format byte do not.
+    await expect(cell.locator('[data-bc-hex]')).toContainText(/1b 4c 75 61 5[45] 44/);
   });
 
   test('hex can be pasted back in and read', async ({ page }) => {

@@ -377,22 +377,20 @@ test.describe('the keyword set comes from the kernel', () => {
     await openLab(page);
     const language = await page.evaluate(() => window.lab.language);
 
-    // 5.4.7 reserves exactly stock Lua 5.4's 22 words -- measured, not assumed
+    // The pinned 5.5.1 build: stock Lua's 22 reserved words plus the four
+    // contextual ones. Measured, not assumed -- and a count rather than a
+    // spot check, because the failure this guards against is a probe that
+    // quietly stops finding things.
     expect(language.keywords).toContain('local');
     expect(language.keywords).toContain('goto');
-    expect(language.keywords).toHaveLength(22);
-    // and does not have the 5.5 additions, so they must not be coloured.
-    //
-    // This is the false-positive guard for the contextual-keyword probe.
-    // Those four are not found by asking whether the word is a valid
-    // identifier -- on 5.5 they deliberately are -- so they are found by
-    // compiling `switch x do end` and friends instead. On 5.4.7 every one
-    // of those snippets must fail to compile, and this is where that is
-    // checked. A probe snippet that accidentally parses on 5.4 would
-    // colour a word this build treats as an ordinary name.
+    expect(language.keywords).toHaveLength(26);
     for (const word of ['switch', 'defer', 'with', 'global']) {
-      expect(language.keywords, `${word} must not be a 5.4.7 keyword`).not.toContain(word);
+      expect(language.keywords, `${word} should be a 5.5 keyword`).toContain(word);
     }
+    // A word nothing reserves stays an identifier, which is what stops
+    // the candidate list from simply colouring everything it asks about.
+    expect(language.keywords).not.toContain('fallthrough');
+    expect(language.keywords).not.toContain('async');
     expect(language.version).toContain('diluvium');
 
     expect(language.globals).toContain('print');
@@ -401,6 +399,24 @@ test.describe('the keyword set comes from the kernel', () => {
 
   test('a word this build does not reserve is an ordinary identifier', async ({ page }) => {
     await openLab(page);
-    expect(await typesIn(page, 'switch = 1', 'switch')).toEqual(['ident']);
+    expect(await typesIn(page, 'fallthrough = 1', 'fallthrough')).toEqual(['ident']);
+  });
+
+  test('the contextual keywords were found by the second probe, not the first', async ({ page }) => {
+    await openLab(page);
+    // `switch` is a keyword here *and* a legal variable name, which is
+    // the whole point of a contextual keyword and the reason the
+    // identifier probe cannot see it. If this ever compiles-and-is-absent
+    // the snippet probe has stopped working; if it fails to compile, the
+    // build hard-reserved the word and the first probe would have caught
+    // it anyway.
+    const asName = await page.evaluate(async () => {
+      const { executeCollected } = await import('./src/kernel/kernel.js');
+      return executeCollected(window.lab.kernel, 'local switch = 1 return switch');
+    });
+    expect(asName.status).toBe('ok');
+    expect(asName.result).toBe('1');
+    expect(await page.evaluate(() => window.lab.language.keywords)).toContain('switch');
+    expect(await typesIn(page, 'switch x do end', 'switch')).toEqual(['keyword']);
   });
 });
