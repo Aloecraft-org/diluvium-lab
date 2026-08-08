@@ -380,10 +380,8 @@ design, even though the layout is otherwise identical.
 Two things about nested functions were reverse engineered from the
 artifact, because no document was available:
 
-- **Every function is prefixed by one byte stock Lua does not write.** The
-  main function carries 0, and so does every sibling after the first; the
-  first child at each nesting level carries 1.
-- **When that byte is 1, the instruction words and the string constants are
+- **Every function is prefixed by one byte stock Lua does not write.**
+- **When that byte is 1, the instruction bytes and the string constants are
   stored XORed with `0xbe`,** and those constants store their exact length
   rather than length + 1. The debug section of the same function is *not*
   transformed — local and upvalue names read plainly.
@@ -398,12 +396,47 @@ stripped and unstripped, 64/64, and the disassembly agrees with
 call sites are tail calls — two completely different routes to the same
 facts.
 
-**What the flag byte means is still unknown here, and it is worth someone
-who owns the compiler saying so.** The rule above fits every sample and
-explains nothing, which is exactly the kind of model that quietly stops
-being true. `readChunk` therefore verifies its own output — the parse must
-consume every byte and every opcode must exist — and throws rather than
-producing a plausible disassembly of a format it has misread.
+#### The flag byte, answered (2026-08-08)
+
+It is **`Proto::is_encrypted`**, set in the compiler and written per
+function by `dumpFunction`. The scrambler is one byte-level XOR with
+`0xBE` applied to instruction bytes and to string-constant bytes alike.
+
+Worth recording that this is *not* a 32-bit word key. An earlier draft
+XORed instruction words with `0xCAFEBABE`; the shipped 5.4.7 does not, and
+the byte pattern is how you tell — a 32-bit `0xCAFEBABE` on a
+little-endian word leaves `be ba fe ca`, while every sample here reads
+`f6 be bc be`, `0xbe` in all four positions.
+
+Three things follow that the Lab should keep saying out loud:
+
+1. **The distribution looks like a latch, not a policy.** Probing eight
+   nesting shapes through the live kernel: the *first* nested function of
+   a chunk and its entire subtree carry 1, and the main chunk plus
+   everything compiled after that subtree closes carries 0. So
+   `local function a() ... end local function b() ... end` scrambles `a`
+   and `a`'s children and leaves `b` and `b`'s children plain. In any real
+   program that means one arbitrary subtree ships scrambled and the rest
+   ships readable. `test/bytecode.spec.js` pins the observed rule so a
+   build that changes it fails there rather than somewhere subtler.
+2. **The string-size asymmetry is load-bearing.** Stock Lua stores
+   length + 1 precisely so 0 can mean "no string"; the scrambled branch
+   stores the length exactly and spends that. Both sides agree today —
+   round-tripping `local x = ""` through `string.dump` and `load` in the
+   running kernel yields `""`, not nil — but they agree by having been
+   written together, not because anything checks. A tidy-up of
+   `dumpString` that "fixes the inconsistency" breaks the loader silently.
+3. **A change of key needs a change of `LUAC_FORMAT`.** Nothing
+   authenticates the code section, so a chunk written with one key and
+   read with another does not fail: it decodes to garbage instructions and
+   the VM runs them. The format byte is already `0x44` rather than `0`, so
+   the mechanism for refusing a mismatch exists and costs one increment.
+
+`readChunk` still verifies its own output — the parse must consume every
+byte and every opcode must exist — and throws rather than producing a
+plausible disassembly of a format it has misread. That check was written
+when the flag was a mystery, and it stays now that it is not: it is what
+turns the next format change into an error message.
 
 Compiling is not running: the panel loads and dumps the chunk and executes
 nothing, which is what makes "paste bytecode someone sent you" a safe thing
@@ -609,3 +642,15 @@ recompiling ~900 KB per restart is latency for nothing.
 - Whether the analysis report / determinism verdict panel lands at Stage 2
   or Stage 3, and whether it uses `diluvium_compiler_wasi.wasm` as a second
   module or waits for the report to come through the kernel
+- ~~What the per-function flag byte in compiled chunks means~~ **Answered
+  2026-08-08 — see the Bytecode viewer section.** `Proto::is_encrypted`,
+  with a one-byte `0xBE` XOR over instruction and string-constant bytes.
+  Which functions carry it still looks unintentional, and that is a
+  question for the compiler rather than for the Lab
+- **How the Lab learns a release's language, ahead of 5.5.1.** Keywords
+  and globals are probed from the running kernel and need no edit here.
+  New *syntax* does: the tokenizer in `src/notebook/highlight.js` knows
+  Lua's lexical shape, so a new operator or string form would need a rule.
+  A build that could name its own reserved words — a `diluvium.keywords`
+  table, or any documented list — would turn the probe from guess-and-check
+  into a lookup, and is the cheapest coupling available

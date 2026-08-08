@@ -68,12 +68,21 @@ class Reader {
   /**
    * Size 0 means absent; otherwise the stored size is length + 1.
    *
-   * For a **constant** inside an obfuscated function it is length exactly,
+   * For a **constant** inside a scrambled function it is length exactly,
    * and the bytes are XORed like the instructions are: `04 85 ce cc d7 d0
    * ca` is a short-string constant whose five content bytes XOR to `print`,
    * five characters after a stored size of five. The debug section of the
    * same function is *not* transformed -- local and upvalue names read
    * plainly, which is why only readConstant passes a key.
+   *
+   * That +1 is not decoration in stock Lua: it is what lets 0 mean "no
+   * string at all" (`loadStringN` returns NULL), which `source`, local
+   * names and upvalue names all rely on. The scrambled branch spends it,
+   * so inside a scrambled function a stored 0 is the empty string rather
+   * than absence -- confirmed by round-tripping `local x = ""` through
+   * `string.dump` and `load` in the running kernel, which yields `""` and
+   * not nil. Both sides agree today. They agree by accident of being
+   * written together, not because anything checks.
    */
   string(xorKey = 0) {
     const size = this.unsigned();
@@ -87,7 +96,16 @@ class Reader {
   number() { this.need(8); const v = this.view.getFloat64(this.at, true); this.at += 8; return v; }
   instruction() { this.need(4); const v = this.view.getUint32(this.at, true); this.at += 4; return v; }
 
-  /** Same, for the functions Diluvium stores XORed. */
+  /**
+   * Same, for the functions Diluvium stores scrambled.
+   *
+   * Note this XORs each of the four bytes with the *same* key rather than
+   * the word with a 32-bit one, which is what the compiler does and is
+   * worth stating because the two are easy to confuse. A 32-bit key of
+   * 0xCAFEBABE would put 0xbe in the low byte and 0xba, 0xfe, 0xca in the
+   * others; every sample from this artifact has 0xbe in all four
+   * positions.
+   */
   instructionXor(key) {
     this.need(4);
     let word = 0;
@@ -151,29 +169,41 @@ function readConstant(reader, xorKey) {
 
 /**
  * Diluvium prefixes every function with one byte that stock Lua does not
- * write, and when that byte is 1 the instruction words are stored XORed
- * with 0xbe.
+ * write. It is `Proto::is_encrypted`, and when it is 1 both the
+ * instruction bytes and the string-constant bytes are stored XORed with
+ * 0xbe. (Confirmed against the compiler source, 2026-08-08. Everything
+ * below was derived from the artifact first, which is why the evidence is
+ * kept: it is what will catch the next change.)
  *
- * This was derived from the artifact, not from a specification, so here is
- * the evidence. `function(a) return a end` compiled as a nested function
- * stores `f6 be bc be 79 be bf be`; XORed with 0xbe that is `48 00 02 00`
+ * `function(a) return a end` compiled as a nested function stores
+ * `f6 be bc be 79 be bf be`; XORed with 0xbe that is `48 00 02 00`
  * `47 00 01 00`, which decodes to `RETURN1 0 2` / `RETURN0 0 1` — exactly
  * what the same source produces at the top level, where the flag is 0 and
- * the bytes are stored plainly. Across every sample tried, the parse lands
- * on the final byte of the buffer and every opcode falls in range, which
- * random misalignment does not do.
+ * the bytes are stored plainly.
  *
- * What the byte *means* is not known here. Observed: the main function
- * always carries 0, and so does every sibling after the first, while the
- * first child at each nesting level carries 1. That rule fits the evidence
- * and explains nothing, so `readChunk` verifies its own output rather than
- * trusting this note — see the checks at the end of it.
+ * The key is one byte applied to every byte, *not* a 32-bit word key. An
+ * earlier draft of the compiler XORed instruction words with 0xCAFEBABE;
+ * the shipped 5.4.7 does not, and `f6 be bc be` is how you tell — a
+ * 32-bit 0xCAFEBABE would leave 0xba in the second position.
+ *
+ * Which functions get the flag is a separate question from what the flag
+ * does, and the answer looks accidental. Across every shape tried, the
+ * *first* nested function of a chunk and its entire subtree carry 1, and
+ * the main chunk plus everything compiled after that subtree closes
+ * carries 0:
+ *
+ *     local function a() local function a1() end end   -- a=1, a1=1
+ *     local function b() local function b1() end end   -- b=0, b1=0
+ *
+ * That is a latch, not a policy: it means one arbitrary subtree of any
+ * real program ships scrambled and the rest ships plain. `test/bytecode.
+ * spec.js` pins the rule so that a build which changes it says so.
  */
-const XOR_KEY = 0xbe;
+const SCRAMBLE_KEY = 0xbe;
 
 function readFunction(reader, parentSource) {
   const flag = reader.byte();
-  const xorKey = flag === 1 ? XOR_KEY : 0;
+  const xorKey = flag === 1 ? SCRAMBLE_KEY : 0;
   const source = reader.string() ?? parentSource;
   const lineDefined = reader.int();
   const lastLineDefined = reader.int();
@@ -184,7 +214,7 @@ function readFunction(reader, parentSource) {
   const code = [];
   const codeCount = reader.int();
   for (let i = 0; i < codeCount; i++) {
-    code.push(flag === 1 ? reader.instructionXor(XOR_KEY) : reader.instruction());
+    code.push(flag === 1 ? reader.instructionXor(SCRAMBLE_KEY) : reader.instruction());
   }
 
   const constants = [];
@@ -227,7 +257,7 @@ function readFunction(reader, parentSource) {
 
   return {
     flag,
-    obfuscated: flag === 1,
+    encrypted: flag === 1,   // Proto::is_encrypted, as the compiler names it
     source,
     lineDefined,
     lastLineDefined,

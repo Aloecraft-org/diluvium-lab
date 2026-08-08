@@ -68,11 +68,16 @@ never run, that is safe to do with a blob you have not vetted.
 
 The container is Lua 5.4's, with Diluvium's own `LUAC_FORMAT` byte of
 `0x44` — stock Lua writes `0` there and refuses anything else, so the two
-are deliberately not interchangeable. `src/analysis/luac.js` was derived
-from the shipped artifact rather than from a specification, and it verifies
-its own output: the parse must consume every byte and every opcode must
-exist, or it refuses. A disassembly that looks right and is not would be
-worse than none.
+are deliberately not interchangeable. Diluvium also writes one byte per
+function that stock Lua does not, `Proto::is_encrypted`, and when it is set
+that function's instruction and string-constant bytes are stored XORed with
+`0xbe`; the reader undoes it, so a scrambled function disassembles like any
+other.
+
+`src/analysis/luac.js` was derived from the shipped artifact rather than
+from a specification, and it verifies its own output: the parse must
+consume every byte and every opcode must exist, or it refuses. A
+disassembly that looks right and is not would be worse than none.
 
 ## Running against another Diluvium build
 
