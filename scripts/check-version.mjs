@@ -1,9 +1,10 @@
 // package.json and src/version.js must agree.
 //
-// Two places name the Lab's version because they serve different readers:
-// npm wants package.json, and the page cannot read it (no build step, no
-// fetch at load). Two sources of one truth drift silently, so this makes
-// the drift loud instead.
+// Three places name the Lab's version because they serve different
+// readers: npm wants package.json, the page cannot read it (no build step,
+// no fetch at load), and index.html carries a copy so the running page can
+// notice when its HTML and its scripts came from different deploys. Three
+// sources of one truth drift silently, so this makes the drift loud.
 
 import { readFile } from 'node:fs/promises';
 
@@ -27,4 +28,15 @@ if (!/^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$/.test(declared)) {
   console.error(`check-version: "${declared}" is not semver`);
   process.exit(1);
 }
-console.log(`check-version: ${declared}`);
+const html = await readFile(new URL('index.html', root), 'utf8');
+const meta = /<meta name="diluvium-lab-build" content="([^"]+)"/.exec(html)?.[1];
+if (meta !== declared) {
+  console.error('check-version: index.html disagrees with src/version.js');
+  console.error(`  index.html      ${meta ?? '(missing)'}`);
+  console.error(`  src/version.js  ${declared}`);
+  console.error('  These are what the running page compares to detect a stale cache,');
+  console.error('  so a mismatch here would make every visitor see a false alarm.');
+  process.exit(1);
+}
+
+console.log(`check-version: ${declared} (package.json, src/version.js, index.html)`);

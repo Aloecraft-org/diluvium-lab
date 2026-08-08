@@ -1072,3 +1072,53 @@ needs the console output from a browser that shows it.
    stylesheet is a `color-mix()` — a build without it renders a flat,
    unstyled-looking page that still runs, which is close to what was
    described.
+
+#### Found it: a stale module graph, caused by the CDN ✅
+
+Measured, not inferred:
+
+```
+/lab/            no Cache-Control at all        cf-cache-status: DYNAMIC
+/lab/src/app.js  Cache-Control: max-age=14400   cf-cache-status: HIT
+```
+
+14400 seconds is four hours, and it is **Cloudflare's default Browser
+Cache TTL** — applied because the origin sends no `Cache-Control` of its
+own. HTML is not in Cloudflare's default cacheable set, so it always
+arrives fresh. The scripts do not.
+
+So every deploy opens a window of up to four hours in which a browser runs
+a **fresh `index.html` against stale modules**. That explains every part
+of the report, including the parts that made no sense:
+
+- The About button exists (fresh HTML) and does nothing (stale `app.js`
+  never binds it).
+- The runtime dropdown is empty and highlighting is missing — an older
+  `app.js` doing older things.
+- **Nothing in the console**, which was the genuinely confusing detail:
+  stale modules do not throw. They just quietly lack the newer half of the
+  page.
+- Firefox fine, Chromium/Opera/Brave not: each browser's cache was
+  populated at a different moment relative to the deploy. Nothing to do
+  with the engines.
+- Fine locally, because `scripts/serve.mjs` sends `Cache-Control:
+  no-store`.
+
+**The fix is on the host** — `Cache-Control: no-cache` for everything under
+the Lab's path, which means revalidate rather than do-not-store, and every
+response already has an `ETag`, so it costs a 304 rather than a
+re-download. Behind Cloudflare that also needs Browser Cache TTL set to
+*Respect Existing Headers*, or a Cache Rule disabling browser caching for
+the path. See README.
+
+**What the Lab can do about it, and now does:** `index.html` carries a
+`diluvium-lab-build` meta tag, and the scripts compare it against their own
+`LAB_VERSION` at startup. Disagreement is impossible unless something is
+serving one of them from an older deploy, so the page says exactly that,
+names both versions, and says to reload bypassing the cache.
+`scripts/check-version.mjs` now keeps three sources in step —
+package.json, src/version.js and index.html — because a mismatch between
+*those* would show every visitor a false alarm.
+
+It only detects a skew across a version bump, which is a real limit and an
+argument for bumping the version on every deploy. It cannot fix the cause.

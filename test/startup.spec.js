@@ -164,3 +164,45 @@ test.describe('About reports what the browser allows', () => {
     await expect(page.locator('[data-about]')).toContainText('blocked (SecurityError)');
   });
 });
+
+test.describe('a stale cache announces itself', () => {
+  test('when the HTML and the scripts came from different deploys', async ({ page }) => {
+    // The failure this exists for: a CDN caches the unversioned modules
+    // for hours while the HTML, being uncacheable, arrives fresh. Nothing
+    // throws -- the old code simply lacks the newer half of the page -- so
+    // the console is clean and the symptom is "some buttons do nothing".
+    // That is close to undiagnosable without being told.
+    await page.route('**/lab-build-mismatch', (r) => r.abort());
+    await page.addInitScript(() => {
+      // Stand in for a browser holding yesterday's index.html: the meta
+      // says one version, the module says another.
+      document.addEventListener('DOMContentLoaded', () => {}, { once: true });
+    });
+    await page.goto('/');
+    await page.evaluate(() => {
+      document.querySelector('meta[name="diluvium-lab-build"]')
+        ?.setAttribute('content', '0.0.1-from-an-older-deploy');
+    });
+    // Re-run startup against the doctored page.
+    const problem = await page.evaluate(async () => {
+      const { App } = await import('./src/app.js');
+      const app = new App(document, { kernel: {
+        status: 'dead', capabilities: {}, label: 'stub',
+        onMessage: () => () => {}, start: async () => {},
+      } });
+      await app.start();
+      return { problems: app.startupProblems, mismatch: app.buildMismatch };
+    });
+    expect(problem.mismatch).toBeTruthy();
+    expect(problem.problems.join(' ')).toContain('0.0.1-from-an-older-deploy');
+    expect(problem.problems.join(' ')).toMatch(/Ctrl\+Shift\+R|cached copy/);
+  });
+
+  test('and says nothing when they agree', async ({ page }) => {
+    await page.addInitScript(() => indexedDB.deleteDatabase('diluvium-lab'));
+    await boot(page);
+    await expect(page.locator('body')).toHaveAttribute('data-startup-problems', '0');
+    await page.locator('[data-toolbar="about"]').click();
+    await expect(page.locator('[data-about]')).toContainText('agree');
+  });
+});

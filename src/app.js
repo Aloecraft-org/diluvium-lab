@@ -149,6 +149,9 @@ export class App {
       }
     };
 
+    await phase('checking this page and its scripts came from one deploy',
+      () => this._checkBuildMatches());
+
     const restored = await phase('restoring the saved notebook', () => this._restore());
     await phase('rendering the notebook', () => {
       this._setModel(restored ?? fromIpynb(DEFAULT_NOTEBOOK));
@@ -187,6 +190,29 @@ export class App {
   }
 
   /**
+   * Does the HTML agree with the JavaScript about which build this is?
+   *
+   * They can only disagree if something is serving one of them from an
+   * older deploy. That is a real and recurring failure for a page with no
+   * build step and no content hashes in its URLs: a CDN or a browser
+   * caches the modules for hours while the HTML, being uncacheable,
+   * arrives fresh. Nothing throws -- the old code simply lacks the newer
+   * half of the page -- so a clean console is exactly what it looks like,
+   * and that is the worst kind of bug to be handed.
+   */
+  _checkBuildMatches() {
+    const declared = this.document
+      .querySelector('meta[name="diluvium-lab-build"]')?.getAttribute('content');
+    if (!declared || declared === LAB_VERSION) return;
+    this.buildMismatch = { html: declared, scripts: LAB_VERSION };
+    throw new Error(
+      `this page is version ${declared} but its scripts are ${LAB_VERSION}. `
+      + 'Something is serving a cached copy of one of them. Reload bypassing the '
+      + 'cache (Ctrl+Shift+R, or Cmd+Shift+R) — and if that fixes it, the host '
+      + 'needs to stop caching unversioned scripts.');
+  }
+
+  /**
    * What this browser will and will not let the Lab do.
    *
    * Reported rather than assumed, because the interesting cases are the
@@ -216,6 +242,9 @@ export class App {
       // another is a real failure mode. Comparing this against the commit
       // in the deployment is how you spot it.
       ['Lab build', LAB_COMMIT ? LAB_COMMIT.slice(0, 12) : 'unversioned (served from a checkout)'],
+      ['HTML/script versions', this.buildMismatch
+        ? `MISMATCH — page ${this.buildMismatch.html}, scripts ${this.buildMismatch.scripts} (stale cache)`
+        : 'agree'],
     ];
   }
 

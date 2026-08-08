@@ -4,6 +4,13 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Diluvium Lab</title>
+<!-- The version this HTML belongs to, compared at startup against the
+     version compiled into src/version.js. They can only disagree if the
+     browser (or a CDN) is holding one of them from an older deploy, which
+     is otherwise a silent failure: stale modules do not throw, they just
+     quietly lack the newer half of the page. scripts/check-version.mjs
+     keeps this in step with package.json and src/version.js. -->
+<meta name="diluvium-lab-build" content="0.1.0">
 <style>
   :root {
     color-scheme: light dark;
