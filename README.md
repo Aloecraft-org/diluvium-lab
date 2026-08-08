@@ -11,6 +11,58 @@ supplies itself. The bundled build is **Diluvium 5.5.1_build1**; the
 Runtime dropdown swaps it for any other the mirror carries, including
 5.4.x.
 
+## Running it
+
+Nothing to compile and nothing to install. The kernel is committed under
+`vendor/`, so a clone is a working copy:
+
+```sh
+git clone https://github.com/Aloecraft-org/diluvium-lab.git
+cd diluvium-lab
+node scripts/serve.mjs            # → http://localhost:8080
+```
+
+Node 18 or newer, and that is the whole dependency list — `serve.mjs` is
+deliberately dependency-free. `npm install` is for the *test* harness and
+is not needed to run the Lab.
+
+Any static server will do; these are equivalent:
+
+```sh
+python3 -m http.server 8080
+npx --yes serve -l 8080
+```
+
+It does need to be a server. Opened as a `file://` URL the page renders
+and then cannot load its kernel, because browsers refuse `fetch` on the
+`file:` scheme.
+
+### With Docker
+
+```sh
+docker build -t diluvium-lab .
+docker run --rm -p 8080:8080 diluvium-lab
+```
+
+The image is the source tree plus a Node runtime — no build stage, no
+`npm install`, nothing fetched at run time.
+
+### As one file
+
+```sh
+npm run bake                      # → dist/diluvium-lab.html
+```
+
+One ~1.5 MB file with the kernel inlined as base64, which makes no network
+requests at all and can be opened by double-clicking, emailed, or dropped
+on a USB stick. `scripts/check-bake.mjs` asserts that it really is
+self-contained rather than merely looking it.
+
+The trade is real and deliberate: a `file://` page is not a secure
+context, so `crypto.subtle` is unavailable, so downloaded runtimes cannot
+be checksummed — and the baked build therefore refuses to fetch them at
+all and says so. It carries the one runtime it was baked with.
+
 ## Development
 
 ```sh
@@ -25,12 +77,12 @@ Other scripts:
 ```sh
 scripts/fetch-runtime.sh v5.5.1_build1    # re-pin the bundled runtime
 scripts/build-mirror.sh mirror            # build the runtime mirror (see below)
+scripts/check-bake.mjs                    # assert the baked file is self-contained
 ```
 
-The page needs a static server — any one will do — because browsers refuse
-to `fetch` the kernel over `file://`. `npm run bake` is the answer for the
-double-click case: it flattens the module graph and inlines the kernel as
-base64 into one ~1.2 MB file that makes no network requests at all.
+Tests drive the real page in a real browser against the real kernel —
+nothing about the kernel is mocked, which is the point. CI runs the same
+suite plus the bake on every push and pull request.
 
 `spike.html` is the Stage 0 spike, kept on purpose. It exercises the *raw*
 `run_lua` contract that the kernel deliberately hides — status codes, the
@@ -184,6 +236,53 @@ into "run this wasm".
 
 The mirror at `diluvium.aloecraft.org/release/` carries `v5.4.7_release`
 and `v5.5.1_build1`, both with the kernel artifact.
+
+## Security
+
+The Lab downloads binaries and executes them, and it opens files people
+send each other. Those are the two places to look, so here is what it
+actually does.
+
+**Everything runs in the tab's sandbox.** The kernel is WebAssembly with a
+WASI shim this page supplies itself (`src/kernel/wasi.js`). It gets no
+filesystem, no sockets, no clock beyond what the shim answers, and no way
+out of the page — the shim implements the calls it needs and stubs the
+rest. Your notebooks are in IndexedDB in your browser; nothing is uploaded
+anywhere, and the Lab has no server, no account, and no telemetry.
+
+**Runtimes are verified before they are run.** The order is fetch, verify,
+probe, *then* swap: a download is checked against the release's own
+`SHA256SUMS.txt` (or `BUILDINFO.txt`), the module is probed for the exports
+a Diluvium kernel must have, and only a build that passes both replaces the
+running one. Anything that fails leaves your session untouched. When more
+than one checksum source is present they must agree — a mirror that
+contradicts itself is refused rather than resolved, because picking one of
+two hashes is picking which binary to execute on no evidence.
+
+**`?mirror=` is honoured on localhost only.** That parameter redirects
+where the Lab downloads executable code from, so accepting it on a
+deployed page would turn any link into "run this wasm". It exists for
+testing a mirror before deploying it, and it is deliberately useless as a
+link.
+
+**Reading bytecode does not run it.** The Bytecode panel and the "Read hex"
+tab compile and parse; they never execute. That is what makes it safe to
+paste a compiled chunk from someone you do not trust — and the parser is
+strict on purpose, refusing anything whose bytes it cannot fully account
+for rather than guessing.
+
+**Nothing reaches the DOM as markup.** Markdown, hints, error text and
+output are escaped before rendering, so a notebook cannot script the page
+that opens it. `.ipynb` files are data here, not documents with behaviour.
+
+**`~function` is obfuscation, not encryption.** Diluvium's secure-function
+marker XORs a function's code and strings with a single-byte key. The Lab
+reads through it and disassembles those functions like any other, which is
+the honest thing for a tool that teaches the format to do. It stops
+`strings` on a `.luac`; treat it as nothing more.
+
+If you find a security problem, please open an issue — or mail the address
+on the Diluvium repository if you would rather not do so in public.
 
 ## Layout
 

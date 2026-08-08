@@ -1,0 +1,18 @@
+# The image is the source tree plus a Node runtime. Everything here is
+# either a build artifact, a test dependency, or a checkout detail.
+.git
+.github
+node_modules
+test
+test-results
+playwright-report
+dist
+scripts/*
+!scripts/serve.mjs
+*.md
+Dockerfile
+.dockerignore
+.gitignore
+package*.json
+playwright.config.js
+seedlab.sh
