@@ -4,9 +4,11 @@
 #
 #   scripts/build-mirror.sh [outdir] [tag ...]
 #
-# Default outdir is ./mirror, default tags are every tag that publishes a
-# libdiluvium_wasi.wasm. Upload the result to a static host and point the
-# Lab at it. Nothing dynamic is required: no API, no redirects, no auth.
+# Default outdir is ./mirror. With no tags given, the set comes from
+# `mirror_tags` in the Diluvium repository's own `changelog.json`, which is
+# where that decision is published. Upload the result to a static host and
+# point the Lab at it. Nothing dynamic is required: no API, no redirects,
+# no auth.
 #
 # Why this exists at all: GitHub serves release assets from
 # release-assets.githubusercontent.com with no Access-Control-Allow-Origin
@@ -39,51 +41,74 @@ ARTIFACT="libdiluvium_wasi.wasm"
 OUT="${1:-mirror}"
 shift || true
 
-# Tags known to publish the kernel artifact.
+# Which tags to mirror is not this script's decision, and it used to try
+# to make it twice over.
 #
-# This used to be the whole input, and that was the bug: the list said
-# "add to this list as releases appear", nobody did, and the script went on
-# reporting success while quietly mirroring two releases out of four. A
-# mirror that is silently a subset is worse than one that fails, because
-# the dropdown looks complete.
+# First it carried a hardcoded DEFAULT_TAGS list with a comment telling
+# whoever read it to add to the list. Nobody did, so it went on printing
+# "wrote releases.json with 2 release(s)" long after there were four.
+# Then it discovered tags from `git ls-remote` and guessed at prerelease
+# from the tag name -- which mirrored v5.5.1_build3, a release whose own
+# notes say "the release mirror does not carry this one", and labelled it
+# stable because the name has no `rc` in it.
 #
-# So it is now a *floor* rather than the list. Tags are discovered, the
-# discovered set is unioned with this one, and every candidate still has to
-# prove it publishes the artifact before it is mirrored -- which is the
-# check that was always doing the real work.
+# Both were the same mistake: inventing an answer that upstream already
+# publishes. `changelog.json` at the repository root carries `mirror_tags`
+# (the exact set), `latest` (what a `latest/` path resolves to), and a
+# `stable` flag per release which CHANGELOG.yaml calls "the truth", noting
+# that GitHub's own prerelease flag is *derived* from it. Read that.
 KNOWN_TAGS=(v5.4.7_release v5.5.1_build1)
+CHANGELOG_URL="${DILUVIUM_CHANGELOG_URL:-https://raw.githubusercontent.com/$REPO/main/changelog.json}"
 
 say() { printf '  %s\n' "$*"; }
 
-# Every tag in the repository, newest-agnostic: ordering does not matter
-# because the Lab sorts the dropdown itself.
+# changelog.json -> lines of "tag<TAB>stable<TAB>latest".
 #
-# `git ls-remote` rather than the releases API: no auth, no rate limit, and
-# no JSON to parse in shell. It over-reports -- most tags publish no
-# artifact at all -- and the HEAD check below is what narrows it. Measured
-# against this repository: 67 tags, of which 4 publish the kernel and none
-# of those 4 is a prerelease.
-discover_tags() {
-  git ls-remote --tags "https://github.com/$REPO" 2>/dev/null \
-    | sed 's|.*refs/tags/||' \
-    | grep -v '\^{}$' \
-    | grep '^v[0-9]'
+# Parsed with node rather than jq: this repository already requires node
+# and does not require jq, and a mirror script that fails on a machine
+# without jq fails exactly when someone is trying to publish.
+read_changelog() {
+  curl -fsSL --retry 3 "$CHANGELOG_URL" 2>/dev/null | node -e '
+    let raw = "";
+    process.stdin.on("data", (d) => { raw += d; });
+    process.stdin.on("end", () => {
+      const doc = JSON.parse(raw);
+      const releases = Array.isArray(doc.releases) ? doc.releases : [];
+      const by = new Map(releases.map((r) => [r.tag, r]));
+      // `mirror_tags` is the published set. Falling back to the per-release
+      // `mirror` flag keeps this working if the top-level list is dropped.
+      const tags = Array.isArray(doc.mirror_tags) && doc.mirror_tags.length
+        ? doc.mirror_tags
+        : releases.filter((r) => r.mirror).map((r) => r.tag);
+      for (const tag of tags) {
+        const r = by.get(tag) ?? {};
+        process.stdout.write([tag, r.stable === true, tag === doc.latest].join("\t") + "\n");
+      }
+    });
+  ' 2>/dev/null
 }
 
 TAGS=("$@")
+declare -A STABLE=() IS_LATEST=()
+
 if [ ${#TAGS[@]} -eq 0 ]; then
-  printf '== Discovering tags\n'
-  mapfile -t found < <(discover_tags)
-  if [ ${#found[@]} -eq 0 ]; then
-    say "could not reach the repository; falling back to the known list"
-    TAGS=("${KNOWN_TAGS[@]}")
+  printf '== Reading %s\n' "$CHANGELOG_URL"
+  if meta=$(read_changelog) && [ -n "$meta" ]; then
+    while IFS=$'\t' read -r tag stable latest; do
+      [ -z "$tag" ] && continue
+      TAGS+=("$tag")
+      STABLE["$tag"]="$stable"
+      IS_LATEST["$tag"]="$latest"
+    done <<< "$meta"
+    say "mirror_tags: ${TAGS[*]}"
   else
-    say "${#found[@]} tags in $REPO"
-    # Union, so a discovery that comes back short can only ever add to the
-    # known-good set and never silently drop one of it.
-    mapfile -t TAGS < <(printf '%s\n' "${found[@]}" "${KNOWN_TAGS[@]}" | sort -u)
+    # Not fatal, but not silent either: the fallback set is a floor from
+    # some past day, and shipping it as though it were current is the
+    # exact failure this whole section exists to stop.
+    say "could not read changelog.json -- falling back to a known list, which may be short"
+    say "pass tags explicitly to be sure: $0 <outdir> <tag>..."
+    TAGS=("${KNOWN_TAGS[@]}")
   fi
-  say "checking ${#TAGS[@]} for $ARTIFACT (most publish none; this takes a moment)"
 fi
 
 mkdir -p "$OUT"
@@ -126,13 +151,16 @@ for tag in "${TAGS[@]}"; do
   [ -z "$version" ] && version="${tag#v}"
   published=$(sed -n 's/^built *: *//p' "$dest/BUILDINFO.txt" 2>/dev/null | head -1)
 
-  # Derived rather than hardcoded false. No prerelease publishes the
-  # kernel today, so this changes nothing now -- but the day one does, a
-  # mirror that called it stable would put it in the dropdown looking like
-  # a release, which is the sort of wrong that is only found afterwards.
-  case "$tag" in
-    *_rc*|*-rc*|*alpha*|*beta*|*-pre*) prerelease=true ;;
-    *) prerelease=false ;;
+  # From the changelog, never from the tag's spelling. `v5.5.1_build3` has
+  # no `rc` in its name and is a prerelease anyway -- its supported
+  # configuration is narrower than the feature set it ships, which
+  # CHANGELOG.yaml says is reason enough. A name-based guess called it
+  # stable. Tags passed on the command line have no changelog entry to
+  # consult, so they are taken at face value and said so below.
+  case "${STABLE[$tag]:-}" in
+    true)  prerelease=false ;;
+    false) prerelease=true ;;
+    *)     prerelease=false; say "no changelog entry; assuming a release" ;;
   esac
 
   # `version` and `assets[].sha256` as well as the name, so this script's
@@ -150,8 +178,17 @@ if [ ${#entries[@]} -eq 0 ]; then
   exit 1
 fi
 
+# `latest` as the changelog gives it, so a consumer resolving a `latest/`
+# path agrees with upstream rather than with whatever sorts highest here.
+latest=""
+for tag in "${TAGS[@]}"; do
+  [ "${IS_LATEST[$tag]:-}" = "true" ] && latest="$tag"
+done
+
 {
-  printf '{\n  "schema": 1,\n  "repo": "%s",\n  "releases": [\n' "$REPO"
+  printf '{\n  "schema": 1,\n  "repo": "%s",\n' "$REPO"
+  [ -n "$latest" ] && printf '  "latest": "%s",\n' "$latest"
+  printf '  "releases": [\n'
   for i in "${!entries[@]}"; do
     printf '    %s' "${entries[$i]}"
     [ "$i" -lt $((${#entries[@]} - 1)) ] && printf ','

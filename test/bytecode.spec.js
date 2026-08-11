@@ -1,4 +1,8 @@
 import { test, expect } from '@playwright/test';
+// Imported in Node rather than read out of the page: these modules are
+// plain ESM with no DOM in them, and a test that named the formats in a
+// second place would be a second place to forget to update.
+import { DILUVIUM_FORMATS } from '../src/analysis/luac.js';
 
 // The disassembler.
 //
@@ -58,10 +62,18 @@ test.describe('the container', () => {
     // bytecode-dialects.spec.js instead, where they cannot drift.
     expect([0x54, 0x55]).toContain(header.version);
     expect(header.lua).toBe(`5.${header.version & 0xf}`);
-    // 0x44 is 'D'. Stock Lua writes 0 here and refuses anything else, so
-    // this is a deliberate compatibility fence, not decoration.
-    expect(header.format).toBe(0x44);
+    // Stock Lua writes 0 here and refuses anything else, so a non-zero
+    // format is a deliberate compatibility fence rather than decoration.
+    // Not pinned to one byte, for the same reason the version above is
+    // not: `LUAC_FORMAT` is a generation counter, bumped whenever the
+    // layout *or the encoding* changes, and it has moved twice inside the
+    // 5.5 line alone -- 0x44 at build1, 0x45 at build2 when a written
+    // string's size field gained a scramble flag, 0x46 at build3 when the
+    // scramble became a keystream. Pinning the byte would mean re-pinning
+    // the runtime breaks a test that is not about the runtime.
+    expect([...DILUVIUM_FORMATS.keys()]).toContain(header.format);
     expect(header.dialect).toBe('diluvium');
+    expect(header.generation).toBe(DILUVIUM_FORMATS.get(header.format));
     expect(header.sizeInstruction).toBe(4);
   });
 
@@ -262,9 +274,11 @@ test.describe('the panel', () => {
     await cell.locator('[data-editor]').fill('return 1');
     await cell.locator('[data-action="bytecode"]').click();
     await cell.locator('[data-bc-tab="hex"]').click();
-    // \x1bLua, then the version byte, then 0x44. The version moves with
-    // the pinned runtime; the signature and the format byte do not.
-    await expect(cell.locator('[data-bc-hex]')).toContainText(/1b 4c 75 61 5[45] 44/);
+    // \x1bLua, then the version byte, then the format byte. Both of the
+    // latter move with the pinned runtime -- the format has been 0x44,
+    // 0x45 and 0x46 within the 5.5 line -- so only the signature is
+    // fixed here.
+    await expect(cell.locator('[data-bc-hex]')).toContainText(/1b 4c 75 61 5[45] 4[456]/);
   });
 
   test('hex can be pasted back in and read', async ({ page }) => {

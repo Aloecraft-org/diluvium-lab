@@ -2,22 +2,35 @@
 #
 # Pin a Diluvium runtime into vendor/.
 #
-#   scripts/fetch-runtime.sh [tag]        default: v5.5.1_build1
+#   scripts/fetch-runtime.sh [tag]        default: v5.5.1_build2
 #
 # Downloads the kernel module plus the release's checksum and build
 # manifest, and verifies the module against the former. This is the
 # Stage 2 mechanism in miniature -- the version dropdown does the same
 # three steps in the browser.
 #
-# Pulls from the mirror rather than from GitHub, because the mirror is
-# where the artifacts reliably are: of the tags that exist upstream, only
-# v5.4.7_release attaches libdiluvium_wasi.wasm to its GitHub release, and
-# v5.5.1_build1 -- the one you most likely want -- does not. Set
-# DILUVIUM_RELEASE_BASE to point somewhere else.
+# Pulls from the mirror by default. Set DILUVIUM_RELEASE_BASE to point
+# somewhere else -- notably at GitHub, which is where a build the mirror
+# does not carry lives:
+#
+#   DILUVIUM_RELEASE_BASE=https://github.com/Aloecraft-org/diluvium/releases/download \
+#     scripts/fetch-runtime.sh v5.5.1_build3
+#
+# This used to say that only v5.4.7_release attaches libdiluvium_wasi.wasm
+# to its GitHub release. That is no longer true: build1, build2 and build3
+# all do. What GitHub does not do is send Access-Control-Allow-Origin, so
+# the *browser* still needs the mirror even though curl does not.
+#
+# Which tags the mirror should carry is not a judgement call -- it is
+# `mirror_tags` in the Diluvium repository's changelog.json, and
+# scripts/build-mirror.sh reads it. v5.5.1_build3 is deliberately not in
+# that set: it is a prerelease whose supported configuration is narrower
+# than the feature set it ships. Pin it if you want what it added; do not
+# pin it by default.
 
 set -euo pipefail
 
-TAG="${1:-v5.5.1_build1}"
+TAG="${1:-v5.5.1_build2}"
 MIRROR="${DILUVIUM_RELEASE_BASE:-https://diluvium.aloecraft.org/release}"
 BASE="$MIRROR/$TAG"
 DEST="$(cd "$(dirname "$0")/.." && pwd)/vendor"

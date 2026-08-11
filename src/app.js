@@ -73,7 +73,15 @@ export class App {
 
     this.registry = options.registry ?? new RuntimeRegistry({
       mirrorUrl: options.mirrorUrl,
-      pinnedLabel: options.pinnedLabel ?? '5.5.1_build1',
+      // From the vendored build, never a literal. This was `'5.5.1_build1'`
+      // spelled out, and nothing passed the option -- so the dropdown
+      // labelled the bundled runtime `5.5.1_build1` whatever was actually
+      // in vendor/, and `entries()` filters the mirror's copy of the
+      // pinned build by comparing against this string, so the mirror's
+      // real build1 would also have been offered a second time. Every
+      // other use of BUNDLED in this file was already right; this one
+      // predated the import.
+      pinnedLabel: options.pinnedLabel ?? BUNDLED.version,
       bundledBytes: options.moduleBytes ?? null,
       wasmUrl: options.wasmUrl ?? DEFAULT_WASM_URL,
     });

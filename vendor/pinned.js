@@ -5,10 +5,10 @@
 // which matters because this is the first thing a bug report should carry.
 
 export const BUNDLED = {
-  tag: 'v5.5.1_build1',
-  version: '5.5.1_build1',
-  commit: 'eba90f754a8da3286bec380972a9f4783113f51e',
-  built: '2026-08-07T18:14:15Z',
-  sha256: '15e5a20ca98e3fbfa600ff03bf60bfd5bd9b03d2d793810f27cbe645b6912426',
+  tag: 'v5.5.1_build2',
+  version: '5.5.1_build2',
+  commit: '53fecaa74607ce1a14bac200d87f7eea7a50fb92',
+  built: '2026-08-08T09:44:34Z',
+  sha256: '053599d5b6d4ab50f5ec0adb54d9166fedb1d474b2dcde26d78ae54551561292',
   artifact: 'libdiluvium_wasi.wasm',
 };

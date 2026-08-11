@@ -18,21 +18,22 @@
 // | `abslineinfo` | pairs of varints | aligned pairs of raw int32 |
 // | scramble covers | code and string constants | code and *every* string |
 //
-// The one thing they agree on is `LUAC_FORMAT` = 0x44 (`'D'`), where stock
-// Lua writes 0 and refuses anything else — so a Diluvium chunk and a
-// PUC-Rio chunk of the same Lua version are still deliberately not
-// interchangeable.
+// Both write a non-zero `LUAC_FORMAT` where stock Lua writes 0 and
+// refuses anything else, so a Diluvium chunk and a PUC-Rio chunk of the
+// same Lua version are deliberately not interchangeable. That byte is a
+// *generation counter* rather than a constant — see `DILUVIUM_FORMATS` —
+// and the 5.5 container has had three of them.
 //
 // The 5.4 profile was derived from the shipped artifact by decoding
 // `function() end` a byte at a time. The 5.5 profile was derived from
-// `ldump.c` and `lundump.c` at tag v5.5.1_build1. Both are checked the
+// `ldump.c` and `lundump.c`, first at v5.5.1_build1 and then re-derived
+// at _build2 and _build3 when the format byte moved. Both are checked the
 // same way at the end of `readChunk`: the parse must land exactly on the
 // last byte and every opcode must exist.
 
 import { decodeInstruction, instructionSet } from './opcodes.js';
 
 export const LUA_SIGNATURE = '\x1bLua';
-export const DILUVIUM_FORMAT = 0x44;      // 'D'; stock Lua writes 0
 export const LUAC_DATA = [0x19, 0x93, 0x0d, 0x0a, 0x1a, 0x0a];
 
 /** Constant type tags, as `ttypetag` writes them. Unchanged across 5.4/5.5. */
@@ -67,6 +68,65 @@ const TAG = {
  * test/bytecode-dialects.spec.js.
  */
 const SCRAMBLE_KEY = 0xbe;
+
+/**
+ * Diluvium's format byte, and what each value means.
+ *
+ * `LUAC_FORMAT` is not a constant — it is a generation counter, bumped
+ * whenever the layout *or the encoding* changes, so a stale chunk is
+ * refused instead of misread. Three exist:
+ *
+ * | byte | builds | what changed |
+ * |---|---|---|
+ * | `0x44` | 5.4.7_release, 5.5.1_build1 | the first Diluvium format |
+ * | `0x45` | 5.5.1_build2 | a written string's size field carries a scramble flag in its low bit |
+ * | `0x46` | 5.5.1_build3, _build4 | the scramble became a generated keystream |
+ *
+ * The `0x45` change exists because 5.5 dedups strings: a literal shared
+ * between a secure function and ordinary code has one stored copy, at
+ * whichever site was written first, and that site is not always the
+ * secure one — so scrambling by position stored such a string in the
+ * clear. `build2` is a security release for exactly that, and the flag
+ * had to move into the string's own header to fix it.
+ *
+ * `0x46` is not a layout change at all, which is why guessing is
+ * dangerous here: a chunk written under a different keystream still
+ * *parses*, and decodes to garbage silently. That is the whole reason an
+ * unrecognised format is an error below rather than a best effort.
+ */
+export const DILUVIUM_FORMATS = new Map([[0x44, 1], [0x45, 2], [0x46, 3]]);
+
+/** The newest generation this reader knows. */
+export const NEWEST_FORMAT = 0x46;
+
+/**
+ * `diluvium_unscramble`, both generations of it.
+ *
+ * Up to `0x45` it is one repeated byte. From `0x46` it is xorshift32
+ * seeded from the block's own length, taking the top byte of each step —
+ * deliberately still trivial to reverse, and deliberately no longer one
+ * `tr` invocation over the whole file.
+ *
+ * The seed depends on the length of the **whole block**, so a block has
+ * to be unscrambled in one piece: four bytes at a time with a running
+ * key would be a different keystream. That is why the code section is
+ * read as bytes and turned into words afterwards rather than word by
+ * word, which is what this file used to do and what a constant key let
+ * it get away with.
+ */
+function unscramble(bytes, generation = 1) {
+  if (generation < 3) return bytes.map((b) => b ^ SCRAMBLE_KEY);
+  const out = new Uint8Array(bytes.length);
+  let k = (0xbe5ca1ed ^ bytes.length) >>> 0;
+  if (k === 0) k = 0xbe5ca1ed;      // xorshift is stuck at zero
+  for (let i = 0; i < bytes.length; i++) {
+    k = (k ^ (k << 13)) >>> 0;
+    k = (k ^ (k >>> 17)) >>> 0;
+    k = (k ^ (k << 5)) >>> 0;
+    out[i] = bytes[i] ^ ((k >>> 24) & 0xff);
+  }
+  return out;
+}
 
 export class BytecodeError extends Error {}
 
@@ -151,7 +211,6 @@ class Reader {
 }
 
 const decode = (bytes) => new TextDecoder('utf-8', { fatal: false }).decode(bytes);
-const unscramble = (bytes) => bytes.map((b) => b ^ SCRAMBLE_KEY);
 
 // --- 5.4 -------------------------------------------------------------
 
@@ -185,7 +244,7 @@ function readString54(ctx, { scrambled = false } = {}) {
   const size = ctx.reader.varint54();
   if (size === 0) return null;
   const raw = ctx.reader.take(scrambled ? size : size - 1);
-  return decode(scrambled ? unscramble(raw) : raw);
+  return decode(scrambled ? unscramble(raw, ctx.generation) : raw);
 }
 
 function readFunction54(ctx, parentSource) {
@@ -202,9 +261,8 @@ function readFunction54(ctx, parentSource) {
 
   const code = [];
   const codeCount = reader.varint54();
-  for (let i = 0; i < codeCount; i++) {
-    code.push(scrambled ? readScrambledWord(reader) : reader.u32());
-  }
+  const codeWords = readCode(ctx, codeCount, scrambled);
+  code.push(...codeWords);
 
   const constants = [];
   const constantCount = reader.varint54();
@@ -312,9 +370,24 @@ function readString55(ctx) {
     if (index > ctx.strings.length) throw new BytecodeError(`string index ${index} has not been seen yet`);
     return ctx.strings[index - 1];
   }
-  const length = size - 1;
+  // Format 0x44 stores `realLength + 1` and decides scrambling by where
+  // the string sits in the proto tree. From 0x45 the field is
+  // `(realLength + 1) * 2 + scrambled`, because the tree position stopped
+  // being able to answer the question: 5.5 stores a deduped string once,
+  // at whichever site wrote it first, and that is not always the secure
+  // one. Zero still means "reuse", since a written string is at least 2.
+  let length;
+  let scrambled;
+  if (ctx.generation >= 2) {
+    if (size < 2) throw new BytecodeError(`invalid string size ${size}`);
+    scrambled = (size & 1) === 1;
+    length = (size >>> 1) - 1;
+  } else {
+    length = size - 1;
+    scrambled = ctx.encrypted;
+  }
   const raw = reader.take(length + 1);                 // content plus the NUL
-  const bytes = ctx.encrypted ? unscramble(raw) : raw;
+  const bytes = scrambled ? unscramble(raw, ctx.generation) : raw;
   const value = decode(bytes.subarray(0, length));
   ctx.strings.push(value);
   return value;
@@ -344,9 +417,7 @@ function readFunction55(ctx, parentSource) {
   const code = [];
   const codeCount = reader.varint55();
   reader.align(4);
-  for (let i = 0; i < codeCount; i++) {
-    code.push(scrambled ? readScrambledWord(reader) : reader.u32());
-  }
+  code.push(...readCode(ctx, codeCount, scrambled));
 
   const constants = [];
   const constantCount = reader.varint55();
@@ -415,13 +486,32 @@ function readFunction55(ctx, parentSource) {
 
 // --- shared ----------------------------------------------------------
 
-/** Four bytes, each XORed with the key, reassembled little-endian. */
-function readScrambledWord(reader) {
-  reader.need(4);
-  let word = 0;
-  for (let i = 3; i >= 0; i--) word = ((word << 8) | (reader.bytes[reader.at + i] ^ SCRAMBLE_KEY)) >>> 0;
-  reader.at += 4;
-  return word;
+/**
+ * The instruction stream, as words.
+ *
+ * A scrambled section is taken as **one block** and unscrambled whole,
+ * then split — because from format `0x46` the keystream is seeded from
+ * the block's length, so unscrambling four bytes at a time would be a
+ * different keystream and would produce plausible garbage. The earlier
+ * constant key made word-at-a-time equivalent, which is what let the
+ * previous version of this get away with it.
+ *
+ * Unlike a string, the code section is scrambled if and only if its own
+ * prototype is secure: its position in the tree decides it, and that has
+ * not changed across any format.
+ */
+function readCode(ctx, count, scrambled) {
+  const { reader } = ctx;
+  if (!scrambled) {
+    const words = [];
+    for (let i = 0; i < count; i++) words.push(reader.u32());
+    return words;
+  }
+  const plain = unscramble(reader.take(count * 4), ctx.generation);
+  const view = new DataView(plain.buffer, plain.byteOffset, plain.byteLength);
+  const words = [];
+  for (let i = 0; i < count; i++) words.push(view.getUint32(i * 4, true));
+  return words;
 }
 
 function finish(ctx, proto) {
@@ -482,6 +572,20 @@ export function readChunk(bytes) {
       + 'A newer Diluvium would need its container adding here.');
   }
 
+  // Refused rather than guessed at. `LUAC_FORMAT` is bumped for a change
+  // of *encoding* as well as of layout -- 0x46 moved the scramble to a
+  // keystream and moved no bytes at all -- so a chunk from an unknown
+  // generation would parse cleanly and hand back plausible garbage. That
+  // is the one failure mode a bytecode reader must not have.
+  const generation = DILUVIUM_FORMATS.get(format);
+  if (format !== 0 && generation === undefined) {
+    throw new BytecodeError(
+      `Diluvium bytecode format 0x${format.toString(16)} — this reader knows `
+      + `${[...DILUVIUM_FORMATS.keys()].map((f) => `0x${f.toString(16)}`).join(', ')}. `
+      + 'A newer build changed the layout or the scramble, so this chunk is refused '
+      + 'rather than misread; recompile it with the running kernel.');
+  }
+
   const { problems, ...sizes } = profile.readHeader(reader);
   if (LUAC_DATA.some((b, i) => data[i] !== b)) problems.unshift('the LUAC_DATA guard bytes are wrong');
   if (problems.length) throw new BytecodeError(problems.join('; '));
@@ -492,11 +596,15 @@ export function readChunk(bytes) {
     lua: profile.lua,
     // Reported rather than enforced: a chunk from stock Lua parses fine
     // here, and saying whose it is beats pretending they are the same.
-    dialect: format === DILUVIUM_FORMAT ? 'diluvium' : (format === 0 ? 'lua' : `format 0x${format.toString(16)}`),
+    dialect: generation !== undefined ? 'diluvium' : 'lua',
+    // Which Diluvium format wrote this, as a small number. The disassembly
+    // header prints it, because "format 0x46" means nothing to a reader
+    // and "Diluvium format 3" at least sorts.
+    generation: generation ?? 0,
     ...sizes,
   };
 
-  const ctx = { reader, set, strings: [], encrypted: false };
+  const ctx = { reader, set, strings: [], encrypted: false, generation: generation ?? 1 };
   const sizeUpvalues = reader.byte();
   const main = profile.readFunction(ctx, null);
 

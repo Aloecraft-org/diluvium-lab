@@ -501,18 +501,28 @@ test.describe('the real mirror index', () => {
       .toBe('15e5a20ca98e3fbfa600ff03bf60bfd5bd9b03d2d793810f27cbe645b6912426');
   });
 
-  test('the bundled build is not offered twice', async ({ page }) => {
-    // The mirror carries the pinned build, and its checksum is the one in
-    // vendor/SHA256SUMS.txt -- so this also confirms the two agree.
+  test('offers everything it lists, and the published one is behind', async ({ page }) => {
     await page.route(`${MIRROR}releases.json`, async (route) => route.fulfill({
       status: 200, contentType: 'application/json', body: JSON.stringify(REAL),
     }));
     await openLab(page);
     await checkVersions(page);
 
-    await expect(select(page).locator('option')).toHaveText([/5\.5\.1_build1 \(bundled\)/, '5.4.7']);
+    // This capture was taken 2026-08-08 at 04:01Z and `v5.5.1_build2` was
+    // published at 09:44Z the same day -- so the *live* index predates the
+    // build its own changelog marks `latest` and `mirror: true`. Nothing
+    // in the Lab can fix that; regenerating the mirror can. Asserted as it
+    // is rather than as it should be, so this says something true.
+    await expect(select(page).locator('option'))
+      .toHaveText([/5\.5\.1_build2 \(bundled\)/, '5.5.1_build1', '5.4.7']);
+    expect(REAL.releases.map((r) => r.tag)).not.toContain('v5.5.1_build2');
+
+    // The filter that stops the pinned build being listed twice is
+    // exercised where it can be: against the index build-mirror.sh writes,
+    // at the bottom of this file, which does carry it.
     expect(REAL.releases.find((r) => r.tag === 'v5.5.1_build1')
-      .assets.find((a) => a.name === 'libdiluvium_wasi.wasm').sha256).toBe(sha256(kernelBytes));
+      .assets.find((a) => a.name === 'libdiluvium_wasi.wasm').sha256)
+      .not.toBe(sha256(kernelBytes));
   });
 });
 
@@ -573,12 +583,20 @@ test.describe('version ordering across the format change', () => {
   test('the dropdown is newest first, whatever order the mirror wrote', async ({ page }) => {
     await stubMirror(page, {
       // Deliberately shuffled, and mixing both tag shapes.
+      //
+      // The `_buildN` pair is on 5.5.2 rather than 5.5.1 so that neither
+      // can ever be the *pinned* build: `entries()` filters the mirror's
+      // copy of whatever is bundled, and this test is about ordering, not
+      // about that filter. When 5.5.1_build2 became the pin, it vanished
+      // from this list and the failure looked like a sorting bug.
+      // build10 against build2 is the point -- lexically build10 sorts
+      // first, numerically it is later -- and it survives the move.
       releases: [
         { tag: 'v5.5.0', name: 'Diluvium 5.5.0' },
-        { tag: 'v5.5.1_build10', name: 'Diluvium 5.5.1_build10' },
+        { tag: 'v5.5.2_build10', name: 'Diluvium 5.5.2_build10' },
         { tag: 'v5.4.7_release', name: 'Diluvium 5.4.7' },
         { tag: 'v5.5.1-rc.1', name: 'Diluvium 5.5.1-rc.1' },
-        { tag: 'v5.5.1_build2', name: 'Diluvium 5.5.1_build2' },
+        { tag: 'v5.5.2_build2', name: 'Diluvium 5.5.2_build2' },
       ],
     });
     await openLab(page);
@@ -586,7 +604,7 @@ test.describe('version ordering across the format change', () => {
 
     await expect(select(page).locator('option')).toHaveText([
       /\(bundled\)/,
-      '5.5.1-rc.1', '5.5.1_build10', '5.5.1_build2', '5.5.0', '5.4.7',
+      '5.5.2_build10', '5.5.2_build2', '5.5.1-rc.1', '5.5.0', '5.4.7',
     ]);
   });
 });
@@ -617,10 +635,17 @@ test.describe('the index scripts/build-mirror.sh writes', () => {
     // `list()` preserves the index's order; the dropdown is what sorts. So
     // the script may write ascending while the publishing job writes
     // newest-first, and neither has to know about the other.
+    // The set is `mirror_tags` from the Diluvium repository's own
+    // changelog.json, which is where that decision is published -- not
+    // every tag that happens to publish a kernel. v5.5.1_build3 does
+    // publish one and is deliberately absent, because its release notes
+    // say the mirror does not carry it.
     expect(listed.map((r) => [r.tag, r.version])).toEqual([
+      ['v5.5.1_build2', '5.5.1_build2'],
       ['v5.5.1_build1', '5.5.1_build1'],
-      ['v5.5.1_build3', '5.5.1_build3'],
+      ['v5.4.7_release', '5.4.7'],
     ]);
+    expect(listed.map((r) => r.tag)).not.toContain('v5.5.1_build3');
     // The script emits `version` outright, so the dropdown never has to
     // fall back to parsing the name or guessing from the tag.
     expect(BUILT.releases.every((r) => typeof r.version === 'string')).toBe(true);
@@ -630,13 +655,10 @@ test.describe('the index scripts/build-mirror.sh writes', () => {
     expect(listed[0].assets['libdiluvium_wasi.wasm']).toMatch(/^[0-9a-f]{64}$/);
 
     // And what the reader ends up with. The bundled build heads the list
-    // whatever its version -- it is the one that works with no network --
-    // and "newest first" sorts the remote entries below it. So a mirror
-    // carrying something newer than the pinned build shows it *second*,
-    // which is worth pinning because it looks like a sorting bug and is
-    // not: see `entries()` in runtimes.js.
+    // -- it is the one that works with no network -- and the mirror's own
+    // copy of it is filtered out rather than listed twice.
     await checkVersions(page);
     await expect(select(page).locator('option'))
-      .toHaveText([/5\.5\.1_build1 \(bundled\)/, /5\.5\.1_build3/]);
+      .toHaveText([/5\.5\.1_build2 \(bundled\)/, /5\.5\.1_build1/, /5\.4\.7/]);
   });
 });

@@ -137,7 +137,7 @@ export function describeFunction(proto, path) {
 export function toText(chunk, flattened) {
   const lines = [
     `; Diluvium bytecode — ${chunk.byteLength} bytes, ${flattened.length} function(s)`,
-    `; format 0x${chunk.header.format.toString(16)} (${chunk.header.dialect}), Lua ${(chunk.header.version >> 4)}.${chunk.header.version & 0xf}`,
+    `; ${chunk.header.dialect} format ${chunk.header.generation} (0x${chunk.header.format.toString(16)}), Lua ${(chunk.header.version >> 4)}.${chunk.header.version & 0xf}`,
     '',
   ];
   for (const { path, proto } of flattened) {

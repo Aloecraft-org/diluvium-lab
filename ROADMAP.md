@@ -848,26 +848,37 @@ one that fails, because the dropdown looks complete — this is the same
 class of defect as a stale module graph, and it took the same shape:
 success reported against an input nobody re-checked.
 
-Tags are discovered now, with `git ls-remote` rather than the releases
-API — no auth, no rate limit, and no JSON to parse in shell. It
-over-reports and the existing per-tag HEAD check narrows it, which is the
-check that was always doing the real work. Measured against the
-repository: **67 tags, of which exactly 4 publish `libdiluvium_wasi.wasm`,
-and none of those 4 is a prerelease.** The discovered set is unioned with
-the old list, so a discovery that comes back short can only add to the
-known-good set and never silently drop one of it.
+**The first fix for that was also wrong, and in a more interesting way.**
+Tags were discovered with `git ls-remote`, filtered by whether they
+publish the artifact, and `prerelease` was guessed from the tag's
+spelling. That produced four releases where there had been two — and one
+of the four was `v5.5.1_build3`, whose own release notes say *"the release
+mirror does not carry this one"*, labelled `prerelease: false` because the
+name has no `rc` in it.
 
-Two smaller corrections went with it. `prerelease` was hardcoded `false`;
-it is derived from the tag now, so the day a prerelease does publish a
-kernel it does not enter the dropdown dressed as a release. And the script
-emitted a *thinner* index than the publishing job on
-diluvium.aloecraft.org writes — no `version`, no `assets[].sha256`.
-Uploading that would have cost the Lab its cross-check, since it compares
-the index's claimed checksum against `SHA256SUMS.txt` and refuses a build
-where the two disagree. One source cannot disagree with itself. Both
-fields are emitted now, and `test/fixtures/releases-built.json` is a
-verbatim capture of a real run, so the shape is pinned the way the
-published index's already was.
+Both versions were the same mistake: inventing an answer upstream already
+publishes. **`changelog.json` at the Diluvium repository root carries
+`mirror_tags`** — the exact set — plus `latest`, and a per-release
+`stable` flag that `CHANGELOG.yaml` calls "the truth", noting that
+GitHub's own prerelease flag is *derived* from it. The script reads that
+now, with node rather than jq (this repo already requires node and does
+not require jq, and a mirror script that dies without jq dies exactly when
+someone is trying to publish). The result is `v5.5.1_build2`,
+`v5.5.1_build1`, `v5.4.7_release`, and `latest: v5.5.1_build2` — which is
+what upstream says, rather than what the tag list happens to contain.
+
+The thin-index problem was real and is fixed: the script emitted no
+`version` and no `assets[].sha256`, so uploading its output would have
+cost the Lab its cross-check, which compares the index's claimed checksum
+against `SHA256SUMS.txt` and refuses a build where the two disagree. One
+source cannot disagree with itself. `test/fixtures/releases-built.json` is
+a verbatim capture of a real run, pinning that shape the way the published
+index's already was.
+
+**The published mirror is behind, and no change here fixes it.** The live
+index is stamped `2026-08-08T04:01Z`; `v5.5.1_build2` was published at
+`09:44Z` the same day. So the mirror does not carry the build its own
+changelog marks `latest` and `mirror: true`. Regenerating it does.
 
 ### The kernel moved off the main thread ✅ done
 
@@ -1402,12 +1413,12 @@ Lab cannot do that today, and the blocker is in the artifact rather than
 here.** Every published `libdiluvium_wasi.wasm` was downloaded and probed
 rather than reasoned about, and the answer differs by build:
 
-| build | `dv_*` | `dvs_*` | `queue` / `endpoint` / `msgpack` |
-|---|---|---|---|
-| `v5.4.7_release` | — | — | — |
-| `v5.5.1_build1` (pinned) | — | — | — |
-| `v5.5.1_build2` | — | — | — |
-| `v5.5.1_build3` | **all 27** | — | **all three** |
+| build | `dv_*` | `dvs_*` | `queue` / `endpoint` / `msgpack` | bytecode format |
+|---|---|---|---|---|
+| `v5.4.7_release` | — | — | — | `0x44` |
+| `v5.5.1_build1` | — | — | — | `0x44` |
+| `v5.5.1_build2` (pinned) | — | — | — | `0x45` |
+| `v5.5.1_build3` | **all 27** | — | **all three** | `0x46` |
 
 `build3` exports the whole instance ABI — `dv_new`, `dv_load`, `dv_run`,
 `dv_resume`, `dv_snapshot`, `dv_restore`, the `dv_queue_*` and
@@ -1418,10 +1429,20 @@ run in an ordinary `run_lua` state; only the blocking `queue.wait` needs a
 host that resumes, which a bare state is not.
 
 **An earlier draft of this section said the guest messaging libraries were
-absent. That was true of the pinned build and false of `build3`**, and the
-difference is the whole reason to switch: on `build3` a notebook can
-declare `system/events`, push §9.2-shaped records and drain them, so the
-event view has a real producer rather than hand-written samples.
+absent. That was true of `build1` and `build2` and false of `build3`.** On
+`build3` a notebook can declare `system/events`, push §9.2-shaped records
+and drain them, so the event view has a real producer rather than
+hand-written samples.
+
+**That is not a reason to pin it, and an earlier draft of this file said
+it was.** `build3` is a prerelease — not for being unfinished, but
+because its *supported configuration* is narrower than what it ships:
+hibernation is off and should stay off, and the capability layer is a
+structuring device rather than a security boundary while `debug` is
+available to guests. `changelog.json` marks it `stable: false` and
+`mirror: false`, and its notes say `latest` stays on `build2` for exactly
+that reason. Pinning it as the Lab's default would ship every reader on a
+build upstream tells you to name deliberately.
 
 What is still missing everywhere is `dvs_*`. `src/onelua.c` in the
 Diluvium tree includes `dqueue.c`, `dendpoint.c`, `dmsgpack.c` and `dv.c`
@@ -1524,3 +1545,92 @@ does nothing is a worse lie than one that says it is not connected.
   through it would have resolved with every `stream` and `display_data`
   lost. Both streaming methods go through `_streaming` instead, which is
   the shape `execute` already had and now has a name.
+
+### Pinned to 5.5.1_build2, and what the move found ✅ done
+
+The Lab ran on `5.5.1_build1` since Stage 2. `build2` is a **security
+release** for that build — secure (`~`) functions did not hide string
+constants that ordinary code in the same chunk also used, so a shared
+literal was stored in the dump in the clear. Only the 5.5 line is
+affected, because it depends on 5.5's saved-string table. That is reason
+enough on its own; `build2` is also what `changelog.json` marks `latest`.
+
+**Not `build3`**, for the reasons in the swarm section above: prerelease,
+not mirrored, supported configuration narrower than its feature set. It
+remains one command away for anyone who wants its queues —
+`DILUVIUM_RELEASE_BASE=…/releases/download scripts/fetch-runtime.sh
+v5.5.1_build3` — and `scripts/fetch-runtime.sh` now says so in its header
+instead of claiming that only `v5.4.7_release` attaches the kernel to its
+GitHub release, which stopped being true three builds ago.
+
+#### The bytecode format is a generation counter, not a constant
+
+This is what the move actually cost, and it was worth finding. `build2`
+bumped `LUAC_FORMAT` from `0x44` to `0x45`; `build3` bumped it again to
+`0x46`. The reader hardcoded `0x44` in three places and broke in eleven
+tests with `string index 12 has not been seen yet` — a parse that had gone
+off the rails several fields earlier.
+
+Two changes, re-derived from `ldump.c` and `lundump.c` at each tag:
+
+- **`0x45`: a written string's size field carries a scramble flag in its
+  low bit.** The field went from `realLength + 1` to
+  `(realLength + 1) * 2 + scrambled`. It had to: 5.5 stores a deduped
+  string once, at whichever site wrote it first, and that site is not
+  always the secure one — so "scramble by position in the proto tree"
+  stored shared literals in the clear. That *is* the security fix.
+- **`0x46`: the scramble became a keystream.** xorshift32 seeded from the
+  block's own length, taking the top byte of each step. Still trivially
+  reversible and deliberately so; what it stops is one `tr` pass over the
+  whole file recovering every hidden string at once.
+
+The second one is why `DILUVIUM_FORMATS` refuses an unknown format
+outright rather than parsing hopefully. `0x46` moved **no bytes at all** —
+a chunk written under a different keystream parses perfectly and decodes
+to garbage silently, which is the one failure mode a bytecode reader must
+not have. Upstream's own header comment makes the same point: bump this
+whenever the layout *or the encoding* changes.
+
+One consequence worth stating because it was a latent bug rather than a
+new one: a scrambled code section is now read as **one block** and
+unscrambled whole, then split into words. It used to be unscrambled four
+bytes at a time, which a constant key made equivalent and a
+length-seeded keystream does not.
+
+The committed `0x44` fixtures still pass unchanged, which is the point of
+having them: the reader gained two generations without losing one.
+
+#### A hardcoded version string, in the place least likely to be looked at
+
+`src/app.js` passed `pinnedLabel: options.pinnedLabel ?? '5.5.1_build1'`,
+and nothing ever passed the option. So the dropdown labelled the bundled
+runtime `5.5.1_build1` **whatever was actually in `vendor/`** — and
+because `entries()` filters the mirror's copy of the pinned build by
+comparing against that same string, the mirror's real `build1` would have
+been offered a second time as though it were something else. Every other
+use of `BUNDLED` in that file was already right; this one predated the
+import. It reads `BUNDLED.version` now.
+
+The same shape as the mirror's stale tag list and the stale module graph
+before it: a fact written down in two places, where only one of them is
+ever updated. `scripts/check-version.mjs` keeps four copies of the *Lab's*
+version in step for exactly this reason; the pinned runtime's version now
+has one copy and needs no such machinery.
+
+#### Two tests were pinned to the pin
+
+Both failed on the re-pin and neither was about the runtime, which is
+worth recording because the fix is "isolate", not "update the number":
+
+- `the dropdown is newest first` stubbed a mirror containing
+  `v5.5.1_build2`. The moment that became the bundled build, the registry
+  correctly filtered it out and an ordering test failed looking like a
+  sorting bug. Its `_buildN` pair moved to `5.5.2`, a version line that
+  cannot be the pin, and `build10` against `build2` still makes the
+  lexical-versus-numeric point it exists for.
+- `the bundled build is not offered twice` asserted against the captured
+  live index, which predates `build2` and so can no longer demonstrate the
+  filter at all. It now asserts what that capture can honestly show —
+  including that the published mirror is behind — and the filter is
+  exercised against `releases-built.json`, which does carry the pinned
+  build.

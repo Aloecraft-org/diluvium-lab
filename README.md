@@ -147,7 +147,17 @@ events{
 From **5.5.1_build3** onward the browser kernel ships `queue`, `endpoint`
 and `msgpack`, so those records need not be hand-written: a program can
 push them into an actual `system/events` queue and drain it, which is the
-queue a swarm writes to. Switch runtimes with the dropdown to try it.
+queue a swarm writes to.
+
+`build3` is **not** on the mirror and so is not in the dropdown — it is a
+prerelease whose supported configuration is narrower than the feature set
+it ships, and its own notes say the mirror does not carry it. To try it,
+pin it explicitly:
+
+```sh
+DILUVIUM_RELEASE_BASE=https://github.com/Aloecraft-org/diluvium/releases/download \
+  scripts/fetch-runtime.sh v5.5.1_build3
+```
 
 That is still not a swarm. Nothing spawns anything, because `dvs.c` is
 absent from every published artifact — so there is no supervisor, no

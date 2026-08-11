@@ -1,7 +1,22 @@
 {
   "schema": 1,
   "repo": "Aloecraft-org/diluvium",
+  "latest": "v5.5.1_build2",
   "releases": [
+    {
+      "tag": "v5.5.1_build2",
+      "name": "Diluvium 5.5.1_build2",
+      "version": "5.5.1_build2",
+      "published_at": "2026-08-08T09:44:34Z",
+      "prerelease": false,
+      "sums": "SHA256SUMS.txt",
+      "assets": [
+        {
+          "name": "libdiluvium_wasi.wasm",
+          "sha256": "053599d5b6d4ab50f5ec0adb54d9166fedb1d474b2dcde26d78ae54551561292"
+        }
+      ]
+    },
     {
       "tag": "v5.5.1_build1",
       "name": "Diluvium 5.5.1_build1",
@@ -17,28 +32,33 @@
       ]
     },
     {
-      "tag": "v5.5.1_build3",
-      "name": "Diluvium 5.5.1_build3",
-      "version": "5.5.1_build3",
-      "published_at": "2026-08-11T00:15:48Z",
+      "tag": "v5.4.7_release",
+      "name": "Diluvium 5.4.7",
+      "version": "5.4.7",
+      "published_at": "2026-08-05T22:53:34Z",
       "prerelease": false,
       "sums": "SHA256SUMS.txt",
       "assets": [
         {
           "name": "libdiluvium_wasi.wasm",
-          "sha256": "e4f75f1fa391fa595d071cae64dbb731f3ca841cfe3ccecab8668bdaac23efca"
+          "sha256": "c3da069ea47704d598291187296112969bab89253c10a2bb01bb04784ff047eb"
         }
       ]
     }
   ],
   "_comment": [
-    "Verbatim output of scripts/build-mirror.sh, captured 2026-08-11 by running",
-    "it against the real repository with two tags. The other producer of this",
-    "file -- the publishing job on diluvium.aloecraft.org -- is captured in",
-    "releases-mirror.json, and the Lab has to read both.",
+    "Verbatim output of scripts/build-mirror.sh, captured 2026-08-11 against the",
+    "real repository. The other producer of this file -- the publishing job on",
+    "diluvium.aloecraft.org -- is captured in releases-mirror.json, and the Lab",
+    "has to read both.",
     "",
-    "This exists because the script used to carry a hardcoded tag list and",
-    "silently mirrored two releases out of four. The list is gone; what pins",
-    "the *shape* it emits is here."
+    "This exists because the script decided the tag set itself, twice, and was",
+    "wrong both times: first a hardcoded list that went stale, then discovery",
+    "plus a name-based prerelease guess that mirrored v5.5.1_build3 -- which",
+    "upstream's own notes exclude. The set now comes from `mirror_tags` in the",
+    "Diluvium repository's changelog.json, and this pins the shape that reads.",
+    "",
+    "Note this carries the *pinned* build (build2), which is what lets the",
+    "not-offered-twice test exercise the filter at all."
   ]
 }
