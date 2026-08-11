@@ -10,7 +10,7 @@
      is otherwise a silent failure: stale modules do not throw, they just
      quietly lack the newer half of the page. scripts/check-version.mjs
      keeps this in step with package.json and src/version.js. -->
-<meta name="diluvium-lab-build" content="0.6.0">
+<meta name="diluvium-lab-build" content="0.6.1">
 <script>
 /* Deliberately NOT a module, and deliberately in this file.
  *
@@ -24,7 +24,7 @@
  * So this runs with no imports, no dependencies, and no assumptions about
  * anything else having worked. */
 (function () {
-  var EXPECTED = '0.6.0';   // kept in step by scripts/check-version.mjs
+  var EXPECTED = '0.6.1';   // kept in step by scripts/check-version.mjs
   window.DILUVIUM_LAB_EXPECTED = EXPECTED;
 
   function show(title, detail) {
@@ -850,40 +850,40 @@
 <script type="importmap">
 {
   "imports": {
-    "./src/analysis/disasm.js": "./src/analysis/disasm.js?v=0.6.0",
-    "./src/analysis/luac.js": "./src/analysis/luac.js?v=0.6.0",
-    "./src/analysis/opcodes.js": "./src/analysis/opcodes.js?v=0.6.0",
-    "./src/app.js": "./src/app.js?v=0.6.0",
-    "./src/kernel/digest.js": "./src/kernel/digest.js?v=0.6.0",
-    "./src/kernel/instance.js": "./src/kernel/instance.js?v=0.6.0",
-    "./src/kernel/kernel.js": "./src/kernel/kernel.js?v=0.6.0",
-    "./src/kernel/lua-harness.js": "./src/kernel/lua-harness.js?v=0.6.0",
-    "./src/kernel/protocol.js": "./src/kernel/protocol.js?v=0.6.0",
-    "./src/kernel/releases.js": "./src/kernel/releases.js?v=0.6.0",
-    "./src/kernel/runtimes.js": "./src/kernel/runtimes.js?v=0.6.0",
-    "./src/kernel/wasi.js": "./src/kernel/wasi.js?v=0.6.0",
-    "./src/kernel/wasm-kernel.js": "./src/kernel/wasm-kernel.js?v=0.6.0",
-    "./src/kernel/worker-kernel.js": "./src/kernel/worker-kernel.js?v=0.6.0",
-    "./src/notebook/bytecode-view.js": "./src/notebook/bytecode-view.js?v=0.6.0",
-    "./src/notebook/completion.js": "./src/notebook/completion.js?v=0.6.0",
-    "./src/notebook/console.js": "./src/notebook/console.js?v=0.6.0",
-    "./src/notebook/display.js": "./src/notebook/display.js?v=0.6.0",
-    "./src/notebook/dom.js": "./src/notebook/dom.js?v=0.6.0",
-    "./src/notebook/editing.js": "./src/notebook/editing.js?v=0.6.0",
-    "./src/notebook/editor.js": "./src/notebook/editor.js?v=0.6.0",
-    "./src/notebook/escape.js": "./src/notebook/escape.js?v=0.6.0",
-    "./src/notebook/highlight.js": "./src/notebook/highlight.js?v=0.6.0",
-    "./src/notebook/hints.js": "./src/notebook/hints.js?v=0.6.0",
-    "./src/notebook/ipynb.js": "./src/notebook/ipynb.js?v=0.6.0",
-    "./src/notebook/markdown.js": "./src/notebook/markdown.js?v=0.6.0",
-    "./src/notebook/model.js": "./src/notebook/model.js?v=0.6.0",
-    "./src/notebook/plot.js": "./src/notebook/plot.js?v=0.6.0",
-    "./src/notebook/remote.js": "./src/notebook/remote.js?v=0.6.0",
-    "./src/notebook/sandbox-view.js": "./src/notebook/sandbox-view.js?v=0.6.0",
-    "./src/notebook/storage.js": "./src/notebook/storage.js?v=0.6.0",
-    "./src/notebook/ui.js": "./src/notebook/ui.js?v=0.6.0",
-    "./src/version.js": "./src/version.js?v=0.6.0",
-    "./vendor/pinned.js": "./vendor/pinned.js?v=0.6.0"
+    "./src/analysis/disasm.js": "./src/analysis/disasm.js?v=0.6.1",
+    "./src/analysis/luac.js": "./src/analysis/luac.js?v=0.6.1",
+    "./src/analysis/opcodes.js": "./src/analysis/opcodes.js?v=0.6.1",
+    "./src/app.js": "./src/app.js?v=0.6.1",
+    "./src/kernel/digest.js": "./src/kernel/digest.js?v=0.6.1",
+    "./src/kernel/instance.js": "./src/kernel/instance.js?v=0.6.1",
+    "./src/kernel/kernel.js": "./src/kernel/kernel.js?v=0.6.1",
+    "./src/kernel/lua-harness.js": "./src/kernel/lua-harness.js?v=0.6.1",
+    "./src/kernel/protocol.js": "./src/kernel/protocol.js?v=0.6.1",
+    "./src/kernel/releases.js": "./src/kernel/releases.js?v=0.6.1",
+    "./src/kernel/runtimes.js": "./src/kernel/runtimes.js?v=0.6.1",
+    "./src/kernel/wasi.js": "./src/kernel/wasi.js?v=0.6.1",
+    "./src/kernel/wasm-kernel.js": "./src/kernel/wasm-kernel.js?v=0.6.1",
+    "./src/kernel/worker-kernel.js": "./src/kernel/worker-kernel.js?v=0.6.1",
+    "./src/notebook/bytecode-view.js": "./src/notebook/bytecode-view.js?v=0.6.1",
+    "./src/notebook/completion.js": "./src/notebook/completion.js?v=0.6.1",
+    "./src/notebook/console.js": "./src/notebook/console.js?v=0.6.1",
+    "./src/notebook/display.js": "./src/notebook/display.js?v=0.6.1",
+    "./src/notebook/dom.js": "./src/notebook/dom.js?v=0.6.1",
+    "./src/notebook/editing.js": "./src/notebook/editing.js?v=0.6.1",
+    "./src/notebook/editor.js": "./src/notebook/editor.js?v=0.6.1",
+    "./src/notebook/escape.js": "./src/notebook/escape.js?v=0.6.1",
+    "./src/notebook/highlight.js": "./src/notebook/highlight.js?v=0.6.1",
+    "./src/notebook/hints.js": "./src/notebook/hints.js?v=0.6.1",
+    "./src/notebook/ipynb.js": "./src/notebook/ipynb.js?v=0.6.1",
+    "./src/notebook/markdown.js": "./src/notebook/markdown.js?v=0.6.1",
+    "./src/notebook/model.js": "./src/notebook/model.js?v=0.6.1",
+    "./src/notebook/plot.js": "./src/notebook/plot.js?v=0.6.1",
+    "./src/notebook/remote.js": "./src/notebook/remote.js?v=0.6.1",
+    "./src/notebook/sandbox-view.js": "./src/notebook/sandbox-view.js?v=0.6.1",
+    "./src/notebook/storage.js": "./src/notebook/storage.js?v=0.6.1",
+    "./src/notebook/ui.js": "./src/notebook/ui.js?v=0.6.1",
+    "./src/version.js": "./src/version.js?v=0.6.1",
+    "./vendor/pinned.js": "./vendor/pinned.js?v=0.6.1"
   }
 }
 </script>

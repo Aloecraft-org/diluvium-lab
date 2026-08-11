@@ -1854,3 +1854,100 @@ notebook does not carry an empty title around forever — and the label says
 "Untitled notebook" in a quieter style rather than leaving a gap nobody
 would think to click. Recents show the notebook's name in preference to
 its filename, because a list of five `notebook.ipynb`s is not a list.
+
+### What the polish branch was holding ✅ reviewed and folded in
+
+`claude/diluvium-lab-polish-4dr00q` looked eighteen commits ahead of
+`main`. It was one: everything else had already been merged, and the
+appearance came from a stale local `main` ref. The one commit,
+`db30c62`, changed `ROADMAP.md` and a lockfile line — **no code at all.**
+
+What it holds is a 329-line plan (its §9) for the polishing pass, written
+*ahead* of the work with six probes run against the real page first. Most
+of it has since been built, mostly without anyone reading it. That is
+worth recording rather than deleting, because the parts that agree agree
+for a reason and the parts that differ were decided twice.
+
+#### Where it and the implementation independently agreed
+
+Every one of these was in that plan and is now in the tree, arrived at
+separately:
+
+- `parseRecord` → `parseRecords`, scanning every nonce rather than the
+  first — named as "a parser change rather than a protocol".
+- `RECORD.DISPLAY = 'D'` carrying a mime bundle, published as Jupyter's
+  `display_data`. Same letter.
+- **Conflate, never queue** for drag samples. The plan measured it: 120
+  queued samples cost 65 ms and burned 120 execution counts; conflated,
+  2 ms.
+- **Widget events are not history** — no execution count, output to the
+  control's own area.
+- **A stop kills every widget**, and they must say so rather than imply a
+  liveness the kernel cannot deliver.
+- **Every payload on this channel must be text.** The plan measured why:
+  256 byte values written to stdout come back as 128 replacement
+  characters, because the shim decodes UTF-8.
+- Cell metadata round-trip, and folding through
+  `metadata.jupyter.source_hidden` rather than an invented key.
+- Selection, run state and `stale`.
+
+#### Where they differ, and which won
+
+- **The Lua API.** The plan proposed one `lab` table (`lab.svg`,
+  `lab.html`, `lab.png`, `lab.show`); the tree has four globals
+  (`display`, `plot`, `events`, `widget`). Four names against one is the
+  cost; discoverability in completion and `plot.line{...}` reading like
+  a verb is the gain. Not worth churning now, but the plan's version is
+  the tidier one and is worth remembering if a fifth ever wants adding.
+- **Markup.** The plan said `text/html` and SVG render in a sandboxed
+  `<iframe srcdoc>` with scripts disallowed. The tree is *stricter*:
+  `text/html` is not accepted at all, and SVG goes through an allowlist
+  sanitiser. Same rule, less surface. The plan's reasoning is the better
+  statement of *why*, and is quoted here because it is the sharpest
+  version of it: **saved outputs render on open, before anything runs** —
+  a notebook you were sent could carry a payload that executes the moment
+  the file is opened, with no cell run and no consent.
+
+#### The one item it predicted that was still broken
+
+> the display channel needs its own budget accounting rather than sharing
+> the output cap silently
+
+It did share it, and the failure was worse than "the chart does not
+appear". A cell plotting 300,000 points overran the 4 MiB stdout ceiling,
+which cut the harness's own terminal record in half — so the run reported
+**`HarnessError`**, a name this code reserves for *its own* bugs, with the
+truncated stdout pasted into the message: raw nonce, separator bytes and
+all, over the top of whatever the cell had legitimately printed.
+
+Fixed. `parseRecords` now reports that it stopped mid-record and drops the
+fragment rather than leaving it in `output` — nothing but the ceiling can
+produce a nonce followed by a broken frame — and the kernel reports
+`OutputTooLarge` with the ceiling, the fact that a chart counts against
+it, and what to do instead.
+
+#### Still open, and still worth doing
+
+- **Canvas as draw commands, not pixels.** Measured: a 640×480 RGBA
+  framebuffer built per-pixel in Lua and base64'd costs **365 ms a frame**
+  (~2.7 fps); 160×120 reaches ~13 fps. So the canvas path is a display
+  list the page replays, not a buffer. Pixel buffers stay fine for a
+  *static* image. The escape hatch if per-frame pixels are ever genuinely
+  needed: stop using stdout — `memory` is exported, so a host can read a
+  framebuffer straight out of linear memory and skip both encode and
+  decode.
+- **Completion is still an alphabetical `_G` walk**, so `a` offers `arg`
+  before `assert`. Rank by relevance, show the kind beside each match,
+  match subsequences. Presentation only; the kernel already reports its
+  globals and keywords.
+- **Toolbar grouping and a collapsible, resizable console.** The toolbar
+  has grown since that was written, which strengthens the case.
+- **`executeRequest` still declares `silent` and `store_history` with
+  nothing behind them.** The plan wanted them for widget events; the tree
+  answered with a separate `callWidget` instead, which is the better
+  shape. They are dead fields now and should be removed or wired.
+
+The useful numbers, kept because nobody will re-measure them: a trivial
+execute round-trips through the worker in **0.96 ms** median, a stored
+closure call in **1.07 ms**, an SVG chart of 10,000 points builds in
+**22 ms**, and stdout moves 1 MB in 27 ms.

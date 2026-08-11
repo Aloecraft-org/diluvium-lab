@@ -862,22 +862,27 @@ export function parseRecords(stdout, nonce) {
   const pieces = [];
   const records = [];
   let at = 0;
+  let cut = false;
 
   for (;;) {
     const found = stdout.indexOf(nonce, at);
     if (found === -1) break;
 
     const rest = stdout.slice(found + nonce.length);
-    if (!rest.startsWith(SEP)) break;
+    // A record that does not parse is one the output cap cut short --
+    // nothing else can produce a nonce followed by a broken frame. Report
+    // it as such and drop the fragment: leaving it in `output` put the
+    // raw nonce and separator bytes on the page, which is gibberish over
+    // the top of whatever the cell had legitimately printed.
+    const short = (n) => { cut = true; at = found; return n; };
+    if (!rest.startsWith(SEP)) { short(); break; }
     const kindEnd = rest.indexOf(SEP, 1);
-    if (kindEnd === -1) break;
+    if (kindEnd === -1) { short(); break; }
     const lenEnd = rest.indexOf(SEP, kindEnd + 1);
-    if (lenEnd === -1) break;
+    if (lenEnd === -1) { short(); break; }
     const length = Number.parseInt(rest.slice(kindEnd + 1, lenEnd), 10);
-    if (!Number.isInteger(length) || length < 0) break;
-    // A payload the output cap cut short is not a record. Stopping here
-    // leaves the bytes in `output`, where they are at least visible.
-    if (rest.length < lenEnd + 1 + length) break;
+    if (!Number.isInteger(length) || length < 0) { short(); break; }
+    if (rest.length < lenEnd + 1 + length) { short(); break; }
 
     if (found > at) pieces.push({ type: 'output', text: stdout.slice(at, found) });
     const record = { kind: rest.slice(1, kindEnd), payload: rest.slice(lenEnd + 1, lenEnd + 1 + length) };
@@ -886,9 +891,11 @@ export function parseRecords(stdout, nonce) {
     at = found + nonce.length + lenEnd + 1 + length;
   }
 
-  if (at < stdout.length) pieces.push({ type: 'output', text: stdout.slice(at) });
+  // Everything from a cut record onward is a fragment of framing, not
+  // output, so it is dropped rather than shown.
+  if (!cut && at < stdout.length) pieces.push({ type: 'output', text: stdout.slice(at) });
   const output = pieces.filter((p) => p.type === 'output').map((p) => p.text).join('');
-  return { output, records, pieces };
+  return { output, records, pieces, cut };
 }
 
 /**

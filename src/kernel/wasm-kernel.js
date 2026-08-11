@@ -7,7 +7,7 @@
 
 import { Kernel, STATUS } from './kernel.js';
 import { instanceCapable, runInstance } from './instance.js';
-import { createWasi, unshimmedImports } from './wasi.js';
+import { createWasi, unshimmedImports, HARD_MAX_BYTES } from './wasi.js';
 import {
   RECORD, KEYWORD_CANDIDATES, makeNonce, executeChunk, isCompleteChunk,
   completeChunk, languageInfoChunk, dumpChunk, widgetChunk, luaLiteral,
@@ -226,7 +226,7 @@ export class WasmKernel extends Kernel {
    */
   _runInterleaved(source, nonce) {
     const raw = this._runRaw(source);
-    const { pieces } = parseRecords(raw.stdout, nonce);
+    const { pieces, cut } = parseRecords(raw.stdout, nonce);
     const messages = [];
     let output = '';
     let record = null;
@@ -240,7 +240,7 @@ export class WasmKernel extends Kernel {
         record = piece;
       }
     }
-    return { ...raw, messages, output, record };
+    return { ...raw, messages, output, record, cut };
   }
 
   /** A trap or a proc_exit leaves the instance unusable. Say so, once. */
@@ -293,9 +293,23 @@ export class WasmKernel extends Kernel {
     this._setStatus(STATUS.IDLE);
 
     if (!run.record) {
-      // The harness never reported. That is a bug in this file rather than
-      // in the user's code, so surface whatever the kernel did say instead
-      // of inventing a tidier story.
+      // Two different failures wore the same name. A cell that printed
+      // past the kernel's output ceiling is not a bug in this file: the
+      // harness's own record was cut off with everything else, and the
+      // old message pasted the truncated stdout -- nonce, separators and
+      // all -- into an error headed `HarnessError`, which reads as an
+      // internal fault for what is really "that was too much output".
+      //
+      // `cut` says the stream stopped mid-record, which nothing but the
+      // ceiling can cause.
+      if (run.cut || run.truncated) {
+        const evalue = 'this cell produced more output than the kernel will record, '
+          + `so its result was lost. The ceiling is ${(HARD_MAX_BYTES / 1024 / 1024).toFixed(0)} MB `
+          + 'of output per cell, and a chart or an image counts against it -- '
+          + 'plot fewer points, or print less alongside it.';
+        onMessage(errorMsg('OutputTooLarge', evalue, []));
+        return executeReply('error', count, { ename: 'OutputTooLarge', evalue, traceback: [] });
+      }
       const evalue = run.output.trim() || `run_lua returned ${run.status} without reporting`;
       onMessage(errorMsg('HarnessError', evalue, []));
       return executeReply('error', count, { ename: 'HarnessError', evalue, traceback: [] });

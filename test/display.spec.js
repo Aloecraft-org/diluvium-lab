@@ -324,6 +324,32 @@ test.describe('a notebook is untrusted input', () => {
   });
 });
 
+test.describe('a display too large for the output ceiling', () => {
+  test('says so, instead of leaking the framing onto the page', async ({ page }) => {
+    test.slow();
+    await openLab(page);
+    // The display channel shares the kernel's 4 MB output ceiling, and a
+    // chart counts against it. When the cap cuts a record in half the
+    // harness's own terminal record goes with it -- which used to surface
+    // as `HarnessError` (reserved for *our* bugs) with the truncated
+    // stdout pasted in, nonce and separator bytes and all, over the top of
+    // whatever the cell had legitimately printed.
+    await run(page, [
+      'local ys = {}',
+      'for i = 1, 300000 do ys[i] = i * 1.0000001 end',
+      'plot.line(ys)',
+    ].join('\n'));
+
+    const shown = await codeCell(page).locator('.outputs').textContent();
+    expect(shown).not.toContain('HarnessError');
+    // The record framing is internal and must never reach a reader.
+    expect(shown).not.toMatch(/DL[0-9a-f]{16}/);
+    await expect(codeCell(page).locator('[data-error-name]')).toContainText('OutputTooLarge');
+    // And it says what to do about it, which "harness error" did not.
+    await expect(codeCell(page).locator('[data-error-name]')).toContainText('plot fewer points');
+  });
+});
+
 test.describe('the API does not take over the program', () => {
   test('a program that wants its own `plot` keeps it', async ({ page }) => {
     await openLab(page);
