@@ -128,6 +128,11 @@ export function toIpynb(model, metadata = {}) {
       };
     }),
     metadata: {
+      // The notebook's own metadata first, so anything it arrived with --
+      // a title, Colab's settings, a widget state -- leaves with it. The
+      // Lab's kernelspec then overrides, because whatever produced this
+      // file, *this* is what ran it.
+      ...(model.metadata ?? {}),
       kernelspec: { display_name: 'Diluvium', language: 'lua', name: 'diluvium' },
       language_info: { name: 'lua', file_extension: '.lua' },
       ...metadata,
@@ -163,7 +168,12 @@ export function fromIpynb(json) {
     return cell;
   });
 
-  return new NotebookModel(cells);
+  // Carried through rather than discarded. This used to build a model with
+  // no metadata at all, so every notebook opened here was quietly stripped
+  // of its notebook-level fields on the way back out.
+  const metadata = (doc.metadata && typeof doc.metadata === 'object' && !Array.isArray(doc.metadata))
+    ? doc.metadata : {};
+  return new NotebookModel(cells, metadata);
 }
 
 function parseJson(text) {

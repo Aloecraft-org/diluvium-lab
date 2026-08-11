@@ -204,6 +204,19 @@ display{ ["text/plain"] = "a red circle",
 
 `notebooks/showing-things.ipynb` is all of the above, runnable.
 
+## Naming a notebook
+
+The name at the top of the page is the notebook's, and it is **not** its
+filename. Click it to rename, Enter to keep, Escape to discard.
+
+It is stored in the notebook's own `metadata.title`, so it survives a
+save, a reopen, and any tool that preserves notebook metadata. nbformat
+has no standard field for this — Jupyter uses the filename and has nothing
+else — and a notebook from Colab arrives with the name it had there, read
+from `metadata.colab.name`.
+
+The filename stays what it was, and is what **Save .ipynb** writes.
+
 ## Opening a notebook
 
 **Open…** takes a file. **From URL…** takes a URL:

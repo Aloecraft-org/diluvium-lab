@@ -6,6 +6,9 @@
 
 let nextId = 0;
 
+/** Long enough for a sentence, short enough to render in a toolbar. */
+export const MAX_TITLE = 120;
+
 export function newCell(cellType = 'code', source = '') {
   nextId += 1;
   return {
@@ -28,9 +31,53 @@ export function newCell(cellType = 'code', source = '') {
 }
 
 export class NotebookModel {
-  constructor(cells) {
+  constructor(cells, metadata = {}) {
     this.cells = cells && cells.length ? cells : [newCell('code')];
+    // Notebook-level metadata, carried whole. `fromIpynb` used to drop it
+    // on the floor -- so a notebook that arrived from Colab or JupyterLab
+    // with settings, a widget state or an authorship block left without
+    // them. The title below lives here, which is what makes it survive a
+    // save and a reopen.
+    this.metadata = (metadata && typeof metadata === 'object' && !Array.isArray(metadata))
+      ? metadata : {};
     this._listeners = new Set();
+  }
+
+  /**
+   * What this notebook is called, as distinct from what it is saved as.
+   *
+   * nbformat has no standard field for it -- Jupyter uses the filename and
+   * has nothing else -- so `metadata.title` is the Lab's, and Colab's
+   * `metadata.colab.name` is read as a fallback so a notebook from there
+   * arrives with the name it had. Empty means untitled, which the page
+   * shows as a placeholder rather than as an empty gap.
+   */
+  get title() {
+    const own = this.metadata?.title;
+    if (typeof own === 'string' && own.trim()) return own.trim();
+    const colab = this.metadata?.colab?.name;
+    if (typeof colab === 'string' && colab.trim()) return colab.trim().replace(/\.ipynb$/i, '');
+    return '';
+  }
+
+  /**
+   * Rename it. An empty string clears the title rather than storing one,
+   * so an untitled notebook does not carry `"title": ""` around forever.
+   */
+  setTitle(title) {
+    const next = String(title ?? '').trim().slice(0, MAX_TITLE);
+    if (next === this.title) return false;
+    this.metadata = { ...this.metadata };
+    if (next) this.metadata.title = next;
+    else delete this.metadata.title;
+    // Colab's copy would otherwise win on the next read and silently undo
+    // a rename of a notebook that came from there.
+    if (this.metadata.colab?.name) {
+      this.metadata.colab = { ...this.metadata.colab };
+      delete this.metadata.colab.name;
+    }
+    this._emit('title');
+    return true;
   }
 
   /**

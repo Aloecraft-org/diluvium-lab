@@ -95,6 +95,8 @@ export class App {
     this.backendNode = document_.querySelector('[data-kernel-backend]');
     this.toastNode = document_.querySelector('[data-toast]');
     this.filenameNode = document_.querySelector('[data-filename]');
+    this.titleNode = document_.querySelector('[data-nb-title]');
+    this.titleInput = document_.querySelector('[data-nb-title-input]');
 
     // Filled in from the running kernel once it starts. Until then the
     // highlighter falls back to stock Lua 5.4, which is what 5.4.7 is.
@@ -126,6 +128,7 @@ export class App {
     this._watchKernel();
 
     this._bindToolbar();
+    this._bindTitle();
     this._bindModel();
     this._bindLifecycle();
   }
@@ -418,6 +421,7 @@ export class App {
     this.view.setModel(model);
     this._bindModel();
     this._renderFilename();
+    this._renderTitle();
   }
 
   _bindModel() {
@@ -425,11 +429,14 @@ export class App {
     this._unbindModel = this.model.onChange((change) => {
       if (change.type === 'structure') this.view.render();
       else if (change.type === 'outputs') this.view.updateOutputs(change.cellId);
+      else if (change.type === 'title') this._renderTitle();
       this._scheduleAutosave();
     });
   }
 
   _scheduleAutosave() {
+    // The title rides inside the ipynb's own metadata rather than beside
+    // it, so there is one copy and a restore cannot disagree with a save.
     this.autosave.schedule({ ipynb: toIpynb(this.model), filename: this.filename, savedAt: Date.now() });
   }
 
@@ -678,7 +685,9 @@ export class App {
     this._scheduleAutosave();
     if (origin === 'file') this._toast(`Opened ${this.filename}`);
     try {
-      await rememberRecent({ name: this.filename, origin, url, ipynb: toIpynb(model) });
+      await rememberRecent({
+        name: this.filename, title: model.title, origin, url, ipynb: toIpynb(model),
+      });
     } catch { /* a full or blocked database is not a failure to open */ }
     return model;
   }
@@ -760,7 +769,9 @@ export class App {
 
       const name = this.document.createElement('span');
       name.className = 'recent-name';
-      name.textContent = entry.name;
+      // The notebook's own name when it has one; the filename otherwise.
+      // A list of five `notebook.ipynb`s is not a list.
+      name.textContent = entry.title || entry.name;
       const where = this.document.createElement('span');
       where.className = 'recent-where';
       where.textContent = entry.url ?? (entry.origin === 'file' ? 'opened from a file' : entry.source);
@@ -798,6 +809,64 @@ export class App {
     }
     if (entry.url) { await this.openUrl(entry.url); return; }
     this._toast(`${entry.name} was too large to keep a copy of, and it came from a file.`, 'error');
+  }
+
+  // --- the notebook's name ------------------------------------------
+
+  /**
+   * Paint the name, and the document title with it.
+   *
+   * The tab is worth updating too: someone with four Labs open is choosing
+   * between them by their tab titles, and "Diluvium Lab" four times is no
+   * choice at all.
+   */
+  _renderTitle() {
+    const title = this.model.title;
+    if (this.titleNode) {
+      this.titleNode.textContent = title || 'Untitled notebook';
+      this.titleNode.dataset.untitled = title ? 'false' : 'true';
+    }
+    const base = 'Diluvium Lab';
+    this.document.title = title ? `${title} — ${base}` : base;
+  }
+
+  /**
+   * Swap the label for a field, Colab-style.
+   *
+   * A button that becomes an input rather than a `contenteditable`:
+   * contenteditable accepts *pasted markup*, and the rule in this codebase
+   * is that nothing reaches the DOM as markup. It also gets focus, Enter
+   * and Escape for free, which contenteditable does not.
+   */
+  _beginRename() {
+    if (!this.titleNode || !this.titleInput || !this.titleInput.hidden) return;
+    this.titleInput.value = this.model.title;
+    this.titleNode.hidden = true;
+    this.titleInput.hidden = false;
+    this.titleInput.focus();
+    this.titleInput.select();
+  }
+
+  _endRename(commit) {
+    if (!this.titleInput || this.titleInput.hidden) return;
+    const next = this.titleInput.value;
+    this.titleInput.hidden = true;
+    if (this.titleNode) this.titleNode.hidden = false;
+    if (!commit) return;
+    // Only autosave when something actually changed: `setTitle` reports
+    // that, so pressing Enter on an unchanged name writes nothing.
+    if (this.model.setTitle(next)) this._scheduleAutosave();
+  }
+
+  _bindTitle() {
+    this.titleNode?.addEventListener('click', () => this._beginRename());
+    this.titleInput?.addEventListener('blur', () => this._endRename(true));
+    this.titleInput?.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter') { event.preventDefault(); this._endRename(true); this.titleNode?.focus(); }
+      // Escape restores rather than commits, which is the whole reason a
+      // field is better here than an always-live contenteditable.
+      else if (event.key === 'Escape') { event.preventDefault(); this._endRename(false); this.titleNode?.focus(); }
+    });
   }
 
   // --- chrome -------------------------------------------------------

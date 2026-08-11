@@ -10,7 +10,7 @@
      is otherwise a silent failure: stale modules do not throw, they just
      quietly lack the newer half of the page. scripts/check-version.mjs
      keeps this in step with package.json and src/version.js. -->
-<meta name="diluvium-lab-build" content="0.5.0">
+<meta name="diluvium-lab-build" content="0.6.0">
 <script>
 /* Deliberately NOT a module, and deliberately in this file.
  *
@@ -24,7 +24,7 @@
  * So this runs with no imports, no dependencies, and no assumptions about
  * anything else having worked. */
 (function () {
-  var EXPECTED = '0.5.0';   // kept in step by scripts/check-version.mjs
+  var EXPECTED = '0.6.0';   // kept in step by scripts/check-version.mjs
   window.DILUVIUM_LAB_EXPECTED = EXPECTED;
 
   function show(title, detail) {
@@ -683,6 +683,29 @@
     background: var(--sunk); border: 1px solid var(--edge); border-radius: 6px;
     padding: .5rem .6rem; max-height: 14rem; overflow: auto; white-space: pre-wrap;
   }
+  /* The notebook name. Reads as text until you point at it, which is what
+     makes it discoverable without a pencil icon shouting at every reader.
+     Sized to the content so the toolbar does not lurch when it changes. */
+  .nb-title, .nb-title-input {
+    font: inherit; font-size: .95rem; font-weight: 600;
+    padding: .15rem .4rem; max-width: 22rem;
+    border: 1px solid transparent; border-radius: 6px;
+    background: transparent; color: inherit;
+  }
+  .nb-title {
+    cursor: text; text-align: left;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .nb-title:hover { border-color: var(--edge); background: var(--sunk); }
+  .nb-title:focus-visible { border-color: var(--accent); }
+  /* An untitled notebook says so, quietly, rather than leaving a gap
+     nobody would think to click. */
+  .nb-title[data-untitled="true"] { font-weight: 400; color: var(--quiet); font-style: italic; }
+  .nb-title-input {
+    border-color: var(--accent); background: Canvas;
+    width: 16rem;
+  }
+
   .about-actions { display: flex; gap: .5rem; justify-content: flex-end; }
   .about-actions button {
     font: inherit; font-size: .85rem; padding: .3rem .7rem;
@@ -719,6 +742,15 @@
        rather than from a module. A version that lives only behind a button
        is no use when the thing that broke is what binds the button. -->
   <span class="build" data-build-version title="Lab version"></span>
+  <!-- The notebook's name, which is not its filename. A button rather than
+       a contenteditable: contenteditable accepts pasted *markup*, and
+       nothing in this page reaches the DOM as markup. It swaps to an input
+       on click and back on commit. -->
+  <button type="button" class="nb-title" data-nb-title
+          title="Rename this notebook (this is its name, not its filename)"></button>
+  <input class="nb-title-input" data-nb-title-input hidden
+         maxlength="120" aria-label="Notebook name" autocomplete="off" spellcheck="false">
+  <span class="sep"></span>
   <button type="button" data-toolbar="add-code">+ Code</button>
   <button type="button" data-toolbar="add-markdown">+ Markdown</button>
   <span class="sep"></span>
@@ -818,40 +850,40 @@
 <script type="importmap">
 {
   "imports": {
-    "./src/analysis/disasm.js": "./src/analysis/disasm.js?v=0.5.0",
-    "./src/analysis/luac.js": "./src/analysis/luac.js?v=0.5.0",
-    "./src/analysis/opcodes.js": "./src/analysis/opcodes.js?v=0.5.0",
-    "./src/app.js": "./src/app.js?v=0.5.0",
-    "./src/kernel/digest.js": "./src/kernel/digest.js?v=0.5.0",
-    "./src/kernel/instance.js": "./src/kernel/instance.js?v=0.5.0",
-    "./src/kernel/kernel.js": "./src/kernel/kernel.js?v=0.5.0",
-    "./src/kernel/lua-harness.js": "./src/kernel/lua-harness.js?v=0.5.0",
-    "./src/kernel/protocol.js": "./src/kernel/protocol.js?v=0.5.0",
-    "./src/kernel/releases.js": "./src/kernel/releases.js?v=0.5.0",
-    "./src/kernel/runtimes.js": "./src/kernel/runtimes.js?v=0.5.0",
-    "./src/kernel/wasi.js": "./src/kernel/wasi.js?v=0.5.0",
-    "./src/kernel/wasm-kernel.js": "./src/kernel/wasm-kernel.js?v=0.5.0",
-    "./src/kernel/worker-kernel.js": "./src/kernel/worker-kernel.js?v=0.5.0",
-    "./src/notebook/bytecode-view.js": "./src/notebook/bytecode-view.js?v=0.5.0",
-    "./src/notebook/completion.js": "./src/notebook/completion.js?v=0.5.0",
-    "./src/notebook/console.js": "./src/notebook/console.js?v=0.5.0",
-    "./src/notebook/display.js": "./src/notebook/display.js?v=0.5.0",
-    "./src/notebook/dom.js": "./src/notebook/dom.js?v=0.5.0",
-    "./src/notebook/editing.js": "./src/notebook/editing.js?v=0.5.0",
-    "./src/notebook/editor.js": "./src/notebook/editor.js?v=0.5.0",
-    "./src/notebook/escape.js": "./src/notebook/escape.js?v=0.5.0",
-    "./src/notebook/highlight.js": "./src/notebook/highlight.js?v=0.5.0",
-    "./src/notebook/hints.js": "./src/notebook/hints.js?v=0.5.0",
-    "./src/notebook/ipynb.js": "./src/notebook/ipynb.js?v=0.5.0",
-    "./src/notebook/markdown.js": "./src/notebook/markdown.js?v=0.5.0",
-    "./src/notebook/model.js": "./src/notebook/model.js?v=0.5.0",
-    "./src/notebook/plot.js": "./src/notebook/plot.js?v=0.5.0",
-    "./src/notebook/remote.js": "./src/notebook/remote.js?v=0.5.0",
-    "./src/notebook/sandbox-view.js": "./src/notebook/sandbox-view.js?v=0.5.0",
-    "./src/notebook/storage.js": "./src/notebook/storage.js?v=0.5.0",
-    "./src/notebook/ui.js": "./src/notebook/ui.js?v=0.5.0",
-    "./src/version.js": "./src/version.js?v=0.5.0",
-    "./vendor/pinned.js": "./vendor/pinned.js?v=0.5.0"
+    "./src/analysis/disasm.js": "./src/analysis/disasm.js?v=0.6.0",
+    "./src/analysis/luac.js": "./src/analysis/luac.js?v=0.6.0",
+    "./src/analysis/opcodes.js": "./src/analysis/opcodes.js?v=0.6.0",
+    "./src/app.js": "./src/app.js?v=0.6.0",
+    "./src/kernel/digest.js": "./src/kernel/digest.js?v=0.6.0",
+    "./src/kernel/instance.js": "./src/kernel/instance.js?v=0.6.0",
+    "./src/kernel/kernel.js": "./src/kernel/kernel.js?v=0.6.0",
+    "./src/kernel/lua-harness.js": "./src/kernel/lua-harness.js?v=0.6.0",
+    "./src/kernel/protocol.js": "./src/kernel/protocol.js?v=0.6.0",
+    "./src/kernel/releases.js": "./src/kernel/releases.js?v=0.6.0",
+    "./src/kernel/runtimes.js": "./src/kernel/runtimes.js?v=0.6.0",
+    "./src/kernel/wasi.js": "./src/kernel/wasi.js?v=0.6.0",
+    "./src/kernel/wasm-kernel.js": "./src/kernel/wasm-kernel.js?v=0.6.0",
+    "./src/kernel/worker-kernel.js": "./src/kernel/worker-kernel.js?v=0.6.0",
+    "./src/notebook/bytecode-view.js": "./src/notebook/bytecode-view.js?v=0.6.0",
+    "./src/notebook/completion.js": "./src/notebook/completion.js?v=0.6.0",
+    "./src/notebook/console.js": "./src/notebook/console.js?v=0.6.0",
+    "./src/notebook/display.js": "./src/notebook/display.js?v=0.6.0",
+    "./src/notebook/dom.js": "./src/notebook/dom.js?v=0.6.0",
+    "./src/notebook/editing.js": "./src/notebook/editing.js?v=0.6.0",
+    "./src/notebook/editor.js": "./src/notebook/editor.js?v=0.6.0",
+    "./src/notebook/escape.js": "./src/notebook/escape.js?v=0.6.0",
+    "./src/notebook/highlight.js": "./src/notebook/highlight.js?v=0.6.0",
+    "./src/notebook/hints.js": "./src/notebook/hints.js?v=0.6.0",
+    "./src/notebook/ipynb.js": "./src/notebook/ipynb.js?v=0.6.0",
+    "./src/notebook/markdown.js": "./src/notebook/markdown.js?v=0.6.0",
+    "./src/notebook/model.js": "./src/notebook/model.js?v=0.6.0",
+    "./src/notebook/plot.js": "./src/notebook/plot.js?v=0.6.0",
+    "./src/notebook/remote.js": "./src/notebook/remote.js?v=0.6.0",
+    "./src/notebook/sandbox-view.js": "./src/notebook/sandbox-view.js?v=0.6.0",
+    "./src/notebook/storage.js": "./src/notebook/storage.js?v=0.6.0",
+    "./src/notebook/ui.js": "./src/notebook/ui.js?v=0.6.0",
+    "./src/version.js": "./src/version.js?v=0.6.0",
+    "./vendor/pinned.js": "./vendor/pinned.js?v=0.6.0"
   }
 }
 </script>

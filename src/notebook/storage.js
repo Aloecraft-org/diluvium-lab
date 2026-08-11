@@ -104,6 +104,8 @@ export async function rememberRecent(entry) {
   const record = {
     openedAt: Date.now(),
     name: entry.name ?? 'notebook.ipynb',
+    /** The notebook's own name, which is not its filename. */
+    title: entry.title ?? null,
     origin: entry.origin ?? 'file',      // 'file' | 'url' | 'example'
     url: entry.url ?? null,
     source: entry.url ?? entry.name ?? 'notebook.ipynb',

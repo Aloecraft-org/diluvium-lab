@@ -1816,3 +1816,41 @@ start the clock" would also have made the first test pass.
   current schema now.
 - **The bake's duplicate-name guard fired a fourth time**, on `STATUS` in
   `instance.js` against `kernel.js`. It keeps earning its place.
+
+### A notebook has a name now, and it is not its filename ✅ done
+
+Click the name at the top of the page to rename it, Colab-style. Enter
+keeps, Escape discards, and the tab title follows — somebody with four
+Labs open is choosing between them by tab title, and "Diluvium Lab" four
+times is no choice at all.
+
+Stored in the notebook's own **`metadata.title`**. nbformat has no
+standard field for this: Jupyter uses the filename and has nothing else.
+Putting it in notebook metadata rather than beside the notebook means one
+copy, so a restore cannot disagree with a save, and it rides through any
+tool that preserves metadata. Colab's `metadata.colab.name` is read as a
+fallback, so a notebook from there arrives with the name it had — and
+renaming clears that copy, which would otherwise win on the next read and
+silently undo the rename.
+
+**Which turned up a bug older than the feature: `fromIpynb` dropped
+notebook-level metadata entirely.** It built a `NotebookModel(cells)` and
+nothing else, so every notebook opened here left stripped of its
+top-level fields — authorship, widget state, Colab settings, anything.
+Nobody would have noticed until they diffed a round trip. A title stored
+there could not have survived either, so the feature could not be built
+without fixing it. The model carries `metadata` now and `toIpynb` writes
+it back, with the Lab's own `kernelspec` still overriding: whatever wrote
+the file, *this* is what would run it.
+
+A button that swaps to an input, not a `contenteditable`. Two reasons and
+the first is the rule: `contenteditable` accepts **pasted markup**, and
+nothing in this page reaches the DOM as markup. The second is that a field
+gets focus, Enter and Escape for free, and Escape-to-cancel is not
+something an always-live `contenteditable` can offer at all.
+
+An empty name clears the key rather than storing `""`, so an untitled
+notebook does not carry an empty title around forever — and the label says
+"Untitled notebook" in a quieter style rather than leaving a gap nobody
+would think to click. Recents show the notebook's name in preference to
+its filename, because a list of five `notebook.ipynb`s is not a list.
