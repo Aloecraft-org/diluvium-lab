@@ -144,9 +144,15 @@ events{
 }
 ```
 
-The Lab **cannot yet drive a real swarm**: `dvs.c` is not in the WASM
-artifact, so there is nothing in the browser to drain. The renderer and
-the schema are real; the producer is not yet. See ROADMAP, "A swarm
+From **5.5.1_build3** onward the browser kernel ships `queue`, `endpoint`
+and `msgpack`, so those records need not be hand-written: a program can
+push them into an actual `system/events` queue and drain it, which is the
+queue a swarm writes to. Switch runtimes with the dropdown to try it.
+
+That is still not a swarm. Nothing spawns anything, because `dvs.c` is
+absent from every published artifact — so there is no supervisor, no
+capability attenuation and no subtree kill. The pipe and the record shape
+are real; the layer above them is not there yet. See ROADMAP, "A swarm
 runner: what is actually in the way".
 
 `widget` makes it interactive. The callback stays in the kernel — it

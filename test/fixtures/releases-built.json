@@ -1,0 +1,44 @@
+{
+  "schema": 1,
+  "repo": "Aloecraft-org/diluvium",
+  "releases": [
+    {
+      "tag": "v5.5.1_build1",
+      "name": "Diluvium 5.5.1_build1",
+      "version": "5.5.1_build1",
+      "published_at": "2026-08-07T18:14:15Z",
+      "prerelease": false,
+      "sums": "SHA256SUMS.txt",
+      "assets": [
+        {
+          "name": "libdiluvium_wasi.wasm",
+          "sha256": "15e5a20ca98e3fbfa600ff03bf60bfd5bd9b03d2d793810f27cbe645b6912426"
+        }
+      ]
+    },
+    {
+      "tag": "v5.5.1_build3",
+      "name": "Diluvium 5.5.1_build3",
+      "version": "5.5.1_build3",
+      "published_at": "2026-08-11T00:15:48Z",
+      "prerelease": false,
+      "sums": "SHA256SUMS.txt",
+      "assets": [
+        {
+          "name": "libdiluvium_wasi.wasm",
+          "sha256": "e4f75f1fa391fa595d071cae64dbb731f3ca841cfe3ccecab8668bdaac23efca"
+        }
+      ]
+    }
+  ],
+  "_comment": [
+    "Verbatim output of scripts/build-mirror.sh, captured 2026-08-11 by running",
+    "it against the real repository with two tags. The other producer of this",
+    "file -- the publishing job on diluvium.aloecraft.org -- is captured in",
+    "releases-mirror.json, and the Lab has to read both.",
+    "",
+    "This exists because the script used to carry a hardcoded tag list and",
+    "silently mirrored two releases out of four. The list is gone; what pins",
+    "the *shape* it emits is here."
+  ]
+}

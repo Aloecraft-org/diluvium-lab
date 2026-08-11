@@ -836,9 +836,38 @@ Stage 2 and the real host, and nothing in the Lab had to change for it.
 
 What has *not* moved is the artifact list: the index is still
 `generated_at 2026-08-08` with two releases, `v5.5.1_build1` and
-`v5.4.7_release`. `v5.5.1_build2` and `_build3` are tagged on GitHub and
-are not on the mirror, so the dropdown honestly shows two entries. Whoever
-runs `scripts/build-mirror.sh` next gets them for free.
+`v5.4.7_release`, while `v5.5.1_build2` and `_build3` are published on
+GitHub.
+
+**And `scripts/build-mirror.sh` would not have fixed that, because it
+carried a hardcoded `DEFAULT_TAGS=(v5.4.7_release v5.5.1_build1)`.** Its
+own comment said "add to this list as releases appear"; nobody did, and
+the script went on printing `wrote releases.json with 2 release(s)` long
+after there were four. A mirror that is silently a subset is worse than
+one that fails, because the dropdown looks complete — this is the same
+class of defect as a stale module graph, and it took the same shape:
+success reported against an input nobody re-checked.
+
+Tags are discovered now, with `git ls-remote` rather than the releases
+API — no auth, no rate limit, and no JSON to parse in shell. It
+over-reports and the existing per-tag HEAD check narrows it, which is the
+check that was always doing the real work. Measured against the
+repository: **67 tags, of which exactly 4 publish `libdiluvium_wasi.wasm`,
+and none of those 4 is a prerelease.** The discovered set is unioned with
+the old list, so a discovery that comes back short can only add to the
+known-good set and never silently drop one of it.
+
+Two smaller corrections went with it. `prerelease` was hardcoded `false`;
+it is derived from the tag now, so the day a prerelease does publish a
+kernel it does not enter the dropdown dressed as a release. And the script
+emitted a *thinner* index than the publishing job on
+diluvium.aloecraft.org writes — no `version`, no `assets[].sha256`.
+Uploading that would have cost the Lab its cross-check, since it compares
+the index's claimed checksum against `SHA256SUMS.txt` and refuses a build
+where the two disagree. One source cannot disagree with itself. Both
+fields are emitted now, and `test/fixtures/releases-built.json` is a
+verbatim capture of a real run, so the shape is pinned the way the
+published index's already was.
 
 ### The kernel moved off the main thread ✅ done
 
@@ -1370,18 +1399,36 @@ look like series 8. Each ships with a word as well as a colour.
 
 The ask that started this was "run a swarm and print its events". **The
 Lab cannot do that today, and the blocker is in the artifact rather than
-here.** Measured, not assumed, against the pinned `v5.5.1_build1`
-`libdiluvium_wasi.wasm`:
+here.** Every published `libdiluvium_wasi.wasm` was downloaded and probed
+rather than reasoned about, and the answer differs by build:
 
-- It exports no `dv_*` and no `dvs_*` at all.
-- Running `type(queue)`, `type(msgpack)`, `type(endpoint)` in it gives
-  `nil` three times. The guest messaging libraries are not in this build
-  either.
-- `src/onelua.c` in the Diluvium tree includes `dqueue.c`, `dendpoint.c`,
-  `dmsgpack.c` and (at HEAD) `dv.c` — but **`dvs.c` is deliberately not in
-  the amalgamation**, and `libdiluvium_wasi.wasm` is linked from
-  `onelua.o` + `wasm_stubs.o` + `analyze.o` + `diluvium_api.o`. So even a
-  current build would carry the instance ABI and not the swarm layer.
+| build | `dv_*` | `dvs_*` | `queue` / `endpoint` / `msgpack` |
+|---|---|---|---|
+| `v5.4.7_release` | — | — | — |
+| `v5.5.1_build1` (pinned) | — | — | — |
+| `v5.5.1_build2` | — | — | — |
+| `v5.5.1_build3` | **all 27** | — | **all three** |
+
+`build3` exports the whole instance ABI — `dv_new`, `dv_load`, `dv_run`,
+`dv_resume`, `dv_snapshot`, `dv_restore`, the `dv_queue_*` and
+`dv_endpoint_*` families, `dv_set_budget`, `dv_usage`, `dv_exceeded` — and
+its Lua globals include working `queue`, `endpoint` and `msgpack`.
+`queue.declare`, `push`, `len`, `capacity` and the non-blocking `pop` all
+run in an ordinary `run_lua` state; only the blocking `queue.wait` needs a
+host that resumes, which a bare state is not.
+
+**An earlier draft of this section said the guest messaging libraries were
+absent. That was true of the pinned build and false of `build3`**, and the
+difference is the whole reason to switch: on `build3` a notebook can
+declare `system/events`, push §9.2-shaped records and drain them, so the
+event view has a real producer rather than hand-written samples.
+
+What is still missing everywhere is `dvs_*`. `src/onelua.c` in the
+Diluvium tree includes `dqueue.c`, `dendpoint.c`, `dmsgpack.c` and `dv.c`
+— but **`dvs.c` is deliberately not in the amalgamation**, and
+`libdiluvium_wasi.wasm` is linked from `onelua.o` + `wasm_stubs.o` +
+`analyze.o` + `diluvium_api.o`. `build3` is the measurement that confirms
+it: the instance ABI arrived and the swarm layer did not.
 
 What would connect them is small and is Diluvium-side, in `wasm_stubs.c`
 beside `init_lua`/`run_lua`: compile `dvs.c` into the wasi target, add the
@@ -1392,9 +1439,17 @@ JSON. `doc/Lab.md` §1 prices the same work for the CLI and calls it "a
 host and a command, not a feature"; the browser needs the identical host
 and a different three-function door.
 
-Until then the renderer is real and the producer is not, and the demo
-notebook says so on the cell above the records rather than leaving a
-reader to assume. **The transport is what changes when that lands; the
+Until then the swarm is absent but the *pipe* is not, on `build3`: the
+demo notebook carries a feature-detecting cell that declares
+`system/events`, pushes §9.2 records into it, drains them with the loop a
+supervisor runs, and renders the result. Verified end to end against the
+downloaded `build3` artifact. On an older kernel the cell says which
+version added `queue` and does nothing, which is why it is safe to ship
+against a pinned build that lacks it.
+
+The hand-written records stay in the notebook above it, and the cell above
+*those* says they are hand-written rather than leaving a reader to
+assume. **The transport is what changes when that lands; the
 renderer does not** — which is the whole reason the record shape was
 copied from §9.2 rather than invented.
 

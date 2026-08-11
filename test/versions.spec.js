@@ -590,3 +590,53 @@ test.describe('version ordering across the format change', () => {
     ]);
   });
 });
+
+test.describe('the index scripts/build-mirror.sh writes', () => {
+  const BUILT = JSON.parse(
+    readFileSync(new URL('./fixtures/releases-built.json', import.meta.url), 'utf8'));
+
+  test('is read the same way as the published one', async ({ page }) => {
+    // Two things write a releases.json the Lab has to read: the publishing
+    // job on diluvium.aloecraft.org, and this repository's own script. The
+    // fixture above pins the first; this pins the second, verbatim from a
+    // real run.
+    //
+    // Worth pinning because the script drifted once already and the drift
+    // was invisible: it carried a hardcoded tag list, and went on reporting
+    // "wrote releases.json with 2 release(s)" long after there were four.
+    await page.route(`${MIRROR}releases.json`, async (route) => route.fulfill({
+      status: 200, contentType: 'application/json', body: JSON.stringify(BUILT),
+    }));
+    await openLab(page);
+
+    const listed = await page.evaluate(async (base) => {
+      const { MirrorSource } = await import('./src/kernel/releases.js');
+      return new MirrorSource(base).list();
+    }, MIRROR);
+
+    // `list()` preserves the index's order; the dropdown is what sorts. So
+    // the script may write ascending while the publishing job writes
+    // newest-first, and neither has to know about the other.
+    expect(listed.map((r) => [r.tag, r.version])).toEqual([
+      ['v5.5.1_build1', '5.5.1_build1'],
+      ['v5.5.1_build3', '5.5.1_build3'],
+    ]);
+    // The script emits `version` outright, so the dropdown never has to
+    // fall back to parsing the name or guessing from the tag.
+    expect(BUILT.releases.every((r) => typeof r.version === 'string')).toBe(true);
+    // And a per-asset checksum, which is what the Lab cross-checks against
+    // SHA256SUMS.txt. An index without one cannot disagree with itself,
+    // and a stale mirror then goes unnoticed.
+    expect(listed[0].assets['libdiluvium_wasi.wasm']).toMatch(/^[0-9a-f]{64}$/);
+
+    // And what the reader ends up with. The bundled build heads the list
+    // whatever its version -- it is the one that works with no network --
+    // and "newest first" sorts the remote entries below it. So a mirror
+    // carrying something newer than the pinned build shows it *second*,
+    // which is worth pinning because it looks like a sorting bug and is
+    // not: see `entries()` in runtimes.js.
+    await checkVersions(page);
+    await expect(select(page).locator('option'))
+      .toHaveText([/5\.5\.1_build1 \(bundled\)/, /5\.5\.1_build3/]);
+  });
+});

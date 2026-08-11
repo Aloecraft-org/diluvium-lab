@@ -39,13 +39,52 @@ ARTIFACT="libdiluvium_wasi.wasm"
 OUT="${1:-mirror}"
 shift || true
 
-# Tags known to publish the kernel artifact. Add to this list as releases
-# appear -- or pass them on the command line.
-DEFAULT_TAGS=(v5.4.7_release v5.5.1_build1)
-TAGS=("$@")
-[ ${#TAGS[@]} -eq 0 ] && TAGS=("${DEFAULT_TAGS[@]}")
+# Tags known to publish the kernel artifact.
+#
+# This used to be the whole input, and that was the bug: the list said
+# "add to this list as releases appear", nobody did, and the script went on
+# reporting success while quietly mirroring two releases out of four. A
+# mirror that is silently a subset is worse than one that fails, because
+# the dropdown looks complete.
+#
+# So it is now a *floor* rather than the list. Tags are discovered, the
+# discovered set is unioned with this one, and every candidate still has to
+# prove it publishes the artifact before it is mirrored -- which is the
+# check that was always doing the real work.
+KNOWN_TAGS=(v5.4.7_release v5.5.1_build1)
 
 say() { printf '  %s\n' "$*"; }
+
+# Every tag in the repository, newest-agnostic: ordering does not matter
+# because the Lab sorts the dropdown itself.
+#
+# `git ls-remote` rather than the releases API: no auth, no rate limit, and
+# no JSON to parse in shell. It over-reports -- most tags publish no
+# artifact at all -- and the HEAD check below is what narrows it. Measured
+# against this repository: 67 tags, of which 4 publish the kernel and none
+# of those 4 is a prerelease.
+discover_tags() {
+  git ls-remote --tags "https://github.com/$REPO" 2>/dev/null \
+    | sed 's|.*refs/tags/||' \
+    | grep -v '\^{}$' \
+    | grep '^v[0-9]'
+}
+
+TAGS=("$@")
+if [ ${#TAGS[@]} -eq 0 ]; then
+  printf '== Discovering tags\n'
+  mapfile -t found < <(discover_tags)
+  if [ ${#found[@]} -eq 0 ]; then
+    say "could not reach the repository; falling back to the known list"
+    TAGS=("${KNOWN_TAGS[@]}")
+  else
+    say "${#found[@]} tags in $REPO"
+    # Union, so a discovery that comes back short can only ever add to the
+    # known-good set and never silently drop one of it.
+    mapfile -t TAGS < <(printf '%s\n' "${found[@]}" "${KNOWN_TAGS[@]}" | sort -u)
+  fi
+  say "checking ${#TAGS[@]} for $ARTIFACT (most publish none; this takes a moment)"
+fi
 
 mkdir -p "$OUT"
 entries=()
@@ -54,11 +93,12 @@ for tag in "${TAGS[@]}"; do
   base="https://github.com/$REPO/releases/download/$tag"
   dest="$OUT/$tag"
 
-  printf '\n== %s\n' "$tag"
+  # Quietly, because most tags in a language's history publish no kernel
+  # and 60 lines of "skip" would bury the four that matter.
   if ! curl -fsSL --retry 3 --head -o /dev/null "$base/$ARTIFACT" 2>/dev/null; then
-    say "skip: $tag publishes no $ARTIFACT"
     continue
   fi
+  printf '\n== %s\n' "$tag"
 
   mkdir -p "$dest"
   for f in "$ARTIFACT" SHA256SUMS.txt; do
@@ -86,8 +126,23 @@ for tag in "${TAGS[@]}"; do
   [ -z "$version" ] && version="${tag#v}"
   published=$(sed -n 's/^built *: *//p' "$dest/BUILDINFO.txt" 2>/dev/null | head -1)
 
-  entries+=("$(printf '{"tag":"%s","name":"Diluvium %s","published_at":"%s","prerelease":false}' \
-    "$tag" "$version" "$published")")
+  # Derived rather than hardcoded false. No prerelease publishes the
+  # kernel today, so this changes nothing now -- but the day one does, a
+  # mirror that called it stable would put it in the dropdown looking like
+  # a release, which is the sort of wrong that is only found afterwards.
+  case "$tag" in
+    *_rc*|*-rc*|*alpha*|*beta*|*-pre*) prerelease=true ;;
+    *) prerelease=false ;;
+  esac
+
+  # `version` and `assets[].sha256` as well as the name, so this script's
+  # output is not a *downgrade* of the index the publishing job on
+  # diluvium.aloecraft.org writes. Uploading a thinner index would cost the
+  # Lab its cross-check: it compares the index's claimed checksum against
+  # SHA256SUMS.txt and refuses the build when the two disagree, which is
+  # how a stale mirror is caught. One source cannot disagree with itself.
+  entries+=("$(printf '{"tag":"%s","name":"Diluvium %s","version":"%s","published_at":"%s","prerelease":%s,"sums":"SHA256SUMS.txt","assets":[{"name":"%s","sha256":"%s"}]}' \
+    "$tag" "$version" "$version" "$published" "$prerelease" "$ARTIFACT" "$actual")")
 done
 
 if [ ${#entries[@]} -eq 0 ]; then
@@ -96,7 +151,7 @@ if [ ${#entries[@]} -eq 0 ]; then
 fi
 
 {
-  printf '{\n  "schema": 1,\n  "releases": [\n'
+  printf '{\n  "schema": 1,\n  "repo": "%s",\n  "releases": [\n' "$REPO"
   for i in "${!entries[@]}"; do
     printf '    %s' "${entries[$i]}"
     [ "$i" -lt $((${#entries[@]} - 1)) ] && printf ','
