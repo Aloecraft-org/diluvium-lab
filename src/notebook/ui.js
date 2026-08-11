@@ -6,8 +6,10 @@
 // the cell list, and everything else patches in place. Rebuilding on every
 // keystroke would throw away the caret.
 
+import { el } from './dom.js';
 import { renderMarkdown } from './markdown.js';
-import { outputText } from './ipynb.js';
+import { outputText, bundleOf } from './ipynb.js';
+import { renderBundle } from './display.js';
 import { HighlightedEditor } from './editor.js';
 import { hintFor, tipForOutput } from './hints.js';
 import { BytecodeView } from './bytecode-view.js';
@@ -24,20 +26,6 @@ export const SOFT_MAX_BYTES = 64 * 1024;
 /** performance.now(), or Date-free fallback -- only relative deltas are used. */
 function performanceNow() {
   return (typeof performance !== 'undefined' && performance.now) ? performance.now() : 0;
-}
-
-export function el(tag, attrs = {}, kids = []) {
-  const node = document.createElement(tag);
-  for (const [k, v] of Object.entries(attrs)) {
-    if (v === false || v === null || v === undefined) continue;
-    if (k === 'class') node.className = v;
-    else node.setAttribute(k, v === true ? '' : String(v));
-  }
-  for (const kid of [].concat(kids)) {
-    if (kid === null || kid === undefined) continue;
-    node.appendChild(typeof kid === 'string' ? document.createTextNode(kid) : kid);
-  }
-  return node;
 }
 
 function button(action, label, title) {
@@ -89,7 +77,7 @@ function withCodeSpans(text) {
   )).filter((piece) => piece !== '');
 }
 
-export function renderOutputs(cell, expandedSet) {
+export function renderOutputs(cell, expandedSet, displayCtx = {}) {
   // Output arrives asynchronously, so a screen reader user gets nothing
   // unless the region announces itself. `polite` rather than `assertive`:
   // a cell finishing should not interrupt what is already being read.
@@ -125,6 +113,13 @@ export function renderOutputs(cell, expandedSet) {
       node.appendChild(el('span', { class: 'result-prompt' },
         [`Out[${output.execution_count ?? ' '}]:`]));
       node.appendChild(el('pre', {}, [capped.text]));
+    } else if (kind === 'display_data') {
+      // The richest representation the page understands, falling back to
+      // the text every bundle carries. A notebook written by a newer Lab
+      // -- or by something else entirely -- therefore still says
+      // something here rather than showing a blank.
+      const drawn = renderBundle(bundleOf(output), displayCtx);
+      node.appendChild(drawn ?? el('pre', {}, [capped.text]));
     } else {
       node.appendChild(el('pre', {}, [capped.text]));
       const tip = tipForOutput(text);
@@ -166,6 +161,16 @@ export class NotebookView {
     // switch re-colours without a table in this repo being edited.
     this.languageInfo = handlers.languageInfo ?? (() => ({}));
     this.editors = new Map();
+
+    // What a `display_data` output needs to draw itself: somewhere to send
+    // a control's new value, and whether the running kernel can take it.
+    // Read through a getter rather than captured, because both change when
+    // the kernel is swapped and a chart rendered before the swap must not
+    // hold the old one.
+    this.displayCtx = {
+      onWidget: (id, value, into) => this.handlers.onWidget?.(id, value, into),
+      get widgetsEnabled() { return handlers.widgetsEnabled?.() !== false; },
+    };
 
     // The current cell, independent of focus. `:focus-within` vanishes
     // the moment focus moves to the page toolbar, which is exactly when
@@ -245,7 +250,7 @@ export class NotebookView {
     const node = this.cellNode(cellId);
     const cell = this.model.get(cellId);
     if (!node || !cell) return;
-    node.querySelector('[data-outputs]')?.replaceWith(renderOutputs(cell, this.expanded));
+    node.querySelector('[data-outputs]')?.replaceWith(renderOutputs(cell, this.expanded, this.displayCtx));
     const prompt = node.querySelector('[data-prompt]');
     if (prompt) prompt.textContent = promptText(cell);
     node.dataset.busy = 'false';
@@ -355,7 +360,7 @@ export class NotebookView {
     ];
 
     if (isCode) {
-      kids.push(renderOutputs(cell, this.expanded));
+      kids.push(renderOutputs(cell, this.expanded, this.displayCtx));
       const panel = el('div', { class: 'bytecode', 'data-bytecode': cell.id });
       panel.hidden = !this.showingBytecode.has(cell.id);
       kids.push(panel);

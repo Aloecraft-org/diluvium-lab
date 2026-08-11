@@ -71,12 +71,15 @@ self.onmessage = async (event) => {
 
   try {
     let value;
-    if (method === 'execute') {
-      // The only method with a streaming half. Each message goes back
+    if (method === 'execute' || method === 'callWidget') {
+      // The two methods with a streaming half. Each message goes back
       // tagged with this call's id, so concurrent calls -- which should
       // not happen, but would otherwise interleave silently -- cannot be
       // mistaken for one another.
-      value = await kernel.execute(args.code, (message) => post({ id, type: 'stream', message }));
+      const relay = (message) => post({ id, type: 'stream', message });
+      value = method === 'execute'
+        ? await kernel.execute(args.code, relay)
+        : await kernel.callWidget(args.id, args.value, relay);
     } else if (typeof kernel[method] === 'function') {
       value = await kernel[method](...(args ?? []));
     } else {

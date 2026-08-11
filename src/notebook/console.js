@@ -4,7 +4,7 @@
 // which is the entire point -- poke at a variable the notebook just defined
 // without adding a cell you then have to delete.
 
-import { el } from './ui.js';
+import { el } from './dom.js';
 import { outputText } from './ipynb.js';
 import { HighlightedEditor } from './editor.js';
 import { MSG } from '../kernel/protocol.js';

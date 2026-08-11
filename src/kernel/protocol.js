@@ -23,6 +23,7 @@ export const MSG = {
   STATUS: 'status',
   STREAM: 'stream',
   EXECUTE_RESULT: 'execute_result',
+  DISPLAY_DATA: 'display_data',
   ERROR: 'error',
 };
 
@@ -75,6 +76,25 @@ export function executeResult(executionCount, text) {
       data: { 'text/plain': text },
       metadata: {},
     },
+  };
+}
+
+/**
+ * Something the program asked to show, which is not the value of the cell.
+ *
+ * The distinction Jupyter draws and the one worth keeping: `execute_result`
+ * is what the last expression evaluated to and carries an `Out[n]` prompt,
+ * while `display_data` is a thing the program chose to emit, possibly many
+ * times, possibly in the middle. A chart is the second kind -- which is
+ * why `plot.line{...}` returns nothing and still draws.
+ *
+ * `data` is a mime bundle, the same object nbformat stores.
+ */
+export function displayData(data, metadata = {}) {
+  return {
+    msg_type: MSG.DISPLAY_DATA,
+    msg_id: msgId(),
+    content: { data, metadata },
   };
 }
 

@@ -41,6 +41,12 @@ export function messageToOutput(msg) {
         data: { 'text/plain': splitLines(msg.content.data['text/plain']) },
         metadata: {},
       };
+    case MSG.DISPLAY_DATA:
+      return {
+        output_type: 'display_data',
+        data: splitBundle(msg.content.data),
+        metadata: msg.content.metadata ?? {},
+      };
     case MSG.ERROR:
       return {
         output_type: 'error',
@@ -51,6 +57,38 @@ export function messageToOutput(msg) {
     default:
       return null;
   }
+}
+
+/**
+ * A mime bundle in the shape nbformat stores it.
+ *
+ * Text types are split into nbformat's line arrays, which is what makes a
+ * saved notebook diff sanely -- a chart that gained a point should be one
+ * changed line, not one changed 40 KB string. Base64 payloads are left as
+ * single strings, which is what Jupyter itself writes for `image/png`:
+ * splitting bytes into "lines" would be splitting on a character that
+ * carries no meaning there.
+ */
+export function splitBundle(data) {
+  const out = {};
+  for (const [mime, value] of Object.entries(data ?? {})) {
+    const text = typeof value === 'string' ? value : joinLines(value);
+    out[mime] = isBase64Mime(mime) ? text : splitLines(text);
+  }
+  return out;
+}
+
+function isBase64Mime(mime) {
+  return mime.startsWith('image/') && mime !== 'image/svg+xml';
+}
+
+/** The whole bundle, with every entry joined back into a plain string. */
+export function bundleOf(output) {
+  const out = {};
+  for (const [mime, value] of Object.entries(output?.data ?? {})) {
+    out[mime] = joinLines(value);
+  }
+  return out;
 }
 
 /** The text an output renders as, whichever kind it is. */

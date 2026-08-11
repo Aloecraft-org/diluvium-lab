@@ -295,12 +295,29 @@ export class WorkerKernel extends Kernel {
   // --- the interface --------------------------------------------------
 
   async execute(code, onMessage = () => {}) {
-    if (this._fallback) return this._fallback.execute(code, onMessage);
+    return this._streaming('execute', { code }, onMessage, () => this._fallback.execute(code, onMessage));
+  }
+
+  async callWidget(id, value, onMessage = () => {}) {
+    return this._streaming('callWidget', { id, value }, onMessage,
+      () => this._fallback.callWidget(id, value, onMessage));
+  }
+
+  /**
+   * A call whose messages arrive before its reply does.
+   *
+   * `_call` cannot carry these: its `onMessage` is stored but the worker
+   * only posts a result, so a streaming method routed through it would
+   * drop every `stream` and every `display_data` on the floor and still
+   * resolve. Both streaming methods go through here instead.
+   */
+  _streaming(method, args, onMessage, viaFallback) {
+    if (this._fallback) return viaFallback();
     if (!this._worker) return Promise.reject(new Error('the kernel is not running'));
     const id = this._nextId++;
     return new Promise((resolve, reject) => {
       this._pending.set(id, { resolve, reject, onMessage });
-      this._worker.postMessage({ id, type: 'call', method: 'execute', args: { code } });
+      this._worker.postMessage({ id, type: 'call', method, args });
     });
   }
 

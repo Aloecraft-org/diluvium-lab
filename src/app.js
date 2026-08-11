@@ -11,7 +11,7 @@ import { STATUS } from './kernel/kernel.js';
 import { MSG } from './kernel/protocol.js';
 import { NotebookModel } from './notebook/model.js';
 import { toIpynb, fromIpynb, messageToOutput, IpynbError } from './notebook/ipynb.js';
-import { NotebookView } from './notebook/ui.js';
+import { NotebookView, renderOutputs } from './notebook/ui.js';
 import { ConsoleView } from './notebook/console.js';
 import { saveAutosave, loadAutosave, debounceSave } from './notebook/storage.js';
 import { FALLBACK_KEYWORDS, FALLBACK_GLOBALS } from './notebook/highlight.js';
@@ -96,6 +96,9 @@ export class App {
       languageInfo,
       complete: (code, cursor) => this.completeAt(code, cursor),
       compile: (code) => this.kernel.dumpBytecode(code),
+      onWidget: (id, value, into) => this.widgetChanged(id, value, into),
+      widgetsEnabled: () => this.kernel.capabilities.widgets === true
+        && this.kernel.status !== STATUS.DEAD,
     });
 
     this.console = new ConsoleView(document_.querySelector('[data-console]'), {
@@ -493,6 +496,79 @@ export class App {
       }
     } finally {
       this.document.body.dataset.running = 'false';
+    }
+  }
+
+  /**
+   * A control moved. Run its callback and show whatever it produced.
+   *
+   * Two things make this more than a call. A slider fires on every pixel
+   * of a drag and `run_lua` cannot be interrupted, so the calls are
+   * **coalesced**: at most one is in flight, and the newest value waiting
+   * behind it replaces any older one, which is what keeps a drag
+   * responsive instead of queueing forty runs of a callback that takes 20
+   * ms each. And the output goes into the control's own slot rather than
+   * the cell's output list, because it is the answer to this drag rather
+   * than a new result -- a saved notebook should carry the chart the cell
+   * produced, not the last frame of someone playing with a slider.
+   */
+  async widgetChanged(id, value, into, { auto = false } = {}) {
+    this._widgetQueue ??= new Map();
+    this._widgetTouched ??= new Set();
+
+    // An automatic first call is "show the initial state". Once someone
+    // has moved the control, the initial state is stale information, and
+    // a re-render firing it again would throw away what they asked for.
+    if (auto && this._widgetTouched.has(id)) return;
+    if (!auto) this._widgetTouched.add(id);
+
+    this._widgetQueue.set(id, { value, into, auto });
+    if (this._widgetBusy) return;
+
+    this._widgetBusy = true;
+    try {
+      while (this._widgetQueue.size) {
+        const [next] = this._widgetQueue.keys();
+        const { value: latest, into: slot, auto } = this._widgetQueue.get(next);
+        this._widgetQueue.delete(next);
+
+        // Nothing an automatic call finds is worth a sentence. It fires on
+        // every render, including the render of a notebook just opened
+        // from a file, where every control is necessarily disconnected --
+        // a warning per control would be the first thing such a reader saw.
+        if (this.kernel.status === STATUS.DEAD) {
+          if (!auto) this._renderWidgetOutput(slot, [], 'The kernel is not running.');
+          continue;
+        }
+        const messages = [];
+        try {
+          const reply = await this.kernel.callWidget(next, latest, (msg) => messages.push(msg));
+          const stale = reply?.content?.stale === true;
+          if (stale && auto) continue;
+          this._renderWidgetOutput(slot, messages, stale
+            ? 'This control came from a kernel that has since restarted. Run its cell again.'
+            : null);
+        } catch (err) {
+          if (!auto) this._renderWidgetOutput(slot, [], err.message);
+        }
+      }
+    } finally {
+      this._widgetBusy = false;
+    }
+  }
+
+  _renderWidgetOutput(slot, messages, note) {
+    if (!slot) return;
+    const outputs = messages.map(messageToOutput).filter(Boolean);
+    // A throwaway cell, so the existing output renderer draws these --
+    // charts, text and tracebacks alike -- with no second implementation.
+    const cell = { id: 'widget', cell_type: 'code', outputs };
+    slot.replaceChildren(renderOutputs(cell, new Set(), this.view.displayCtx));
+    if (note) {
+      const line = this.document.createElement('p');
+      line.className = 'hint';
+      line.textContent = note;
+      slot.prepend(line);
     }
   }
 

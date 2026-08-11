@@ -827,11 +827,18 @@ takes the keyword set from 26 to 22, stops colouring `switch`, runs a cell
 that prints `diluvium (lua) 5.4`, and flips the bytecode viewer to the 5.4
 container. Nothing about that is configured; it all follows the kernel.
 
-**Still outstanding: the mirror sends no `Access-Control-Allow-Origin`.**
-Confirmed from here — `200`, `server: cloudflare`, no such header — so the
-dropdown cannot fetch in a browser even though curl can. That is one line
-of server config, and it is the last thing between Stage 2 and working
-against the real host.
+~~**Still outstanding: the mirror sends no `Access-Control-Allow-Origin`.**~~
+**Fixed on the host, confirmed 2026-08-11.** `releases.json` now answers
+with `access-control-allow-origin: *`, `access-control-allow-methods: GET,
+HEAD, OPTIONS`, `cross-origin-resource-policy: cross-origin` and
+`cache-control: public, max-age=300`. That was the last thing between
+Stage 2 and the real host, and nothing in the Lab had to change for it.
+
+What has *not* moved is the artifact list: the index is still
+`generated_at 2026-08-08` with two releases, `v5.5.1_build1` and
+`v5.4.7_release`. `v5.5.1_build2` and `_build3` are tagged on GitHub and
+are not on the mirror, so the dropdown honestly shows two entries. Whoever
+runs `scripts/build-mirror.sh` next gets them for free.
 
 ### The kernel moved off the main thread ✅ done
 
@@ -1237,3 +1244,228 @@ other tools survive a round trip. `test/polish.spec.js` asserts the states
 rather than the pixels; the two existing tests that asserted the old
 "restart blanks the counts" behaviour were updated to the new stale
 contract.
+
+### Output that is not text: display, plots, events, controls ✅ done
+
+Until now the Lab could show one thing: characters. Everything asked for
+next — a chart, a picture, a swarm's event stream, a slider — turned out
+to be the same missing mechanism rather than four features, so it was
+built once.
+
+**The mechanism is Jupyter's `display_data`, and that is not a
+coincidence.** A hard constraint since Stage 1 says kernel messages are
+Jupyter-shaped, and `protocol.js` has carried a one-entry mime bundle
+since then with a comment saying a future `image/png` slots in without
+changing the message. It did. A chart is stored in the `.ipynb` as
+`{"output_type": "display_data", "data": {...}}` — the same object
+JupyterLab writes — so it round-trips, and a reader that has never heard
+of Diluvium still gets the `text/plain` that ships in every bundle.
+
+#### Lua emits data; the Lab draws
+
+The decision the whole feature rests on, and the one with a plausible
+alternative. `plot.line{1,4,9}` sends `{"series":[{"y":[1,4,9]}]}`, not
+SVG.
+
+A chart built in Lua would have to know the page's theme, its width, and
+its fonts. None of those is knowable from inside a kernel that cannot see
+the DOM, so such a chart would be wrong in dark mode, wrong on a phone,
+and stale the moment the window moved. Sending data instead means the
+renderer re-runs on resize and follows `prefers-color-scheme` for free.
+
+The second benefit was not the motivation and may be the larger one:
+**the built-in display types cannot carry markup.** A notebook is
+untrusted input — it arrives from files and from other people's
+repositories — and this is the first feature that renders something other
+than text out of one. `{"series": [...]}` has nowhere to put a script tag.
+`display` still accepts `image/svg+xml` and raster images for programs
+that genuinely have a picture; SVG goes through an **allowlist**
+sanitiser (`sanitiseSvg`), and raster images become `data:` URIs so
+nothing a notebook contains can cause the page to make a request. Pinned
+in `display.spec.js` with an SVG carrying an `onload`, a `<script>`, an
+`<image href>` and a `javascript:` link, asserting the circle survives and
+`window.__pwned` is still undefined.
+
+#### The parse changed shape, and had to
+
+The harness used to emit exactly one record, always last, so "everything
+before the nonce" was the user's output. A cell that can draw *in the
+middle* breaks that: `print("a") plot.line{1,2} print("b")` is three
+things in that order, not two lines with a picture bolted on the end.
+
+`parseRecords` reads stdout as a sequence — text, record, text, record —
+and `parseRecord` is now a thin wrapper over it, so nothing else had to
+change. Records stay length-prefixed, which is what lets a payload contain
+newlines, separators and the nonce itself. A record cut short by the
+output cap ends the scan rather than being half-parsed into a plausible
+one.
+
+#### Where the state lives
+
+`display` and friends have to survive between cells, and they need the
+*current* request's nonce — a function that closed over the nonce it was
+defined with would frame its records for a listener that had already gone
+away. So the nonce, the widget table and the ownership record live in
+`debug.getregistry()`, which is what the Lua registry is for, and `_G`
+gets four names and nothing else.
+
+That matters more than it sounds: a notebook where `for k in pairs(_G)`
+lists the tool's own bookkeeping is a notebook that lies to you, and the
+globals probe feeds completion, so anything in `_G` shows up in the popup
+too. `languageInfoChunk` filters the key back out for the fallback case
+where `debug` has been narrowed away.
+
+**And the API never takes a name the program has claimed.** A slot is the
+Lab's to write only if it is empty or still holds the function the Lab put
+there last time, so `plot = 42` sticks, and `plot = nil` gives it back.
+Four globals is four names taken from the user; this is the cheapest way
+to make that not a theft.
+
+#### Charts
+
+`src/notebook/plot.js`, plain DOM and inline SVG like everything else.
+Line, scatter and bar; one axis, never two.
+
+The palette is not taste. Both modes' eight categorical steps were run
+through the lightness-band, chroma-floor, colour-vision-separation,
+normal-vision-separation and contrast checks, against this page's own
+surfaces rather than a default. Two results shaped the UI:
+
+- **Three of the light steps sit below 3:1 on white.** The rule for that
+  is relief — visible labels or a table — rather than re-stepping, since
+  the eight are validated as a set and moving one breaks the separation
+  of its neighbours. So every chart carries a **Table** toggle, and it is
+  asserted to hold the real values rather than merely to exist.
+- **The dark steps are a selected set, not an automatic flip.** Slot 6 is
+  the same hex in both modes and the other seven are not, which is what
+  choosing per surface produces and what a filter would not.
+
+Colour is never the only carrier of identity: two or more series always
+get a legend, slots are assigned in fixed order so removing a series never
+repaints the survivors, and the legend text wears the page's text colour
+with a swatch beside it rather than being coloured itself.
+
+Two data decisions worth recording because they are the ones that make a
+chart honest:
+
+- **A missing value is a gap, not a zero.** JSON has no NaN and no
+  infinities, so the encoder writes `null` and the renderer starts a new
+  path — `math.log(0)` in the middle of a series leaves a hole rather
+  than a spike to the floor. Bridging it would draw a measurement nobody
+  took.
+- **A bar chart's axis always includes zero.** A line chart may crop,
+  because the question there is shape; a cropped bar chart misstates every
+  ratio it draws.
+
+#### Event streams
+
+`events{...}` renders a list in **`doc/Messaging.md` §9.2's shape
+exactly** — `event`, `id`, `detail` — with its eight kinds: `spawned`,
+`exited`, `faulted`, `exceeded`, `hibernated`, `throttled`, `denied`,
+`status`. The severities come from the reserved status palette rather than
+the chart palette, deliberately: a faulted instance must never be able to
+look like series 8. Each ships with a word as well as a colour.
+
+#### A swarm runner: what is actually in the way
+
+The ask that started this was "run a swarm and print its events". **The
+Lab cannot do that today, and the blocker is in the artifact rather than
+here.** Measured, not assumed, against the pinned `v5.5.1_build1`
+`libdiluvium_wasi.wasm`:
+
+- It exports no `dv_*` and no `dvs_*` at all.
+- Running `type(queue)`, `type(msgpack)`, `type(endpoint)` in it gives
+  `nil` three times. The guest messaging libraries are not in this build
+  either.
+- `src/onelua.c` in the Diluvium tree includes `dqueue.c`, `dendpoint.c`,
+  `dmsgpack.c` and (at HEAD) `dv.c` — but **`dvs.c` is deliberately not in
+  the amalgamation**, and `libdiluvium_wasi.wasm` is linked from
+  `onelua.o` + `wasm_stubs.o` + `analyze.o` + `diluvium_api.o`. So even a
+  current build would carry the instance ABI and not the swarm layer.
+
+What would connect them is small and is Diluvium-side, in `wasm_stubs.c`
+beside `init_lua`/`run_lua`: compile `dvs.c` into the wasi target, add the
+single-threaded host vtable (`test/dvs_check.c:102`, about forty lines,
+`create` a no-op and `drive` one `dv_run`), and export three functions —
+start a swarm from source, step it, drain the next event as msgpack or
+JSON. `doc/Lab.md` §1 prices the same work for the CLI and calls it "a
+host and a command, not a feature"; the browser needs the identical host
+and a different three-function door.
+
+Until then the renderer is real and the producer is not, and the demo
+notebook says so on the cell above the records rather than leaving a
+reader to assume. **The transport is what changes when that lands; the
+renderer does not** — which is the whole reason the record shape was
+copied from §9.2 rather than invented.
+
+#### Controls
+
+`widget.slider`, `.select`, `.checkbox`, `.button`, each taking an
+`on_change` closure.
+
+**The closure never leaves the kernel** — it cannot; it captured locals
+that exist nowhere else — so the page holds an id and asks for the
+function by name when the control moves. `callWidget` is that door, and it
+is an ordinary run: the callback may print, may draw a chart, may fail
+with a traceback, and each reports through the records that already
+existed. `_report` is shared with `execute` so there is one implementation
+of "what did this run produce", not two.
+
+Three decisions:
+
+- **It does not advance the execution count.** Nothing new was submitted;
+  the same cell is answering again with a different input, and bumping
+  `In [n]` on every pixel of a drag would make the numbering meaningless.
+- **Calls are coalesced.** A slider fires on every `input` event and
+  `run_lua` cannot be interrupted, so at most one call is in flight and
+  the newest pending value replaces any older one. Without that a
+  two-second drag queues forty runs and the UI finishes catching up long
+  after you let go.
+- **The output goes in the control's own slot, and is not saved.** A file
+  should carry the result the cell produced, not the last frame of
+  someone playing with a slider. What is saved is the control.
+- **It fires once on render, at the value it was created with.** Added
+  after looking at the thing: a cell that produced a slider and nothing
+  under it reads as broken, and the reader has no way to know whether
+  moving it will do anything. Not for a button, which pressing itself
+  would misrepresent, and marked `auto` so the failures it can produce
+  stay quiet — a notebook reopened from a file has a dead callback behind
+  every control, and a warning on each would be the first thing that
+  reader saw. An automatic call is also skipped once the control has been
+  moved, since by then the initial value is stale information and a
+  re-render firing it again would discard what was asked for.
+
+A control whose kernel has since restarted reports `stale`, and the page
+says "this came from a kernel that has since restarted" rather than
+failing. That is the ordinary state of a reopened notebook, not a fault —
+and where the backend cannot re-enter the program at all
+(`capabilities.widgets === false`) the control renders **disabled**, on
+the same principle as the Stop button: a control that moves and silently
+does nothing is a worse lie than one that says it is not connected.
+
+#### Smaller things this turned up
+
+- **`t[[[x]]]` does not mean what it looks like.** Indexing a table with a
+  long string puts the string's opening `[[` against the index's `[`, and
+  Lua lexes the run greedily: `unexpected symbol near ']'`, pointing at
+  the wrong end of the expression. `widgetChunk` writes
+  `__S.widgets[ [[id]] ]` and the spaces are load-bearing.
+- **`el` moved to `src/notebook/dom.js`.** Charts are reached *from*
+  `ui.js` and need the same helper, so importing it back out of `ui.js`
+  would have made a cycle that happens to work — a worse thing to leave
+  behind than a four-line module.
+- **`Number(null)` is `0`, and that made a gap into a real zero.** The
+  encoder wrote `null` for a NaN correctly and `normaliseSeries` coerced
+  it straight back to a value on the axis — so the one thing the gap
+  handling exists to prevent was happening in the renderer instead. Caught
+  by the test that asserts two paths and got one. `null`, `undefined` and
+  `''` are now rejected before `Number` sees them.
+- **A control returned its id, and the cell echoed it.** `widget.slider{}`
+  as a cell's last expression printed `Out[3]: w1` under the control every
+  time — the Lab's own bookkeeping presented as the user's result. The
+  constructors return nothing now.
+- **`_call` in `worker-kernel.js` silently drops streamed messages.** It
+  stores an `onMessage` the worker never posts to, so `callWidget` routed
+  through it would have resolved with every `stream` and `display_data`
+  lost. Both streaming methods go through `_streaming` instead, which is
+  the shape `execute` already had and now has a name.

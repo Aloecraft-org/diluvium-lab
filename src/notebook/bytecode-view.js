@@ -10,7 +10,7 @@
 // no user code executes, which is what makes it safe to point at bytecode
 // you were sent and have not read.
 
-import { el } from './ui.js';
+import { el } from './dom.js';
 import { readChunk, fromHex, toHex, flattenProtos, BytecodeError } from '../analysis/luac.js';
 import { disassemble, describeFunction, showConstant, toText } from '../analysis/disasm.js';
 

@@ -48,6 +48,13 @@ export class Kernel {
       isComplete: true,
       /** Compile without running, and hand back the bytecode. */
       bytecode: false,
+      /**
+       * Re-enter the program to run a control's callback. Needs persistent
+       * state between requests, which is the same property that makes a
+       * notebook a notebook -- so any backend that can run cells at all can
+       * almost certainly do this too.
+       */
+      widgets: false,
     };
   }
 
@@ -93,6 +100,21 @@ export class Kernel {
    * @returns {Promise<object>} execute_reply
    */
   async execute(code, onMessage) { throw new Error('not implemented'); }
+
+  /**
+   * A control the program drew has moved; run the callback it registered.
+   *
+   * Optional. A backend that cannot re-enter the program between cells --
+   * anything without persistent state, in practice -- leaves this alone,
+   * reports `capabilities.widgets === false`, and the page renders
+   * controls as disabled rather than as controls that quietly do nothing.
+   *
+   * @param {string} id the control's id, as the program's display said
+   * @param {number|string|boolean} value
+   * @param {(msg: object) => void} onMessage
+   * @returns {Promise<object>} execute_reply
+   */
+  async callWidget(id, value, onMessage) { throw new Error('not implemented'); }
 
   /** @returns {Promise<object>} complete_reply */
   async complete(code, cursorPos) { throw new Error('not implemented'); }

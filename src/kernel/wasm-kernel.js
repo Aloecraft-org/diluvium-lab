@@ -9,10 +9,11 @@ import { Kernel, STATUS } from './kernel.js';
 import { createWasi, unshimmedImports } from './wasi.js';
 import {
   RECORD, KEYWORD_CANDIDATES, makeNonce, executeChunk, isCompleteChunk,
-  completeChunk, languageInfoChunk, dumpChunk, parseRecord, splitPayload, splitTraceback,
+  completeChunk, languageInfoChunk, dumpChunk, widgetChunk, luaLiteral,
+  parseRecord, parseRecords, parseBundle, splitPayload, splitTraceback,
 } from './lua-harness.js';
 import {
-  executeReply, stream, executeResult, errorMsg, completeReply, isCompleteReply,
+  executeReply, stream, executeResult, displayData, errorMsg, completeReply, isCompleteReply,
 } from './protocol.js';
 
 export const DEFAULT_WASM_URL = 'vendor/libdiluvium_wasi.wasm';
@@ -93,7 +94,9 @@ export class WasmKernel extends Kernel {
   }
 
   get capabilities() {
-    return { ...super.capabilities, interrupt: false, restart: true, bytecode: true };
+    return {
+      ...super.capabilities, interrupt: false, restart: true, bytecode: true, widgets: true,
+    };
   }
 
   // --- lifecycle ----------------------------------------------------
@@ -208,6 +211,32 @@ export class WasmKernel extends Kernel {
     return { ...raw, output, record };
   }
 
+  /**
+   * The pieces of a request, in the order the program produced them.
+   *
+   * The terminal record is the last one -- the harness emits exactly one
+   * and then returns -- and everything before it is either the program's
+   * own output or a display it asked for.
+   */
+  _runInterleaved(source, nonce) {
+    const raw = this._runRaw(source);
+    const { pieces } = parseRecords(raw.stdout, nonce);
+    const messages = [];
+    let output = '';
+    let record = null;
+    for (const piece of pieces) {
+      if (piece.type === 'output') {
+        output += piece.text;
+        if (piece.text) messages.push(stream('stdout', piece.text));
+      } else if (piece.kind === RECORD.DISPLAY) {
+        messages.push(displayData(parseBundle(piece.payload)));
+      } else {
+        record = piece;
+      }
+    }
+    return { ...raw, messages, output, record };
+  }
+
   /** A trap or a proc_exit leaves the instance unusable. Say so, once. */
   _die(err) {
     this._instance = null;
@@ -229,10 +258,21 @@ export class WasmKernel extends Kernel {
     const nonce = makeNonce();
 
     this._setStatus(STATUS.BUSY);
-    const run = this._runHarness(executeChunk(code, nonce), nonce);
+    const run = this._runInterleaved(executeChunk(code, nonce), nonce);
+    return this._report(run, count, nonce, onMessage);
+  }
 
-    // The user's own output goes out first, in the order it was produced.
-    if (run.output) onMessage(stream('stdout', run.output));
+  /**
+   * Turn one finished run into messages and a reply.
+   *
+   * Shared by `execute` and `callWidget` because a control's callback is
+   * an ordinary run: it may print, it may draw, it may fail with a
+   * traceback, and none of that should be a second implementation.
+   */
+  _report(run, count, nonce, onMessage) {
+    // Output and displays go out in the order the program produced them,
+    // so `print` before a chart lands before the chart.
+    for (const message of run.messages) onMessage(message);
     if (run.stderr) onMessage(stream('stderr', run.stderr));
     if (run.truncated) {
       onMessage(stream('stderr', '\n[the kernel stopped recording output for this cell]\n'));
@@ -271,8 +311,28 @@ export class WasmKernel extends Kernel {
         onMessage(executeResult(count, run.record.payload));
         return executeReply('ok', count);
       default:
-        return executeReply('ok', count);
+        return executeReply('ok', count, run.record.payload === 'stale' ? { stale: true } : {});
     }
+  }
+
+  /**
+   * A control moved; run the callback the program registered with it.
+   *
+   * Not an `execute` -- deliberately. It does not advance the execution
+   * count, because nothing new was submitted: the same cell is answering
+   * again with a different input, and bumping `In [n]` on every drag of a
+   * slider would make the numbering meaningless.
+   *
+   * A callback whose kernel has since restarted reports `stale`, which the
+   * page turns into a sentence rather than an error. That is the ordinary
+   * state of a notebook reopened from a file, not a fault.
+   */
+  async callWidget(id, value, onMessage = () => {}) {
+    this._requireAlive();
+    const nonce = makeNonce();
+    this._setStatus(STATUS.BUSY);
+    const run = this._runInterleaved(widgetChunk(id, luaLiteral(value), nonce), nonce);
+    return this._report(run, this._executionCount, nonce, onMessage);
   }
 
   async isComplete(code) {

@@ -107,6 +107,80 @@ stops being true in the terminal.
 Errors keep the runtime's own message and add a plain-English hint beneath
 it where there is something useful to say.
 
+## Showing things that are not text
+
+A cell can print. It can also **display**: charts, event streams and
+controls, all through one primitive.
+
+```lua
+plot.line{ 1, 4, 9, 16 }                   -- y only, or (x, y)
+plot.bar({ "a", "b", "c" }, { 3, 1, 4 })
+plot.scatter(xs, ys, { title = "..." })
+
+plot{                                       -- several series, named
+  title = "Growth", x_label = "n",
+  series = { { name = "raw", y = a }, { name = "smoothed", y = b } },
+}
+```
+
+**Lua sends numbers; the Lab draws them.** A chart built in the kernel
+could not know the page's theme, its width or its fonts, so it would be
+wrong in dark mode and stale after a resize. Sending data means the chart
+follows the page — and means a saved notebook carries numbers rather than
+markup.
+
+Every chart has a **Table** button, and it is not a fallback: some of the
+series colours are deliberately low-contrast, and the rule for that is
+that the numbers must be reachable another way. A missing value is drawn
+as a gap, never as a zero, and a bar chart's axis always includes zero.
+
+`events` renders a list of records in the shape Diluvium's swarm layer
+emits on `system/events` — `event`, `id`, `detail`:
+
+```lua
+events{
+  { event = "spawned", id = 2 },
+  { event = "denied",  id = 3, detail = "capability not held: lifecycle" },
+}
+```
+
+The Lab **cannot yet drive a real swarm**: `dvs.c` is not in the WASM
+artifact, so there is nothing in the browser to drain. The renderer and
+the schema are real; the producer is not yet. See ROADMAP, "A swarm
+runner: what is actually in the way".
+
+`widget` makes it interactive. The callback stays in the kernel — it
+captured locals that exist nowhere else — so the page holds an id and asks
+for the function by name when the control moves:
+
+```lua
+widget.slider{ label = "terms", min = 2, max = 24, value = 8,
+  on_change = function(n)
+    local ys = {}
+    for i = 1, n do ys[i] = 2 ^ i end
+    plot.line(ys)
+  end }
+```
+
+It runs once at the value it was created with, so running the cell shows
+something. A control's output lands under the control and is **not** saved
+with the notebook: a file should carry the result the cell produced, not
+the last frame of someone dragging a slider. Reopen a notebook without
+running it and the controls are there but disabled, because the kernel
+that held their callbacks is gone.
+
+`display` is what all of that is built on, and takes a mime bundle exactly
+as Jupyter's `display_data` does — so it round-trips through `.ipynb`, and
+a reader that has never heard of Diluvium still gets the `text/plain` that
+ships in every bundle.
+
+```lua
+display{ ["text/plain"] = "a red circle",
+         ["image/svg+xml"] = "<svg ...>" }
+```
+
+`notebooks/showing-things.ipynb` is all of the above, runnable.
+
 ## Reading bytecode
 
 Every code cell has a **Bytecode** button. It compiles the cell without
@@ -367,6 +441,14 @@ for rather than guessing.
 output are escaped before rendering, so a notebook cannot script the page
 that opens it. `.ipynb` files are data here, not documents with behaviour.
 
+That holds for rich output too. The display types the Lab draws itself
+carry **data** — a chart is `{"series": [...]}` — which has nowhere to put
+a script tag. The two types that must carry markup are handled rather than
+trusted: `image/svg+xml` goes through an allowlist sanitiser that keeps
+shapes and text and drops everything that can run or fetch, and raster
+images become `data:` URIs, so nothing a notebook contains can cause the
+page to make a request.
+
 **`~function` is obfuscation, not encryption.** Diluvium's secure-function
 marker XORs a function's code and strings with a single-byte key. The Lab
 reads through it and disassembles those functions like any other, which is
@@ -383,6 +465,8 @@ index.html          the notebook
 spike.html          the Stage 0 spike: raw kernel contract, run this first
 src/kernel/         the kernel interface and the one implementation behind it
 src/notebook/       the document: model, .ipynb, markdown, highlighting, rendering
+src/notebook/display.js  rich output by mime type; plot.js draws the charts
+notebooks/          runnable examples, including the browser check
 vendor/             the pinned Diluvium runtime
 ```
 

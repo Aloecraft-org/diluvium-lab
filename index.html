@@ -10,7 +10,7 @@
      is otherwise a silent failure: stale modules do not throw, they just
      quietly lack the newer half of the page. scripts/check-version.mjs
      keeps this in step with package.json and src/version.js. -->
-<meta name="diluvium-lab-build" content="0.1.0">
+<meta name="diluvium-lab-build" content="0.2.0">
 <script>
 /* Deliberately NOT a module, and deliberately in this file.
  *
@@ -24,7 +24,7 @@
  * So this runs with no imports, no dependencies, and no assumptions about
  * anything else having worked. */
 (function () {
-  var EXPECTED = '0.1.0';   // kept in step by scripts/check-version.mjs
+  var EXPECTED = '0.2.0';   // kept in step by scripts/check-version.mjs
   window.DILUVIUM_LAB_EXPECTED = EXPECTED;
 
   function show(title, detail) {
@@ -308,6 +308,128 @@
   .traceback { color: var(--quiet); }
   .show-all { align-self: flex-start; font-size: .78rem; margin-top: .15rem; }
 
+  /* --- display_data: charts, event streams, controls ---
+
+     The categorical steps are a validated set, not a choice of favourites:
+     each mode's eight were checked for lightness band, chroma floor,
+     colour-vision separation between adjacent slots, normal-vision
+     separation, and contrast against that mode's surface. Three of the
+     light steps sit under 3:1 on white, which is exactly why every chart
+     with two or more series carries a legend and every chart carries a
+     table toggle -- identity is never left to colour alone.
+
+     The four status colours are reserved and never reused as a series, so
+     a faulted instance can never be mistaken for the fourth line on a
+     graph. Each pairs with a word for the same reason. */
+  :root {
+    --s1: #2a78d6; --s2: #eb6834; --s3: #1baf7a; --s4: #eda100;
+    --s5: #e87ba4; --s6: #008300; --s7: #4a3aa7; --s8: #e34948;
+    --tone-good: #0ca30c; --tone-warning: #fab219;
+    --tone-serious: #ec835a; --tone-critical: #d03b3b;
+  }
+
+  .viz { margin: .2rem 0 .1rem; padding: 0; max-width: 46rem; }
+  .viz-title { font-size: .88rem; font-weight: 600; margin-bottom: .15rem; }
+  .viz-canvas { width: 100%; }
+  .viz-svg { display: block; width: 100%; height: auto; touch-action: pan-y; }
+
+  .viz-legend { display: flex; flex-wrap: wrap; gap: .1rem .8rem; margin-bottom: .2rem; }
+  /* Text wears text tokens; the swatch beside it carries the identity.
+     Colouring the label itself is how legends become unreadable. */
+  .viz-key { display: inline-flex; align-items: center; gap: .3rem; font-size: .78rem; color: var(--quiet); }
+  .viz-swatch { width: .7rem; height: .7rem; border-radius: 3px; background: var(--slot, var(--s1)); }
+  [data-slot="1"] { --slot: var(--s1); } [data-slot="2"] { --slot: var(--s2); }
+  [data-slot="3"] { --slot: var(--s3); } [data-slot="4"] { --slot: var(--s4); }
+  [data-slot="5"] { --slot: var(--s5); } [data-slot="6"] { --slot: var(--s6); }
+  [data-slot="7"] { --slot: var(--s7); } [data-slot="8"] { --slot: var(--s8); }
+
+  /* Grid and axes recede; the data has the contrast. */
+  .viz-grid line { stroke: var(--edge); stroke-width: 1; }
+  .viz-zero { stroke: color-mix(in srgb, currentColor 35%, transparent); stroke-width: 1; }
+  .viz-tick { fill: var(--quiet); font-size: 10.5px; font-family: var(--mono); }
+  .viz-axis-label { fill: var(--quiet); font-size: 11px; }
+  .viz-line { stroke: var(--slot); stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+  /* A 2px ring in the surface colour, so overlapping marks stay countable. */
+  .viz-dot { fill: var(--slot); stroke: Canvas; stroke-width: 2; }
+  .viz-bar { fill: var(--slot); }
+  .viz-crosshair { stroke: color-mix(in srgb, currentColor 40%, transparent); stroke-width: 1; }
+
+  .viz-tooltip {
+    display: flex; flex-wrap: wrap; gap: .1rem .7rem; width: max-content; max-width: 100%;
+    padding: .25rem .5rem; margin-top: .1rem;
+    border: 1px solid var(--edge); border-radius: 6px; background: Canvas;
+    font-size: .78rem;
+  }
+  .viz-tip-x { font-family: var(--mono); color: var(--quiet); }
+  .viz-toggle {
+    font: inherit; font-size: .74rem; padding: .1rem .4rem; margin-top: .25rem;
+    border: 1px solid var(--edge); border-radius: 6px;
+    background: transparent; color: var(--quiet); cursor: pointer;
+  }
+  .viz-toggle:hover { background: var(--sunk); }
+  .viz-table { border-collapse: collapse; font-size: .78rem; margin-top: .3rem; }
+  .viz-table th, .viz-table td {
+    border: 1px solid var(--edge); padding: .1rem .45rem; text-align: right;
+    font-family: var(--mono); font-weight: 400;
+  }
+  .viz-table thead th { color: var(--quiet); }
+
+  /* --- events --- */
+  .events { max-width: 46rem; font-size: .8rem; }
+  .events-title { font-weight: 600; margin-bottom: .2rem; }
+  .events-tally { display: flex; flex-wrap: wrap; gap: .3rem; margin-bottom: .3rem; }
+  .events-chip {
+    padding: .05rem .45rem; border-radius: 999px; font-size: .74rem;
+    border: 1px solid var(--tone, var(--edge));
+    color: color-mix(in srgb, var(--tone, currentColor) 75%, CanvasText);
+  }
+  [data-tone="good"] { --tone: var(--tone-good); }
+  [data-tone="warning"] { --tone: var(--tone-warning); }
+  [data-tone="serious"] { --tone: var(--tone-serious); }
+  [data-tone="critical"] { --tone: var(--tone-critical); }
+  .events-table { border-collapse: collapse; width: 100%; font-family: var(--mono); font-size: .76rem; }
+  .events-table th { text-align: left; color: var(--quiet); font-weight: 500; }
+  .events-table th, .events-table td { padding: .1rem .45rem; border-bottom: 1px solid var(--edge); }
+  /* The tone is a rail, not a fill: a coloured row background makes the
+     text on it unreadable in one mode or the other. */
+  .events-table tbody tr { border-left: 3px solid var(--tone, transparent); }
+  .events-kind { color: color-mix(in srgb, var(--tone, currentColor) 75%, CanvasText); white-space: nowrap; }
+  .events-seq, .events-id { color: var(--quiet); text-align: right; }
+  .events-detail { word-break: break-word; }
+  .events-empty { color: var(--quiet); font-style: italic; }
+
+  /* --- controls --- */
+  .widget { margin: .15rem 0; }
+  .widget-row { display: flex; align-items: center; gap: .5rem; flex-wrap: wrap; }
+  .widget-label { font-size: .8rem; color: var(--quiet); min-width: 4rem; }
+  .widget-value { font-family: var(--mono); font-size: .8rem; min-width: 3rem; }
+  .widget input[type="range"] { flex: 1 1 12rem; max-width: 22rem; accent-color: var(--accent); }
+  .widget select, .widget-button {
+    font: inherit; font-size: .82rem; padding: .2rem .5rem;
+    border: 1px solid var(--edge); border-radius: 6px; background: transparent; color: inherit;
+  }
+  .widget-button { cursor: pointer; }
+  .widget[data-disabled="true"] { opacity: .6; }
+  .widget-note { font-size: .74rem; color: var(--quiet); font-style: italic; }
+  .widget-out:empty { display: none; }
+  .widget-out { margin-top: .2rem; }
+  .widget-out .outputs { margin-left: 0; max-height: none; }
+
+  .display-media { margin: .2rem 0; }
+  .display-image, .display-svg { max-width: 100%; height: auto; }
+  .display-json { margin: 0; font-family: var(--mono); font-size: .8rem; white-space: pre-wrap; }
+  .display-broken { font-size: .82rem; color: var(--bad); }
+
+  @media (prefers-color-scheme: dark) {
+    /* The same eight hues, stepped for a dark surface. Not an automatic
+       flip: each step was validated against the dark background on its
+       own, which is why slot 6 is unchanged and the rest are not. */
+    :root {
+      --s1: #3987e5; --s2: #d95926; --s3: #199e70; --s4: #c98500;
+      --s5: #d55181; --s6: #008300; --s7: #9085e9; --s8: #e66767;
+    }
+  }
+
   /* Plain-English help, under the runtime's own message and clearly not
      part of it. */
   .hint {
@@ -588,34 +710,37 @@
 <script type="importmap">
 {
   "imports": {
-    "./src/analysis/disasm.js": "./src/analysis/disasm.js?v=0.1.0",
-    "./src/analysis/luac.js": "./src/analysis/luac.js?v=0.1.0",
-    "./src/analysis/opcodes.js": "./src/analysis/opcodes.js?v=0.1.0",
-    "./src/app.js": "./src/app.js?v=0.1.0",
-    "./src/kernel/digest.js": "./src/kernel/digest.js?v=0.1.0",
-    "./src/kernel/kernel.js": "./src/kernel/kernel.js?v=0.1.0",
-    "./src/kernel/lua-harness.js": "./src/kernel/lua-harness.js?v=0.1.0",
-    "./src/kernel/protocol.js": "./src/kernel/protocol.js?v=0.1.0",
-    "./src/kernel/releases.js": "./src/kernel/releases.js?v=0.1.0",
-    "./src/kernel/runtimes.js": "./src/kernel/runtimes.js?v=0.1.0",
-    "./src/kernel/wasi.js": "./src/kernel/wasi.js?v=0.1.0",
-    "./src/kernel/wasm-kernel.js": "./src/kernel/wasm-kernel.js?v=0.1.0",
-    "./src/kernel/worker-kernel.js": "./src/kernel/worker-kernel.js?v=0.1.0",
-    "./src/notebook/bytecode-view.js": "./src/notebook/bytecode-view.js?v=0.1.0",
-    "./src/notebook/completion.js": "./src/notebook/completion.js?v=0.1.0",
-    "./src/notebook/console.js": "./src/notebook/console.js?v=0.1.0",
-    "./src/notebook/editing.js": "./src/notebook/editing.js?v=0.1.0",
-    "./src/notebook/editor.js": "./src/notebook/editor.js?v=0.1.0",
-    "./src/notebook/escape.js": "./src/notebook/escape.js?v=0.1.0",
-    "./src/notebook/highlight.js": "./src/notebook/highlight.js?v=0.1.0",
-    "./src/notebook/hints.js": "./src/notebook/hints.js?v=0.1.0",
-    "./src/notebook/ipynb.js": "./src/notebook/ipynb.js?v=0.1.0",
-    "./src/notebook/markdown.js": "./src/notebook/markdown.js?v=0.1.0",
-    "./src/notebook/model.js": "./src/notebook/model.js?v=0.1.0",
-    "./src/notebook/storage.js": "./src/notebook/storage.js?v=0.1.0",
-    "./src/notebook/ui.js": "./src/notebook/ui.js?v=0.1.0",
-    "./src/version.js": "./src/version.js?v=0.1.0",
-    "./vendor/pinned.js": "./vendor/pinned.js?v=0.1.0"
+    "./src/analysis/disasm.js": "./src/analysis/disasm.js?v=0.2.0",
+    "./src/analysis/luac.js": "./src/analysis/luac.js?v=0.2.0",
+    "./src/analysis/opcodes.js": "./src/analysis/opcodes.js?v=0.2.0",
+    "./src/app.js": "./src/app.js?v=0.2.0",
+    "./src/kernel/digest.js": "./src/kernel/digest.js?v=0.2.0",
+    "./src/kernel/kernel.js": "./src/kernel/kernel.js?v=0.2.0",
+    "./src/kernel/lua-harness.js": "./src/kernel/lua-harness.js?v=0.2.0",
+    "./src/kernel/protocol.js": "./src/kernel/protocol.js?v=0.2.0",
+    "./src/kernel/releases.js": "./src/kernel/releases.js?v=0.2.0",
+    "./src/kernel/runtimes.js": "./src/kernel/runtimes.js?v=0.2.0",
+    "./src/kernel/wasi.js": "./src/kernel/wasi.js?v=0.2.0",
+    "./src/kernel/wasm-kernel.js": "./src/kernel/wasm-kernel.js?v=0.2.0",
+    "./src/kernel/worker-kernel.js": "./src/kernel/worker-kernel.js?v=0.2.0",
+    "./src/notebook/bytecode-view.js": "./src/notebook/bytecode-view.js?v=0.2.0",
+    "./src/notebook/completion.js": "./src/notebook/completion.js?v=0.2.0",
+    "./src/notebook/console.js": "./src/notebook/console.js?v=0.2.0",
+    "./src/notebook/display.js": "./src/notebook/display.js?v=0.2.0",
+    "./src/notebook/dom.js": "./src/notebook/dom.js?v=0.2.0",
+    "./src/notebook/editing.js": "./src/notebook/editing.js?v=0.2.0",
+    "./src/notebook/editor.js": "./src/notebook/editor.js?v=0.2.0",
+    "./src/notebook/escape.js": "./src/notebook/escape.js?v=0.2.0",
+    "./src/notebook/highlight.js": "./src/notebook/highlight.js?v=0.2.0",
+    "./src/notebook/hints.js": "./src/notebook/hints.js?v=0.2.0",
+    "./src/notebook/ipynb.js": "./src/notebook/ipynb.js?v=0.2.0",
+    "./src/notebook/markdown.js": "./src/notebook/markdown.js?v=0.2.0",
+    "./src/notebook/model.js": "./src/notebook/model.js?v=0.2.0",
+    "./src/notebook/plot.js": "./src/notebook/plot.js?v=0.2.0",
+    "./src/notebook/storage.js": "./src/notebook/storage.js?v=0.2.0",
+    "./src/notebook/ui.js": "./src/notebook/ui.js?v=0.2.0",
+    "./src/version.js": "./src/version.js?v=0.2.0",
+    "./vendor/pinned.js": "./vendor/pinned.js?v=0.2.0"
   }
 }
 </script>
