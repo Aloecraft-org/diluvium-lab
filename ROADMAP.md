@@ -1546,7 +1546,95 @@ does nothing is a worse lie than one that says it is not connected.
   lost. Both streaming methods go through `_streaming` instead, which is
   the shape `execute` already had and now has a name.
 
-### Pinned to 5.5.1_build2, and what the move found ✅ done
+### Pinned to 5.5.1_build3, and the prerelease question ✅ done
+
+**Superseding the section below**, which pinned `build2` and said `build3`
+was too risky to default to. That was the right call on the evidence then
+available — upstream marks `build3` `stable: false`, `mirror: false` — and
+it was wrong once the evidence was actually gathered.
+
+`build3` was pinned, the whole suite run against it, and **369 of 372
+passed with no regressions**. The three failures were the pin's own
+consequences, not defects: one was the demo notebook's queue cell finally
+*running* and drawing a second event stream, and two were version labels.
+
+#### Why "prerelease" does not reach the Lab
+
+The instinct — do not default to a prerelease — is right in general and
+does not survive reading what `build3`'s prerelease status actually
+consists of. Its `known_issues` are three, in full:
+
+1. **Hibernation is off and should stay off.** The defect is real and
+   nasty: a restored program's thread record lacks `u2.funcidx`, so an
+   error unwinds from the stack base and writes the error object over the
+   driver's function slot. It is reached through `dvs_hibernate` /
+   `dv_snapshot` / `dv_restore`.
+2. **The capability layer is not a security boundary**, because a program
+   holding one endpoint reference can forge another through `debug`. So a
+   deployment "must treat every program it loads as trusted".
+3. **Endpoint rebinding after `destroy` poisons the token**, and a
+   snapshot of nested coroutines is captured rather than refused.
+
+Every one of those is a statement about **instances**, and the Lab creates
+none. It drives one global `lua_State` through `run_lua` (see
+`src/wasm_stubs.c`); it never calls `dv_new`, never snapshots, never binds
+an endpoint. `dvs_*` is not even in the artifact.
+
+And (2) is worth reading twice, because it sounds like the fatal one and
+is the opposite: *"treat every program it loads as trusted — written or
+templated by the operator, not accepting arbitrary code from a user"*
+**describes the Lab exactly.** A notebook cell already runs in a state
+with full `debug`, `io` and `os`, and the code was typed by the person at
+the keyboard. There is no capability layer here to be weakened; the Lab
+is, by design, the permissive profile that caveat assumes.
+
+#### What it buys
+
+`queue`, `endpoint` and `msgpack` for every user, which is the whole
+messaging story the event view was built for — and the demo notebook's
+centrepiece stops printing "this kernel has no `queue` library". Measured
+in a plain `run_lua` state: `declare`, `push`, `pop`, `len`, `capacity`
+and `info` all work; only the blocking `queue.wait` needs a host that
+resumes, which a bare state is not. Plus all 27 `dv_*` exports, which is
+what an instance tier would be built on. And it contains `build2`'s
+security fix, being later.
+
+No export was lost between `build2` and `build3` — checked, not assumed.
+
+#### Saying so, which is the part that makes it defensible
+
+Upstream's instruction is *"a deployment that wants it should name the
+tag."* Naming it is exactly what this does — in `vendor/PINNED_TAG`, in
+`vendor/pinned.js`, in the About panel, and in the dropdown, which now
+reads **`5.5.1_build3 (bundled, prerelease)`**.
+
+That last one closed a gap that predated this decision: `releases.js`
+parsed `prerelease` off the index and `entries()` **threw it away**, so a
+prerelease on the mirror would have appeared indistinguishable from a
+release. Upstream calls its own `stable` field "the truth" and derives
+GitHub's flag from it — and a build can be unstable for a *narrower
+supported configuration* rather than for being unfinished, which is
+precisely the thing a chooser cannot infer from a version number.
+`scripts/fetch-runtime.sh` now reads that flag from the same
+`changelog.json` that `build-mirror.sh` reads for `mirror_tags`, and
+records it in `pinned.js` as `true`, `false` or `null` — the third state
+meaning "not stated", which is not the same as "fine".
+
+Every stable build is one click away in the dropdown: `build2`, `build1`
+and `5.4.7_release` are all mirrored. And reverting the default is one
+command, which is the property that makes this a reasonable risk rather
+than a bet:
+
+```sh
+scripts/fetch-runtime.sh v5.5.1_build2     # back to latest/stable
+```
+
+The residual costs, stated: pinning `build3` needs
+`DILUVIUM_RELEASE_BASE` pointed at GitHub because the mirror does not
+carry it (documented in the script's header), and if `build3` is
+withdrawn or superseded by `build4` the Lab moves. Neither is silent.
+
+### Pinned to 5.5.1_build2, and what the move found ✅ done — superseded above
 
 The Lab ran on `5.5.1_build1` since Stage 2. `build2` is a **security
 release** for that build — secure (`~`) functions did not hide string

@@ -194,7 +194,7 @@ test.describe('no request at load', () => {
     // which is 5.5.1_build1. The dedup case has its own test below.
     // Newest first now that the registry sorts rather than trusting the
             // order the mirror happened to write.
-    await expect(select(page).locator('option')).toHaveText([/\(bundled\)/, '5.5.0', '5.4.7']);
+    await expect(select(page).locator('option')).toHaveText([/\(bundled/, '5.5.0', '5.4.7']);
     await expect(select(page)).toHaveAttribute('data-count', '3');
   });
 
@@ -514,7 +514,7 @@ test.describe('the real mirror index', () => {
     // in the Lab can fix that; regenerating the mirror can. Asserted as it
     // is rather than as it should be, so this says something true.
     await expect(select(page).locator('option'))
-      .toHaveText([/5\.5\.1_build2 \(bundled\)/, '5.5.1_build1', '5.4.7']);
+      .toHaveText([/\(bundled/, '5.5.1_build1', '5.4.7']);
     expect(REAL.releases.map((r) => r.tag)).not.toContain('v5.5.1_build2');
 
     // The filter that stops the pinned build being listed twice is
@@ -603,7 +603,7 @@ test.describe('version ordering across the format change', () => {
     await checkVersions(page);
 
     await expect(select(page).locator('option')).toHaveText([
-      /\(bundled\)/,
+      /\(bundled/,
       '5.5.2_build10', '5.5.2_build2', '5.5.1-rc.1', '5.5.0', '5.4.7',
     ]);
   });
@@ -659,6 +659,51 @@ test.describe('the index scripts/build-mirror.sh writes', () => {
     // copy of it is filtered out rather than listed twice.
     await checkVersions(page);
     await expect(select(page).locator('option'))
-      .toHaveText([/5\.5\.1_build2 \(bundled\)/, /5\.5\.1_build1/, /5\.4\.7/]);
+      .toHaveText([/\(bundled/, /5\.5\.1_build2/, /5\.5\.1_build1/, /5\.4\.7/]);
+  });
+});
+
+test.describe('a prerelease says so', () => {
+  test('a prerelease on the mirror is labelled in the dropdown', async ({ page }) => {
+    // The index carried this flag and `entries()` dropped it, so a
+    // prerelease sat in the list looking exactly like a release. Upstream
+    // treats it as load-bearing: a build can be marked not-stable for
+    // having a *narrower supported configuration* rather than for being
+    // unfinished, which is precisely the thing a chooser cannot infer.
+    await stubMirror(page, {
+      releases: [
+        { tag: 'v5.9.9_build1', name: 'Diluvium 5.9.9_build1', prerelease: true },
+        { tag: 'v5.9.8_build1', name: 'Diluvium 5.9.8_build1', prerelease: false },
+      ],
+    });
+    await openLab(page);
+    await checkVersions(page);
+
+    await expect(select(page).locator('option')).toHaveText([
+      /\(bundled/, '5.9.9_build1 (prerelease)', '5.9.8_build1',
+    ]);
+  });
+
+  test('and so does the bundled build, when it is one', async ({ page }) => {
+    await openLab(page);
+    // Read from vendor/pinned.js, which scripts/fetch-runtime.sh fills in
+    // from the same changelog.json that decides what the mirror carries.
+    // Whichever way this Lab is pinned, the label and the flag agree --
+    // that is the invariant, not which build happens to be pinned today.
+    const { stable, label } = await page.evaluate(async () => {
+      const { BUNDLED } = await import('./vendor/pinned.js');
+      return {
+        stable: BUNDLED.stable,
+        label: document.querySelector('[data-version-select] option').textContent,
+      };
+    });
+    expect(stable === true || stable === false || stable === null).toBe(true);
+    expect(/prerelease/.test(label)).toBe(stable === false);
+
+    // And the About panel states it in words, because "prerelease" here
+    // does not mean "unfinished" and a bug report needs to carry which.
+    await page.locator('[data-toolbar="about"]').click();
+    await expect(page.locator('[data-about]')).toContainText(
+      stable === false ? 'prerelease' : /release|not stated/);
   });
 });

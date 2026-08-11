@@ -382,7 +382,16 @@ test('the example notebook runs clean', async ({ page }) => {
   // exact counts are deliberate: changing the notebook should make someone
   // update this line and, in doing so, notice what they changed.
   await expect(page.locator('.viz-svg')).toHaveCount(7);
-  await expect(page.locator('.events-table')).toHaveCount(1);
+  // Two on a kernel with queues, one without: the notebook's last events
+  // cell feature-detects `queue` and draws a real drained stream when it
+  // is there. Derived from the running kernel rather than hardcoded, so
+  // this test says the same true thing whichever build is pinned.
+  const hasQueues = await page.evaluate(async () => {
+    const { executeCollected } = await import('./src/kernel/kernel.js');
+    const out = await executeCollected(window.lab.kernel, 'print(type(queue))');
+    return out.stdout.trim() === 'table';
+  });
+  await expect(page.locator('.events-table')).toHaveCount(hasQueues ? 2 : 1);
   await expect(page.locator('.widget')).toHaveCount(2);
   await expect(page.locator('.display-svg')).toHaveCount(1);
 });

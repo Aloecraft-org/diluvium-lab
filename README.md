@@ -149,14 +149,21 @@ and `msgpack`, so those records need not be hand-written: a program can
 push them into an actual `system/events` queue and drain it, which is the
 queue a swarm writes to.
 
-`build3` is **not** on the mirror and so is not in the dropdown — it is a
-prerelease whose supported configuration is narrower than the feature set
-it ships, and its own notes say the mirror does not carry it. To try it,
-pin it explicitly:
+**The Lab bundles `build3`, and says so.** It is marked a prerelease
+upstream — not for being unfinished, but because its supported
+configuration is narrower than what it ships: hibernation is off, and the
+capability layer is a structuring device rather than a security boundary.
+Both are statements about sandboxed *instances*, and the Lab creates none:
+it runs one Lua state that you type into, already with full `debug`, `io`
+and `os`. So the dropdown reads `5.5.1_build3 (bundled, prerelease)`, the
+About panel states the release status, and every stable build —
+`5.5.1_build2`, `5.5.1_build1`, `5.4.7` — is one click away in the
+dropdown.
+
+To go back to the latest stable build as the default:
 
 ```sh
-DILUVIUM_RELEASE_BASE=https://github.com/Aloecraft-org/diluvium/releases/download \
-  scripts/fetch-runtime.sh v5.5.1_build3
+scripts/fetch-runtime.sh v5.5.1_build2
 ```
 
 That is still not a swarm. Nothing spawns anything, because `dvs.c` is

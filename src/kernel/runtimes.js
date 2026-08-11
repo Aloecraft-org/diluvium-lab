@@ -28,6 +28,7 @@ export class RuntimeRegistry {
   constructor(options = {}) {
     this.source = options.source ?? new MirrorSource(options.mirrorUrl ?? DEFAULT_MIRROR);
     this.pinnedLabel = options.pinnedLabel ?? 'pinned';
+    this.pinnedIsPrerelease = options.pinnedIsPrerelease === true;
     this.bundledBytes = options.bundledBytes ?? null;
     this.wasmUrl = options.wasmUrl ?? DEFAULT_WASM_URL;
     this.remote = null;      // null until the user asks
@@ -53,7 +54,17 @@ export class RuntimeRegistry {
 
   /** What the dropdown shows. Remote entries appear only after a check. */
   entries() {
-    const pinned = { id: PINNED, label: `${this.pinnedLabel} (bundled)`, tag: null, remote: false };
+    // The bundled build's own stability comes from vendor/pinned.js, which
+    // scripts/fetch-runtime.sh fills in from the same changelog.json that
+    // decides what the mirror carries. A Lab bundling a prerelease should
+    // say so in the one place a reader is already looking.
+    const pinned = {
+      id: PINNED,
+      label: `${this.pinnedLabel} (bundled)`,
+      tag: null,
+      remote: false,
+      prerelease: this.pinnedIsPrerelease,
+    };
     if (!this.remote) return [pinned];
     return [pinned, ...this.remote
       // The mirror carries the pinned build too. Listing it twice invites
@@ -66,7 +77,20 @@ export class RuntimeRegistry {
       // semver they are moving to, so this keeps working across that
       // change without anyone timing the two.
       .sort((a, b) => compareVersions(b.version ?? b.tag, a.version ?? a.tag))
-      .map((r) => ({ id: r.tag, label: r.version ?? r.tag, tag: r.tag, remote: true }))];
+      // `prerelease` was read off the index and then dropped here, so a
+      // prerelease sat in the dropdown looking exactly like a release.
+      // Upstream treats that flag as load-bearing -- CHANGELOG.yaml calls
+      // its own `stable` field "the truth" and says GitHub's flag is
+      // derived from it, and a build can be unstable for having a
+      // *narrower supported configuration* rather than for being unfinished.
+      // Somebody choosing a runtime deserves to be told which they picked.
+      .map((r) => ({
+        id: r.tag,
+        label: r.version ?? r.tag,
+        tag: r.tag,
+        remote: true,
+        prerelease: r.prerelease === true,
+      }))];
   }
 
   /**

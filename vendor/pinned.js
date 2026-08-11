@@ -5,10 +5,13 @@
 // which matters because this is the first thing a bug report should carry.
 
 export const BUNDLED = {
-  tag: 'v5.5.1_build2',
-  version: '5.5.1_build2',
-  commit: '53fecaa74607ce1a14bac200d87f7eea7a50fb92',
-  built: '2026-08-08T09:44:34Z',
-  sha256: '053599d5b6d4ab50f5ec0adb54d9166fedb1d474b2dcde26d78ae54551561292',
+  tag: 'v5.5.1_build3',
+  version: '5.5.1_build3',
+  commit: '997d2f1ad9eb42afba50e2e2a52654cd97531521',
+  built: '2026-08-11T00:15:48Z',
+  sha256: 'e4f75f1fa391fa595d071cae64dbb731f3ca841cfe3ccecab8668bdaac23efca',
   artifact: 'libdiluvium_wasi.wasm',
+  // From changelog.json, where upstream states it. `null` means this
+  // script could not ask -- not that the build is fine.
+  stable: false,
 };

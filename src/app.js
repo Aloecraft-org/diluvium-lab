@@ -82,6 +82,7 @@ export class App {
       // other use of BUNDLED in this file was already right; this one
       // predated the import.
       pinnedLabel: options.pinnedLabel ?? BUNDLED.version,
+      pinnedIsPrerelease: options.pinnedIsPrerelease ?? BUNDLED.stable === false,
       bundledBytes: options.moduleBytes ?? null,
       wasmUrl: options.wasmUrl ?? DEFAULT_WASM_URL,
     });
@@ -271,7 +272,15 @@ export class App {
     this.versionNode.replaceChildren(...entries.map((entry) => {
       const option = this.document.createElement('option');
       option.value = entry.id;
-      option.textContent = entry.label;
+      // Said in the label rather than shown as a colour or an icon: an
+      // <option> can carry neither, and this is the one moment someone is
+      // choosing between builds. Folded into an existing parenthetical
+      // rather than added beside it, so the bundled prerelease reads
+      // "5.5.1_build3 (bundled, prerelease)" and not "(bundled) (prerelease)".
+      option.textContent = !entry.prerelease ? entry.label
+        : (entry.label.endsWith(')')
+          ? `${entry.label.slice(0, -1)}, prerelease)`
+          : `${entry.label} (prerelease)`);
       option.selected = entry.id === this.runtimeId;
       return option;
     }));
@@ -724,6 +733,10 @@ export class App {
       ['Lab', `${LAB_VERSION}${LAB_COMMIT ? ` (${LAB_COMMIT.slice(0, 12)})` : ' (commit unknown — served from a checkout)'}`],
       ['Diluvium', bundled ? BUNDLED.version : (remote?.version ?? entry?.label ?? this.runtimeId)],
       ['Release tag', bundled ? BUNDLED.tag : (remote?.tag ?? this.runtimeId)],
+      // Stated, because "prerelease" upstream does not mean "unfinished" --
+      // it can mean the supported configuration is narrower than the
+      // feature set, which is a thing a bug report needs to carry.
+      ['Release status', releaseStatus(bundled ? BUNDLED.stable : !remote?.prerelease)],
       ['Source', bundled ? 'bundled with this build' : `downloaded from the mirror`],
       ['Kernel sha256', bundled
         ? BUNDLED.sha256
@@ -823,4 +836,18 @@ function withTimeout(promise, ms, message) {
     Promise.resolve(promise).finally(() => clearTimeout(timer)),
     new Promise((_, reject) => { timer = setTimeout(() => reject(new Error(message)), ms); }),
   ]);
+}
+
+/**
+ * How to describe a build's stability in the About panel.
+ *
+ * Three states, not two: `null` means nothing said so, which is different
+ * from "it is fine". `scripts/fetch-runtime.sh` records `null` when it
+ * could not reach the changelog, and a mirror index may carry no flag at
+ * all.
+ */
+function releaseStatus(stable) {
+  if (stable === true) return 'release';
+  if (stable === false) return 'prerelease — upstream marks this build not stable';
+  return 'not stated';
 }
