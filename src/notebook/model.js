@@ -9,6 +9,30 @@ let nextId = 0;
 /** Long enough for a sentence, short enough to render in a toolbar. */
 export const MAX_TITLE = 120;
 
+/**
+ * What a cell's author says the cell will do, read from
+ * `metadata.diluvium_lab.expect`.
+ *
+ * A teaching notebook needs cells that misbehave: one that raises so you
+ * can see what an error looks like, one that loops forever so you have
+ * something to press **Stop** on. Prose says so, but only to a reader --
+ * **Run all** would still hang the kernel on the second kind, which is a
+ * poor first five minutes for somebody who just pressed *Start here* and
+ * then *Run all*. Saying it in the file makes it true for the page too.
+ *
+ * Unknown values mean nothing rather than something, so a notebook from
+ * elsewhere that happens to use the key is not misread.
+ */
+export const EXPECT = { ERROR: 'error', NEVER_RETURNS: 'never-returns' };
+
+const EXPECT_VALUES = new Set(Object.values(EXPECT));
+
+/** @returns {string|null} one of EXPECT, or null. */
+export function expectationOf(cell) {
+  const value = cell?.metadata?.diluvium_lab?.expect;
+  return EXPECT_VALUES.has(value) ? value : null;
+}
+
 export function newCell(cellType = 'code', source = '') {
   nextId += 1;
   return {

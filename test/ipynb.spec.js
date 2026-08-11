@@ -149,14 +149,21 @@ test.describe('opening', () => {
     const sample = await readFile(new URL('../notebooks/hello.ipynb', import.meta.url), 'utf8');
     await upload(page, sample, 'hello.ipynb');
 
-    await expect(cells(page)).toHaveCount(4);
+    // Read from the file rather than hardcoded: the sample is a teaching
+    // notebook and gets padded out, which should not break this test.
+    const parsed = JSON.parse(sample);
+    await expect(cells(page)).toHaveCount(parsed.cells.length);
     await page.locator('[data-toolbar="run-all"]').click();
     await expect(page.locator('body')).toHaveAttribute('data-running', 'false');
 
-    // The sample is written in 5.4.7 syntax on purpose; if it ever fails
-    // here, it drifted into 5.5 constructs the pinned runtime cannot parse.
-    await expect(page.locator('[data-output-type="error"]')).toHaveCount(0);
-    await expect(cell(page, 1).locator('[data-outputs]')).toContainText('hello, world!');
+    // It has one cell that raises on purpose, and Run all stops there. That
+    // the error is *that* cell and not an earlier one is the check here;
+    // examples.spec.js runs every cell of every bundled notebook.
+    const deliberate = parsed.cells.findIndex((c) => c.metadata?.diluvium_lab?.expect === 'error');
+    expect(deliberate).toBeGreaterThan(-1);
+    await expect(page.locator('[data-output-type="error"]')).toHaveCount(1);
+    await expect(cell(page, deliberate).locator('[data-output-type="error"]')).toHaveCount(1);
+    await expect(cell(page, 1).locator('[data-outputs]')).toContainText('hello, world');
   });
 
   test('rubbish is refused without breaking the page', async ({ page }) => {

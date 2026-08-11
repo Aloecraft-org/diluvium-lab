@@ -204,6 +204,40 @@ display{ ["text/plain"] = "a red circle",
 
 `notebooks/showing-things.ipynb` is all of the above, runnable.
 
+## Start here
+
+The **Start here** button opens a gallery of runnable notebooks. They are
+bundled into the page rather than fetched, so they work offline and they
+work in the single-file build — a button that broke in exactly the
+situation someone reaches for it would be worth less than no button.
+
+| | |
+| :--- | :--- |
+| **Hello, Diluvium** | the shortest path to having run some, and a map of the rest |
+| **The 5.5 language** | `switch`, `defer`, `with`, safe navigation, compound assignment, f-strings |
+| **Secure functions** | `~function`, what it protects and what it does not |
+| **Messages and queues** | msgpack, `queue.declare` / `push` / `pop` / `info`, endpoints |
+| **Sandboxed instances** | budgets, isolation, and what a sandboxed run refuses |
+| **Showing things** | charts, event streams, controls, raw mime bundles |
+| **Browser check** | what works in the browser you are reading this in |
+
+Opening one replaces what is on screen, so save first if you have unsaved
+work. The sources are in `notebooks/`; `npm run bundle-examples` folds an
+edit back into the page, and CI fails if you forget.
+
+### Cells that misbehave on purpose
+
+A teaching notebook needs a cell that raises so you can see what an error
+looks like, and one that loops forever so you have something to press
+**Stop** on. Those carry `metadata.diluvium_lab.expect` — `"error"` or
+`"never-returns"` — which the page reads:
+
+- the cell shows a small badge saying what it will do, where the surprise
+  happens rather than only in the prose above it;
+- **Run all** steps over a `never-returns` cell and says how many it
+  skipped. Pressing **Run** on it yourself still runs it, because that is
+  the demonstration.
+
 ## Naming a notebook
 
 The name at the top of the page is the notebook's, and it is **not** its
@@ -549,7 +583,8 @@ spike.html          the Stage 0 spike: raw kernel contract, run this first
 src/kernel/         the kernel interface and the one implementation behind it
 src/notebook/       the document: model, .ipynb, markdown, highlighting, rendering
 src/notebook/display.js  rich output by mime type; plot.js draws the charts
-notebooks/          runnable examples, including the browser check
+notebooks/          the Start here gallery, bundled into the page by
+                    scripts/bundle-examples.mjs -> src/notebook/examples.js
 vendor/             the pinned Diluvium runtime
 ```
 

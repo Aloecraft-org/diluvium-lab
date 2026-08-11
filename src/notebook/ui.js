@@ -14,6 +14,7 @@ import { HighlightedEditor } from './editor.js';
 import { hintFor, tipForOutput } from './hints.js';
 import { BytecodeView } from './bytecode-view.js';
 import { SandboxView } from './sandbox-view.js';
+import { EXPECT, expectationOf } from './model.js';
 
 /**
  * Display caps. The kernel's ceiling is far higher (see wasi.js): these
@@ -38,6 +39,33 @@ function button(action, label, title) {
     type: 'button', 'data-action': action,
     title: title ?? label, 'aria-label': title ?? label,
   }, [label]);
+}
+
+/**
+ * A cell that misbehaves on purpose, saying so before you press anything.
+ *
+ * The notebooks around it already explain in prose, but prose above a cell
+ * is read after the surprise as often as before it. This is the same fact
+ * where the surprise happens. Absent for every ordinary cell, which is
+ * almost all of them.
+ */
+const EXPECT_BADGE = {
+  [EXPECT.ERROR]: {
+    label: 'errors on purpose',
+    title: 'This cell raises deliberately — the error below is the lesson, not a fault.',
+  },
+  [EXPECT.NEVER_RETURNS]: {
+    label: 'never returns',
+    title: 'This cell runs forever on purpose. Run all steps over it; run it yourself and press Stop.',
+  },
+};
+
+function expectBadge(cell) {
+  const badge = EXPECT_BADGE[expectationOf(cell)];
+  if (!badge) return null;
+  return el('span', {
+    class: 'expect-badge', 'data-expect': expectationOf(cell), title: badge.title,
+  }, [badge.label]);
 }
 
 /** Trim text for display, reporting what was held back. */
@@ -379,6 +407,7 @@ export class NotebookView {
         foldToggle,
         el('span', { class: 'prompt', 'data-prompt': true }, [promptText(cell)]),
         isCode ? el('span', { class: 'timing', 'data-timing': true, hidden: true }) : null,
+        isCode ? expectBadge(cell) : null,
         tools,
       ]),
       foldPreview,

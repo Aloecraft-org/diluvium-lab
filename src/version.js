@@ -21,7 +21,7 @@
 // Pre-release suffixes are semver's: `0.2.0-rc.1`. Note the hyphen and
 // the dot -- `0.2.0_rc1` is not semver and does not sort.
 
-export const LAB_VERSION = '0.6.1';
+export const LAB_VERSION = '0.7.0';
 
 /**
  * The commit this was built from, or null when it cannot be known.

@@ -1951,3 +1951,79 @@ The useful numbers, kept because nobody will re-measure them: a trivial
 execute round-trips through the worker in **0.96 ms** median, a stored
 closure call in **1.07 ms**, an SVG chart of 10,000 points builds in
 **22 ms**, and stdout moves 1 MB in 27 ms.
+
+### A Start here gallery, and cells that misbehave on purpose ✅ done
+
+The example notebooks were one padded file and a browser check. There are
+now seven, behind a **Start here** button, and every code cell in every
+one of them is executed against the real pinned kernel on every CI run.
+
+#### The seven
+
+`hello` (17 cells), `language` (34), `secure-functions` (17), `messaging`
+(26), `sandbox` (19), `showing-things` (22), `browser-check` (23). Each
+carries `metadata.title` — so opening one names the notebook, through the
+same path a file or a URL takes — and `metadata.diluvium_lab.summary`,
+which is the line the gallery shows.
+
+Nothing was written from memory. Every Lua snippet was run against the
+pinned build first, in four batches of verification, which is how
+`local ~function name(...)` was found to be the syntax: `~function` is a
+statement, not an expression, and `local f = ~function() end` fails with
+"attempt to perform bitwise operation on a function value" rather than
+anything that points at the real problem.
+
+#### Bundled, not fetched
+
+`scripts/bundle-examples.mjs` emits `src/notebook/examples.js` from
+`notebooks/*.ipynb`, with an explicit `ORDER` array — a new notebook that
+nobody has placed in the reading order is an error, not a silent append.
+
+Fetching them would have been less code. It would also have broken the
+button in the single-file `file://` build, which has no `notebooks/` to
+fetch from and cannot fetch anyway — and offline, which is the state the
+Lab is designed for. **Start here** failing in exactly the situation
+somebody reaches for it would be the worst button in the page.
+
+The cost is that the bundle can go stale. Two things stop it: a CI step
+running `bundle-examples --check`, and a Playwright test that compares
+each bundled notebook against the file on disk.
+
+#### The thing the tests found
+
+Three of these notebooks contain cells that never return — `while true do
+end` for the **Stop** button, and one for the Sandbox panel — and one
+contains a cell that raises so you can see what an error looks like.
+Sweeping **Run all** across them hung the kernel, which is a poor first
+five minutes for somebody who has just pressed *Start here* and then
+*Run all*.
+
+The prose above each of those cells already said so. Prose is read after
+the surprise as often as before it, and **Run all** cannot read prose at
+all. So the fact moved into the file: `metadata.diluvium_lab.expect`,
+either `"error"` or `"never-returns"`, unknown values meaning nothing so
+a notebook from elsewhere using the key is not misread.
+
+The page reads it in two places. The cell shows a badge — *errors on
+purpose*, *never returns* — where the surprise happens. And **Run all**
+steps over a `never-returns` cell and reports how many it skipped, while
+pressing **Run** on that cell yourself still runs it, because that is the
+demonstration and skipping it there would break the thing it teaches.
+
+Writing the sweep also turned up two real bugs in notebooks that had been
+proofread:
+
+- `messaging.ipynb` did `local events = queue.declare("system/events", …)`
+  and then called `events(drained, …)` — shadowing the display global with
+  a queue id, so the cell that shows an event stream died on "attempt to
+  call a number value". Exactly the kind of thing reading does not catch
+  and running does.
+- `sandbox.ipynb` was marked as though `queue.lookup("outbox")` fails
+  outside an instance. It does not: `outbox` is a well-known queue in the
+  notebook kernel too. The mark was wrong and came off — which is the
+  point of asserting that a cell marked `expect: "error"` *did* error,
+  rather than only that unmarked cells did not.
+
+The sweep runs cells one at a time rather than pressing **Run all**,
+because Run all stops at the first error — which in `hello.ipynb` is cell
+9 of 17, and would have left most of the notebook unchecked.

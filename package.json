@@ -1,6 +1,6 @@
 {
   "name": "diluvium-lab",
-  "version": "0.6.1",
+  "version": "0.7.0",
   "private": true,
   "type": "module",
   "scripts": {
@@ -8,7 +8,8 @@
     "test": "playwright test",
     "bake": "node scripts/bake.mjs",
     "stamp": "node scripts/stamp-imports.mjs",
-    "release": "node scripts/stamp-imports.mjs && node scripts/check-version.mjs"
+    "bundle-examples": "node scripts/bundle-examples.mjs",
+    "release": "node scripts/bundle-examples.mjs && node scripts/stamp-imports.mjs && node scripts/check-version.mjs"
   },
   "devDependencies": {
     "@playwright/test": "~1.56.0"

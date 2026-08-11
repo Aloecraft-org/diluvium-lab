@@ -58,6 +58,12 @@ jobs:
       - name: Check the import map is current
         run: node scripts/stamp-imports.mjs --check
 
+      # The Start here notebooks are bundled into the page rather than
+      # fetched, so editing one in notebooks/ without rebundling ships the
+      # old text. The suite catches this too; failing here says why.
+      - name: Check the bundled examples match notebooks/
+        run: node scripts/bundle-examples.mjs --check
+
       - name: Test
         run: npm test
         env:

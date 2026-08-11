@@ -9,12 +9,13 @@ import { DEFAULT_WASM_URL } from './kernel/wasm-kernel.js';
 import { WorkerKernel } from './kernel/worker-kernel.js';
 import { STATUS } from './kernel/kernel.js';
 import { MSG } from './kernel/protocol.js';
-import { NotebookModel } from './notebook/model.js';
+import { NotebookModel, EXPECT, expectationOf } from './notebook/model.js';
 import { toIpynb, fromIpynb, messageToOutput, IpynbError } from './notebook/ipynb.js';
 import { NotebookView, renderOutputs } from './notebook/ui.js';
 import { ConsoleView } from './notebook/console.js';
 import { saveAutosave, loadAutosave, debounceSave, rememberRecent, listRecent, clearRecent } from './notebook/storage.js';
 import { fetchNotebook, hostOf, describeOpenError, normaliseNotebookUrl } from './notebook/remote.js';
+import { EXAMPLES, exampleById } from './notebook/examples.js';
 import { FALLBACK_KEYWORDS, FALLBACK_GLOBALS } from './notebook/highlight.js';
 import { RuntimeRegistry, PINNED } from './kernel/runtimes.js';
 import { LAB_VERSION, LAB_COMMIT } from './version.js';
@@ -514,19 +515,30 @@ export class App {
   /**
    * Run every code cell, top to bottom, stopping at the first error --
    * running on past a failure produces cascades of nonsense.
+   *
+   * Cells their author marked `never-returns` are stepped over. They exist
+   * to be pressed **Stop** on, deliberately, one at a time; sweeping into
+   * one would park the whole run on a cell that by construction never
+   * finishes. Pressing Run on it yourself still runs it -- that is the
+   * demonstration, and skipping it there would break the thing it teaches.
    */
   async runAll() {
     this.document.body.dataset.running = 'true';
+    let skipped = 0;
     try {
       for (const cell of [...this.model.cells]) {
         if (cell.cell_type !== 'code') continue;
         if (cell.source.trim() === '') continue;
+        if (expectationOf(cell) === EXPECT.NEVER_RETURNS) { skipped += 1; continue; }
         const reply = await this.runCell(cell.id);
         if (reply?.content.status === 'error') {
           this._toast('Run all stopped at the first error.', 'error');
           break;
         }
         if (this.kernel.status === STATUS.DEAD) break;
+      }
+      if (skipped) {
+        this._toast(`Run all stepped over ${skipped} cell${skipped === 1 ? '' : 's'} that never returns on purpose — run those yourself.`);
       }
     } finally {
       this.document.body.dataset.running = 'false';
@@ -684,6 +696,7 @@ export class App {
     this._setModel(model);
     this._scheduleAutosave();
     if (origin === 'file') this._toast(`Opened ${this.filename}`);
+
     try {
       await rememberRecent({
         name: this.filename, title: model.title, origin, url, ipynb: toIpynb(model),
@@ -748,6 +761,64 @@ export class App {
     const close = () => { banner.hidden = true; banner.replaceChildren(); forget(); };
     open.addEventListener('click', async () => { close(); await this.openUrl(target); });
     dismiss.addEventListener('click', close);
+  }
+
+  // --- the examples gallery -----------------------------------------
+
+  /**
+   * The notebooks bundled with the page.
+   *
+   * Bundled rather than fetched, which is the whole reason this works: the
+   * baked single-file build has no `notebooks/` to fetch from, and **Start
+   * here** breaking in exactly the situation somebody reaches for it would
+   * be the worst button in the page. See scripts/bundle-examples.mjs.
+   */
+  showExamples() {
+    const dialog = this.document.querySelector('[data-examples]');
+    const list = this.document.querySelector('[data-examples-list]');
+    if (!dialog || !list) return;
+
+    list.replaceChildren(...EXAMPLES.map((example) => {
+      const button = this.document.createElement('button');
+      button.type = 'button';
+      button.className = 'example-entry';
+      button.dataset.exampleOpen = example.id;
+
+      const title = this.document.createElement('span');
+      title.className = 'example-title';
+      title.textContent = example.title;
+      const count = this.document.createElement('span');
+      count.className = 'example-count';
+      count.textContent = `${example.cells} cells`;
+      const summary = this.document.createElement('span');
+      summary.className = 'example-summary';
+      summary.textContent = example.summary;
+
+      button.append(title, count, summary);
+      button.addEventListener('click', () => { dialog.close(); this.openExample(example.id); });
+      return button;
+    }));
+    dialog.showModal();
+  }
+
+  /**
+   * Open one, by id.
+   *
+   * Through the same `_open` as a file or a URL, so it is remembered, it
+   * autosaves, and its title comes out of its own metadata rather than
+   * being set here.
+   */
+  async openExample(id) {
+    const example = exampleById(id);
+    if (!example) { this._toast(`There is no example called ${id}.`, 'error'); return; }
+    try {
+      await this._open(example.source, { name: example.file, origin: 'example' });
+      this._toast(`Opened ${example.title}`);
+    } catch (err) {
+      // A bundled notebook that will not parse is this repository's bug,
+      // not the reader's, and should say so rather than blaming the file.
+      this._toast(`The bundled ${example.file} could not be opened: ${describeOpenError(err)}`, 'error');
+    }
   }
 
   // --- recents ------------------------------------------------------
@@ -888,6 +959,10 @@ export class App {
 
     on('check-versions', () => this.checkVersions());
     this.versionNode?.addEventListener('change', () => this.selectRuntime(this.versionNode.value));
+
+    on('examples', () => this.showExamples());
+    this.document.querySelector('[data-examples-close]')
+      ?.addEventListener('click', () => this.document.querySelector('[data-examples]')?.close());
 
     on('recent', () => this.showRecent());
     this.document.querySelector('[data-recent-close]')
