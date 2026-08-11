@@ -6,6 +6,7 @@
 // not replace this one.
 
 import { Kernel, STATUS } from './kernel.js';
+import { instanceCapable, runInstance } from './instance.js';
 import { createWasi, unshimmedImports } from './wasi.js';
 import {
   RECORD, KEYWORD_CANDIDATES, makeNonce, executeChunk, isCompleteChunk,
@@ -96,6 +97,11 @@ export class WasmKernel extends Kernel {
   get capabilities() {
     return {
       ...super.capabilities, interrupt: false, restart: true, bytecode: true, widgets: true,
+      // Asked of the running module, not of the version string. A build
+      // either exports the `dv_` ABI at the version this binding was
+      // written against or it does not, and the answer changes when the
+      // runtime dropdown changes.
+      instances: this._instance ? instanceCapable(this._instance.exports) : false,
     };
   }
 
@@ -364,6 +370,42 @@ export class WasmKernel extends Kernel {
     }
     if (run.record.kind !== RECORD.BYTECODE) throw new Error('unexpected reply while compiling');
     return run.record.payload;
+  }
+
+  /**
+   * Run `code` as a sandboxed instance, with a budget.
+   *
+   * Not `execute`: it shares no state with the notebook, does not touch
+   * the execution count, and produces a report rather than outputs. The
+   * kernel's own Lua state is not involved at all -- `dv_new` makes its
+   * own, and `dv_free` takes it away again.
+   *
+   * A trap here is as fatal as anywhere else: the instance ABI runs in
+   * the same module as everything else, so a fault takes the whole
+   * kernel with it and `_die` says so.
+   */
+  async runInstance(code, options = {}) {
+    this._requireAlive();
+    if (!instanceCapable(this._instance.exports)) {
+      throw new Error(
+        'this build cannot run sandboxed instances: it exports no `dv_` ABI at version 1. '
+        + 'Diluvium 5.5.1_build3 was the first that does.');
+    }
+    this._setStatus(STATUS.BUSY);
+    try {
+      // Drained rather than accumulated: whatever the notebook's own state
+      // wrote before this call is not this instance's output.
+      this._wasi.drain();
+      const report = runInstance(this._instance.exports, () => this._wasi.drain(), code, options);
+      this._setStatus(STATUS.IDLE);
+      return report;
+    } catch (err) {
+      if (err?.procExit !== undefined || /unreachable|memory access/i.test(err?.message ?? '')) {
+        throw new Error(this._die(err));
+      }
+      this._setStatus(STATUS.IDLE);
+      throw err;
+    }
   }
 
   async languageInfo() {

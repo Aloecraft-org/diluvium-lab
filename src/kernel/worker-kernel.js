@@ -325,4 +325,5 @@ export class WorkerKernel extends Kernel {
   async isComplete(code) { return this._call('isComplete', [code]); }
   async languageInfo() { return this._call('languageInfo', []); }
   async dumpBytecode(code, options = {}) { return this._call('dumpBytecode', [code, options]); }
+  async runInstance(code, options = {}) { return this._call('runInstance', [code, options]); }
 }

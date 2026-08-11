@@ -55,6 +55,13 @@ export class Kernel {
        * almost certainly do this too.
        */
       widgets: false,
+      /**
+       * Run a program as a sandboxed `dv_` instance: its own state, its
+       * own queues, and an instruction budget. Depends on the *build*
+       * rather than on the backend, so this is answered by asking the
+       * running module what it exports.
+       */
+      instances: false,
     };
   }
 
@@ -115,6 +122,17 @@ export class Kernel {
    * @returns {Promise<object>} execute_reply
    */
   async callWidget(id, value, onMessage) { throw new Error('not implemented'); }
+
+  /**
+   * Run `code` as a sandboxed instance and report what it cost.
+   *
+   * Optional; gated on `capabilities.instances`. Shares nothing with the
+   * notebook's own state and does not advance the execution count -- it
+   * is a measurement, not a cell.
+   *
+   * @returns {Promise<object>} a report: status, usage, queues, output
+   */
+  async runInstance(code, options) { throw new Error('not implemented'); }
 
   /** @returns {Promise<object>} complete_reply */
   async complete(code, cursorPos) { throw new Error('not implemented'); }

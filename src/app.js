@@ -13,7 +13,8 @@ import { NotebookModel } from './notebook/model.js';
 import { toIpynb, fromIpynb, messageToOutput, IpynbError } from './notebook/ipynb.js';
 import { NotebookView, renderOutputs } from './notebook/ui.js';
 import { ConsoleView } from './notebook/console.js';
-import { saveAutosave, loadAutosave, debounceSave } from './notebook/storage.js';
+import { saveAutosave, loadAutosave, debounceSave, rememberRecent, listRecent, clearRecent } from './notebook/storage.js';
+import { fetchNotebook, hostOf, describeOpenError, normaliseNotebookUrl } from './notebook/remote.js';
 import { FALLBACK_KEYWORDS, FALLBACK_GLOBALS } from './notebook/highlight.js';
 import { RuntimeRegistry, PINNED } from './kernel/runtimes.js';
 import { LAB_VERSION, LAB_COMMIT } from './version.js';
@@ -106,6 +107,8 @@ export class App {
       complete: (code, cursor) => this.completeAt(code, cursor),
       compile: (code) => this.kernel.dumpBytecode(code),
       onWidget: (id, value, into) => this.widgetChanged(id, value, into),
+      runInstance: (code, options) => this.kernel.runInstance(code, options),
+      instancesEnabled: () => this.kernel.capabilities.instances === true,
       widgetsEnabled: () => this.kernel.capabilities.widgets === true
         && this.kernel.status !== STATUS.DEAD,
     });
@@ -173,6 +176,11 @@ export class App {
       this._setModel(restored ?? fromIpynb(DEFAULT_NOTEBOOK));
     });
 
+    // After a notebook is on screen, so the bar appears over something
+    // rather than over a blank page, and before the kernel starts, since
+    // it is a question rather than a fetch.
+    await phase('checking for a linked notebook', () => this._offerLinkedNotebook());
+
     await phase('showing the kernel status', () => {
       this._renderStatus(this.kernel.status);
       if (this.backendNode) this.backendNode.textContent = this.kernel.label ?? 'kernel';
@@ -185,6 +193,8 @@ export class App {
       return true;
     });
     if (started) {
+      // After the handshake, which is the first moment the answer is known.
+      this._renderCapabilities();
       await phase('asking the kernel about its language', () => this.refreshLanguage());
       this.console.note('Kernel ready. Cells and this console share it.');
     } else {
@@ -627,15 +637,167 @@ export class App {
 
   async openFile(file) {
     try {
-      const model = fromIpynb(await file.text());
-      this.filename = file.name || 'notebook.ipynb';
-      this._setModel(model);
-      this._scheduleAutosave();
-      this._toast(`Opened ${this.filename}`);
+      await this._open(await file.text(), { name: file.name || 'notebook.ipynb', origin: 'file' });
     } catch (err) {
-      if (err instanceof IpynbError) this._toast(err.message, 'error');
-      else this._toast(`Could not open that file: ${err.message}`, 'error');
+      this._toast(describeOpenError(err), 'error');
     }
+  }
+
+  /**
+   * Open a notebook from a URL.
+   *
+   * Every caller is something somebody pressed. The Lab makes no request
+   * at load -- a hard constraint -- so a `?open=` link raises a bar and
+   * waits rather than fetching, and this is what its Open button calls.
+   */
+  async openUrl(input) {
+    try {
+      const { text, url, name, rewrittenFrom } = await fetchNotebook(input);
+      await this._open(text, { name, origin: 'url', url });
+      this._toast(rewrittenFrom
+        ? `Opened ${name} (rewritten to its raw URL)`
+        : `Opened ${name} from ${hostOf(url)}`);
+      return true;
+    } catch (err) {
+      this._toast(describeOpenError(err), 'error');
+      return false;
+    }
+  }
+
+  /**
+   * The one place a notebook becomes *this* notebook.
+   *
+   * Parse, adopt, autosave, remember. Remembering is last and its failure
+   * is swallowed: a recents list is a convenience, and it must never be
+   * the reason a notebook does not open.
+   */
+  async _open(text, { name, origin, url = null }) {
+    const model = fromIpynb(text);
+    this.filename = name || 'notebook.ipynb';
+    this._setModel(model);
+    this._scheduleAutosave();
+    if (origin === 'file') this._toast(`Opened ${this.filename}`);
+    try {
+      await rememberRecent({ name: this.filename, origin, url, ipynb: toIpynb(model) });
+    } catch { /* a full or blocked database is not a failure to open */ }
+    return model;
+  }
+
+  /**
+   * A `?open=<url>` link, which asks before it fetches.
+   *
+   * The constraint is "no external requests at load", and a link somebody
+   * sent you is not a decision you made -- so this shows what it would
+   * talk to and waits. The parameter is dropped from the address bar
+   * either way, so a reload does not ask twice.
+   */
+  _offerLinkedNotebook() {
+    const view = this.document.defaultView;
+    const params = new URLSearchParams(view?.location?.search ?? '');
+    const wanted = params.get('open');
+    if (!wanted) return;
+
+    const banner = this.document.querySelector('[data-link-banner]');
+    const forget = () => {
+      try {
+        const here = new URL(view.location.href);
+        here.searchParams.delete('open');
+        view.history.replaceState(null, '', here.href);
+      } catch { /* no history in this context */ }
+    };
+
+    let target;
+    try {
+      target = normaliseNotebookUrl(wanted).url;
+    } catch (err) {
+      forget();
+      this._toast(describeOpenError(err), 'error');
+      return;
+    }
+    if (!banner) return;
+
+    const open = this.document.createElement('button');
+    open.type = 'button';
+    open.dataset.linkOpen = 'true';
+    open.textContent = 'Open it';
+    const dismiss = this.document.createElement('button');
+    dismiss.type = 'button';
+    dismiss.dataset.linkDismiss = 'true';
+    dismiss.textContent = 'Not now';
+
+    const where = this.document.createElement('span');
+    where.className = 'link-where';
+    where.textContent = hostOf(target);
+    const said = this.document.createElement('span');
+    said.textContent = 'This link wants to open a notebook from ';
+    const after = this.document.createElement('span');
+    after.textContent = '. Nothing has been fetched yet.';
+
+    banner.replaceChildren(said, where, after, open, dismiss);
+    banner.hidden = false;
+
+    const close = () => { banner.hidden = true; banner.replaceChildren(); forget(); };
+    open.addEventListener('click', async () => { close(); await this.openUrl(target); });
+    dismiss.addEventListener('click', close);
+  }
+
+  // --- recents ------------------------------------------------------
+
+  async showRecent() {
+    const dialog = this.document.querySelector('[data-recent]');
+    const list = this.document.querySelector('[data-recent-list]');
+    if (!dialog || !list) return;
+    let entries = [];
+    try {
+      entries = await listRecent();
+    } catch { /* fall through to the empty state */ }
+
+    list.replaceChildren(...(entries.length ? entries.map((entry) => {
+      const button = this.document.createElement('button');
+      button.type = 'button';
+      button.className = 'recent-entry';
+      button.dataset.recentOpen = String(entry.openedAt);
+
+      const name = this.document.createElement('span');
+      name.className = 'recent-name';
+      name.textContent = entry.name;
+      const where = this.document.createElement('span');
+      where.className = 'recent-where';
+      where.textContent = entry.url ?? (entry.origin === 'file' ? 'opened from a file' : entry.source);
+      const when = this.document.createElement('span');
+      when.className = 'recent-when';
+      when.textContent = relativeTime(entry.openedAt);
+
+      button.append(name, where, when);
+      button.addEventListener('click', () => { dialog.close(); this.openRecent(entry); });
+      return button;
+    }) : [emptyRecent(this.document)]));
+
+    dialog.showModal();
+  }
+
+  /**
+   * Reopen a remembered notebook.
+   *
+   * From the stored copy, not by re-fetching. The copy is what makes a
+   * *file* reopenable at all -- a browser gives no way to re-read one
+   * without asking again -- and it means a URL entry still opens with the
+   * network down. An entry too large to have been kept falls back to its
+   * URL, and says so if it has none.
+   */
+  async openRecent(entry) {
+    if (entry.ipynb) {
+      try {
+        await this._open(entry.ipynb, { name: entry.name, origin: entry.origin, url: entry.url });
+        this._toast(`Opened ${entry.name}`);
+        return;
+      } catch (err) {
+        this._toast(describeOpenError(err), 'error');
+        return;
+      }
+    }
+    if (entry.url) { await this.openUrl(entry.url); return; }
+    this._toast(`${entry.name} was too large to keep a copy of, and it came from a file.`, 'error');
   }
 
   // --- chrome -------------------------------------------------------
@@ -658,6 +820,31 @@ export class App {
     on('check-versions', () => this.checkVersions());
     this.versionNode?.addEventListener('change', () => this.selectRuntime(this.versionNode.value));
 
+    on('recent', () => this.showRecent());
+    this.document.querySelector('[data-recent-close]')
+      ?.addEventListener('click', () => this.document.querySelector('[data-recent]')?.close());
+    this.document.querySelector('[data-recent-clear]')?.addEventListener('click', async () => {
+      try { await clearRecent(); } catch { /* nothing to forget */ }
+      this.document.querySelector('[data-recent]')?.close();
+      this._toast('Recent notebooks forgotten.');
+    });
+
+    const urlDialog = this.document.querySelector('[data-open-url]');
+    const urlInput = this.document.querySelector('[data-open-url-input]');
+    on('open-url', () => {
+      if (!urlDialog) return;
+      if (urlInput) urlInput.value = '';
+      urlDialog.showModal();
+    });
+    this.document.querySelector('[data-open-url-cancel]')
+      ?.addEventListener('click', () => urlDialog?.close());
+    // On the form rather than the button, so Enter in the field works --
+    // which is how a pasted URL is actually submitted.
+    this.document.querySelector('[data-open-url-form]')?.addEventListener('submit', () => {
+      const value = urlInput?.value ?? '';
+      if (value.trim()) this.openUrl(value);
+    });
+
     const fileInput = this.document.querySelector('[data-file-input]');
     on('open', () => fileInput?.click());
     fileInput?.addEventListener('change', async () => {
@@ -667,8 +854,29 @@ export class App {
     });
   }
 
+  /**
+   * Publish what the running build can do, as body attributes.
+   *
+   * Separate from `_renderStatus`, and it has to be: **capabilities
+   * arrive after the last status change.** The worker's own kernel
+   * publishes `idle` while starting, which crosses the boundary and marks
+   * the proxy idle -- and only then does the handshake deliver
+   * `capabilities`. By that point `_setStatus(IDLE)` is a no-op, so no
+   * further status event ever fires and anything reading capabilities
+   * from a status handler is reading them one beat too early.
+   *
+   * So this is called from the status handler *and* after the kernel
+   * starts *and* after a runtime switch. Cheap, idempotent, and the only
+   * arrangement that is right at every one of those moments.
+   */
+  _renderCapabilities() {
+    this.document.body.dataset.instances =
+      this.kernel.capabilities?.instances === true ? 'true' : 'false';
+  }
+
   _renderStatus(status) {
     this.document.body.dataset.kernelState = status;
+    this._renderCapabilities();
     // Enabled only while there is something to stop and a kernel that can
     // stop it. Kept in the DOM and disabled rather than hidden: a control
     // that appears and vanishes moves the toolbar under the pointer and
@@ -850,4 +1058,29 @@ function releaseStatus(stable) {
   if (stable === true) return 'release';
   if (stable === false) return 'prerelease — upstream marks this build not stable';
   return 'not stated';
+}
+
+/**
+ * "3 minutes ago". Coarse on purpose: a recents list answers "which one",
+ * not "exactly when", and a precise timestamp is harder to read at a
+ * glance than a rough one.
+ */
+export function relativeTime(then, now = Date.now()) {
+  const seconds = Math.max(0, Math.round((now - then) / 1000));
+  if (seconds < 45) return 'just now';
+  const minutes = Math.round(seconds / 60);
+  if (minutes < 60) return `${minutes} minute${minutes === 1 ? '' : 's'} ago`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 24) return `${hours} hour${hours === 1 ? '' : 's'} ago`;
+  const days = Math.round(hours / 24);
+  if (days < 30) return `${days} day${days === 1 ? '' : 's'} ago`;
+  return new Date(then).toISOString().slice(0, 10);
+}
+
+function emptyRecent(document_) {
+  const p = document_.createElement('p');
+  p.className = 'recent-empty';
+  p.dataset.recentEmpty = 'true';
+  p.textContent = 'Nothing yet. Notebooks you open from a file or a URL turn up here.';
+  return p;
 }

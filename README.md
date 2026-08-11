@@ -204,6 +204,53 @@ display{ ["text/plain"] = "a red circle",
 
 `notebooks/showing-things.ipynb` is all of the above, runnable.
 
+## Opening a notebook
+
+**Open…** takes a file. **From URL…** takes a URL:
+
+```
+https://raw.githubusercontent.com/owner/repo/main/notebooks/hello.ipynb
+```
+
+A GitHub *page* URL works too — it is rewritten to its raw form, because
+pasting the page you were looking at is the mistake everyone makes and
+`Unexpected token '<'` explains nothing. The host has to send
+`Access-Control-Allow-Origin`; `raw.githubusercontent.com` does, a plain
+`github.com` page does not, and the error says so rather than repeating
+"Failed to fetch".
+
+A link can carry one: `?open=<url>`. It **asks first**, naming the host it
+would talk to, and fetches nothing until you press the button — "no
+external requests at load" is a hard constraint, and a link somebody sent
+you is not a decision you made.
+
+**Recent** lists what you have opened before, kept in this browser. The
+notebook's content is kept too, not just its name: a browser gives no way
+to re-read a local file without asking again, so an entry that remembered
+only where something came from would work for URLs and not for files.
+Reopening comes from that copy, so it works offline.
+
+## Running a cell in a sandbox
+
+Every code cell has a **Sandbox** button on a runtime that has the `dv_`
+instance ABI (5.5.1_build3 and later — it is hidden otherwise). It runs the
+same source as a Diluvium *instance* rather than in the notebook's state:
+
+- its own globals and its own queues, sharing nothing with your cells
+- an **instruction budget**, so `while true do end` stops after 200,000
+  instructions instead of costing a worker
+- a report of what it cost: instructions used against the budget, peak
+  memory, the queues it ended up with and how full they are
+
+A program that parks on a queue is reported as parked, with what it is
+waiting for, and stops there. Nothing in the Lab can send it a message —
+that is a host loop's job, and the swarm layer it belongs to is not in the
+artifact yet.
+
+One thing worth knowing, because it is the reason a budget is always set:
+**the instruction counter is the budget hook.** An instance run with no
+budget reports zero however much work it did.
+
 ## Reading bytecode
 
 Every code cell has a **Bytecode** button. It compiles the cell without

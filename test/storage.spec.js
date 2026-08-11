@@ -111,7 +111,10 @@ test.describe('when storage misbehaves', () => {
     // say nothing alarming rather than showing a blank page.
     await page.evaluate(async () => {
       const db = await new Promise((resolve, reject) => {
-        const req = indexedDB.open('diluvium-lab', 2);
+        // No version: open whatever schema exists. Pinning the number here
+        // meant this test failed the moment a store was added, with a
+        // VersionError that has nothing to do with what it is testing.
+        const req = indexedDB.open('diluvium-lab');
         req.onsuccess = () => resolve(req.result);
         req.onerror = () => reject(req.error);
       });

@@ -10,7 +10,7 @@
      is otherwise a silent failure: stale modules do not throw, they just
      quietly lack the newer half of the page. scripts/check-version.mjs
      keeps this in step with package.json and src/version.js. -->
-<meta name="diluvium-lab-build" content="0.4.0">
+<meta name="diluvium-lab-build" content="0.5.0">
 <script>
 /* Deliberately NOT a module, and deliberately in this file.
  *
@@ -24,7 +24,7 @@
  * So this runs with no imports, no dependencies, and no assumptions about
  * anything else having worked. */
 (function () {
-  var EXPECTED = '0.4.0';   // kept in step by scripts/check-version.mjs
+  var EXPECTED = '0.5.0';   // kept in step by scripts/check-version.mjs
   window.DILUVIUM_LAB_EXPECTED = EXPECTED;
 
   function show(title, detail) {
@@ -420,6 +420,84 @@
   .display-json { margin: 0; font-family: var(--mono); font-size: .8rem; white-space: pre-wrap; }
   .display-broken { font-size: .82rem; color: var(--bad); }
 
+  /* Hidden until the running build proves it has the `dv_` instance ABI.
+     Only 5.5.1_build3 and later do, and switching runtimes changes the
+     answer -- so this is driven from a body attribute rather than decided
+     when the cell was built. */
+  body:not([data-instances="true"]) [data-action="sandbox"] { display: none; }
+
+  dialog[data-open-url] input {
+    font: inherit; font-size: .85rem; font-family: var(--mono);
+    width: min(46rem, 80vw); padding: .35rem .5rem;
+    border: 1px solid var(--edge); border-radius: 6px;
+    background: Canvas; color: inherit;
+  }
+  .dialog-note { font-size: .8rem; color: var(--quiet); max-width: 40rem; }
+  .dialog-note code { font-family: var(--mono); font-size: .95em; }
+
+  .recent-entry {
+    display: flex; align-items: baseline; gap: .5rem; width: 100%;
+    font: inherit; font-size: .85rem; text-align: left; cursor: pointer;
+    padding: .3rem .45rem; border: 1px solid transparent; border-radius: 6px;
+    background: transparent; color: inherit;
+  }
+  .recent-entry:hover { background: var(--sunk); border-color: var(--edge); }
+  .recent-entry .recent-name { font-weight: 600; }
+  .recent-entry .recent-where {
+    font-family: var(--mono); font-size: .75rem; color: var(--quiet);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1;
+  }
+  .recent-entry .recent-when { font-size: .75rem; color: var(--quiet); white-space: nowrap; }
+  .recent-empty { font-size: .85rem; color: var(--quiet); }
+
+  .link-banner {
+    display: flex; align-items: center; gap: .6rem; flex-wrap: wrap;
+    padding: .5rem .75rem; font-size: .87rem;
+    border-bottom: 1px solid var(--edge); background: var(--sunk);
+  }
+  .link-banner button {
+    font: inherit; font-size: .82rem; padding: .2rem .55rem; cursor: pointer;
+    border: 1px solid var(--edge); border-radius: 6px; background: Canvas; color: inherit;
+  }
+  .link-banner .link-where { font-family: var(--mono); }
+
+  /* --- the sandbox panel ---
+
+     Deliberately quieter than a cell's own output. What a program printed
+     is the smallest part of what this panel is for; the numbers beside it
+     are the point. */
+  .sandbox {
+    margin: .35rem 0 0 5.5rem; padding: .5rem .6rem;
+    border: 1px solid var(--edge); border-radius: 8px; background: var(--sunk);
+  }
+  .sandbox-controls { display: flex; align-items: center; gap: .6rem; flex-wrap: wrap; }
+  .sandbox-run {
+    font: inherit; font-size: .82rem; padding: .2rem .6rem; cursor: pointer;
+    border: 1px solid var(--edge); border-radius: 6px; background: transparent; color: inherit;
+  }
+  .sandbox-run:hover:not(:disabled) { background: var(--sunk); }
+  .sandbox-run:disabled { opacity: .6; cursor: default; }
+  .sandbox-budget { font-size: .78rem; color: var(--quiet); }
+  .sandbox-budget select {
+    font: inherit; font-size: .78rem; font-family: var(--mono); margin-left: .3rem;
+    border: 1px solid var(--edge); border-radius: 6px; background: transparent; color: inherit;
+  }
+  .sandbox-note { font-size: .74rem; color: var(--quiet); font-style: italic; }
+  .sandbox-summary {
+    display: flex; align-items: center; gap: .8rem; flex-wrap: wrap; margin-top: .5rem;
+  }
+  .sandbox-stat { font-size: .78rem; color: var(--quiet); }
+  .sandbox-stat b { font-family: var(--mono); font-weight: 600; color: CanvasText; }
+  .sandbox-output, .sandbox-error {
+    margin: .4rem 0 0; padding: .35rem .5rem; border-radius: 6px;
+    font-family: var(--mono); font-size: .8rem; white-space: pre-wrap; word-break: break-word;
+    background: Canvas; border: 1px solid var(--edge);
+  }
+  .sandbox-stderr, .sandbox-error { color: var(--bad); border-color: color-mix(in srgb, var(--bad) 35%, transparent); }
+  .sandbox-queues { margin-top: .5rem; }
+
+  @media (max-width: 34rem) { .sandbox { margin-left: 0; } }
+
   @media (prefers-color-scheme: dark) {
     /* The same eight hues, stepped for a dark surface. Not an automatic
        flip: each step was validated against the dark background on its
@@ -648,6 +726,8 @@
   <button type="button" data-toolbar="clear-outputs">Clear outputs</button>
   <span class="sep"></span>
   <button type="button" data-toolbar="open">Open…</button>
+  <button type="button" data-toolbar="open-url" title="Open a notebook from a URL">From URL…</button>
+  <button type="button" data-toolbar="recent" title="Notebooks opened before, kept in this browser">Recent</button>
   <button type="button" data-toolbar="save">Save .ipynb</button>
   <input type="file" data-file-input accept=".ipynb,application/json" hidden>
   <span data-filename></span>
@@ -686,6 +766,33 @@
   </div>
 </dialog>
 
+<dialog data-open-url>
+  <h2>Open a notebook from a URL</h2>
+  <form method="dialog" data-open-url-form>
+    <input type="url" data-open-url-input required
+           placeholder="https://raw.githubusercontent.com/owner/repo/main/notebooks/hello.ipynb"
+           aria-label="Notebook URL">
+    <p class="dialog-note">
+      A GitHub page URL works too — it is rewritten to its raw form. The
+      host has to send <code>Access-Control-Allow-Origin</code>, which
+      <code>raw.githubusercontent.com</code> does.
+    </p>
+    <div class="about-actions">
+      <button type="submit" data-open-url-go>Open</button>
+      <button type="button" data-open-url-cancel>Cancel</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog data-recent>
+  <h2>Recently opened</h2>
+  <div data-recent-list></div>
+  <div class="about-actions">
+    <button type="button" data-recent-clear>Forget all</button>
+    <button type="button" data-recent-close>Close</button>
+  </div>
+</dialog>
+
 <main class="sheet">
   <div class="cells" data-cells></div>
 </main>
@@ -703,6 +810,7 @@
   </div>
 </section>
 
+<div data-link-banner hidden class="banner link-banner"></div>
 <div data-stale-banner hidden role="alert"></div>
 <div data-toast hidden role="status" aria-live="polite"></div>
 
@@ -710,37 +818,40 @@
 <script type="importmap">
 {
   "imports": {
-    "./src/analysis/disasm.js": "./src/analysis/disasm.js?v=0.4.0",
-    "./src/analysis/luac.js": "./src/analysis/luac.js?v=0.4.0",
-    "./src/analysis/opcodes.js": "./src/analysis/opcodes.js?v=0.4.0",
-    "./src/app.js": "./src/app.js?v=0.4.0",
-    "./src/kernel/digest.js": "./src/kernel/digest.js?v=0.4.0",
-    "./src/kernel/kernel.js": "./src/kernel/kernel.js?v=0.4.0",
-    "./src/kernel/lua-harness.js": "./src/kernel/lua-harness.js?v=0.4.0",
-    "./src/kernel/protocol.js": "./src/kernel/protocol.js?v=0.4.0",
-    "./src/kernel/releases.js": "./src/kernel/releases.js?v=0.4.0",
-    "./src/kernel/runtimes.js": "./src/kernel/runtimes.js?v=0.4.0",
-    "./src/kernel/wasi.js": "./src/kernel/wasi.js?v=0.4.0",
-    "./src/kernel/wasm-kernel.js": "./src/kernel/wasm-kernel.js?v=0.4.0",
-    "./src/kernel/worker-kernel.js": "./src/kernel/worker-kernel.js?v=0.4.0",
-    "./src/notebook/bytecode-view.js": "./src/notebook/bytecode-view.js?v=0.4.0",
-    "./src/notebook/completion.js": "./src/notebook/completion.js?v=0.4.0",
-    "./src/notebook/console.js": "./src/notebook/console.js?v=0.4.0",
-    "./src/notebook/display.js": "./src/notebook/display.js?v=0.4.0",
-    "./src/notebook/dom.js": "./src/notebook/dom.js?v=0.4.0",
-    "./src/notebook/editing.js": "./src/notebook/editing.js?v=0.4.0",
-    "./src/notebook/editor.js": "./src/notebook/editor.js?v=0.4.0",
-    "./src/notebook/escape.js": "./src/notebook/escape.js?v=0.4.0",
-    "./src/notebook/highlight.js": "./src/notebook/highlight.js?v=0.4.0",
-    "./src/notebook/hints.js": "./src/notebook/hints.js?v=0.4.0",
-    "./src/notebook/ipynb.js": "./src/notebook/ipynb.js?v=0.4.0",
-    "./src/notebook/markdown.js": "./src/notebook/markdown.js?v=0.4.0",
-    "./src/notebook/model.js": "./src/notebook/model.js?v=0.4.0",
-    "./src/notebook/plot.js": "./src/notebook/plot.js?v=0.4.0",
-    "./src/notebook/storage.js": "./src/notebook/storage.js?v=0.4.0",
-    "./src/notebook/ui.js": "./src/notebook/ui.js?v=0.4.0",
-    "./src/version.js": "./src/version.js?v=0.4.0",
-    "./vendor/pinned.js": "./vendor/pinned.js?v=0.4.0"
+    "./src/analysis/disasm.js": "./src/analysis/disasm.js?v=0.5.0",
+    "./src/analysis/luac.js": "./src/analysis/luac.js?v=0.5.0",
+    "./src/analysis/opcodes.js": "./src/analysis/opcodes.js?v=0.5.0",
+    "./src/app.js": "./src/app.js?v=0.5.0",
+    "./src/kernel/digest.js": "./src/kernel/digest.js?v=0.5.0",
+    "./src/kernel/instance.js": "./src/kernel/instance.js?v=0.5.0",
+    "./src/kernel/kernel.js": "./src/kernel/kernel.js?v=0.5.0",
+    "./src/kernel/lua-harness.js": "./src/kernel/lua-harness.js?v=0.5.0",
+    "./src/kernel/protocol.js": "./src/kernel/protocol.js?v=0.5.0",
+    "./src/kernel/releases.js": "./src/kernel/releases.js?v=0.5.0",
+    "./src/kernel/runtimes.js": "./src/kernel/runtimes.js?v=0.5.0",
+    "./src/kernel/wasi.js": "./src/kernel/wasi.js?v=0.5.0",
+    "./src/kernel/wasm-kernel.js": "./src/kernel/wasm-kernel.js?v=0.5.0",
+    "./src/kernel/worker-kernel.js": "./src/kernel/worker-kernel.js?v=0.5.0",
+    "./src/notebook/bytecode-view.js": "./src/notebook/bytecode-view.js?v=0.5.0",
+    "./src/notebook/completion.js": "./src/notebook/completion.js?v=0.5.0",
+    "./src/notebook/console.js": "./src/notebook/console.js?v=0.5.0",
+    "./src/notebook/display.js": "./src/notebook/display.js?v=0.5.0",
+    "./src/notebook/dom.js": "./src/notebook/dom.js?v=0.5.0",
+    "./src/notebook/editing.js": "./src/notebook/editing.js?v=0.5.0",
+    "./src/notebook/editor.js": "./src/notebook/editor.js?v=0.5.0",
+    "./src/notebook/escape.js": "./src/notebook/escape.js?v=0.5.0",
+    "./src/notebook/highlight.js": "./src/notebook/highlight.js?v=0.5.0",
+    "./src/notebook/hints.js": "./src/notebook/hints.js?v=0.5.0",
+    "./src/notebook/ipynb.js": "./src/notebook/ipynb.js?v=0.5.0",
+    "./src/notebook/markdown.js": "./src/notebook/markdown.js?v=0.5.0",
+    "./src/notebook/model.js": "./src/notebook/model.js?v=0.5.0",
+    "./src/notebook/plot.js": "./src/notebook/plot.js?v=0.5.0",
+    "./src/notebook/remote.js": "./src/notebook/remote.js?v=0.5.0",
+    "./src/notebook/sandbox-view.js": "./src/notebook/sandbox-view.js?v=0.5.0",
+    "./src/notebook/storage.js": "./src/notebook/storage.js?v=0.5.0",
+    "./src/notebook/ui.js": "./src/notebook/ui.js?v=0.5.0",
+    "./src/version.js": "./src/version.js?v=0.5.0",
+    "./vendor/pinned.js": "./vendor/pinned.js?v=0.5.0"
   }
 }
 </script>

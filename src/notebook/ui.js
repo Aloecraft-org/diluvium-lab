@@ -13,6 +13,7 @@ import { renderBundle } from './display.js';
 import { HighlightedEditor } from './editor.js';
 import { hintFor, tipForOutput } from './hints.js';
 import { BytecodeView } from './bytecode-view.js';
+import { SandboxView } from './sandbox-view.js';
 
 /**
  * Display caps. The kernel's ceiling is far higher (see wasi.js): these
@@ -157,6 +158,8 @@ export class NotebookView {
     this.editingMarkdown = new Set();
     this.showingBytecode = new Set();
     this.bytecodeViews = new Map();
+    this.showingSandbox = new Set();
+    this.sandboxViews = new Map();
     // Highlighting follows the *running* kernel's language, so a version
     // switch re-colours without a table in this repo being edited.
     this.languageInfo = handlers.languageInfo ?? (() => ({}));
@@ -232,6 +235,7 @@ export class NotebookView {
 
     this.editors.clear();   // the old nodes, and their listeners, go with them
     this.bytecodeViews.clear();
+    this.sandboxViews.clear();
     for (const timer of this._busyTimers.values()) clearInterval(timer);
     this._busyTimers.clear();
     this.root.replaceChildren(...this.model.cells.map((cell, i) => this._renderCell(cell, i)));
@@ -254,6 +258,14 @@ export class NotebookView {
     const prompt = node.querySelector('[data-prompt]');
     if (prompt) prompt.textContent = promptText(cell);
     node.dataset.busy = 'false';
+    // The elapsed clock has to be stopped here, not merely overwritten.
+    // This cleared `data-busy` and left the interval running, so
+    // `_applyTiming` wrote the real duration and the tick overwrote it
+    // 100ms later -- a cell that answered `3` instantly went on counting
+    // for as long as the page was open. Nothing called `setBusy(id,
+    // false)` on the success path, and nothing should have to: finishing
+    // is what having outputs *means*.
+    this._stopBusyTimer(cellId);
     // A cell that succeeded and a cell that failed used to leave the same
     // trace -- both just `data-busy="false"`. runStateOf tells them apart:
     // ok, error or stale, or absent for a cell that has never run.
@@ -286,8 +298,7 @@ export class NotebookView {
     // otherwise, which is the difference between "be patient" and "press
     // Stop". Cleared and replaced by the final duration in updateOutputs.
     const slot = node.querySelector('[data-timing]');
-    const existing = this._busyTimers.get(cellId);
-    if (existing) { clearInterval(existing); this._busyTimers.delete(cellId); }
+    this._stopBusyTimer(cellId);
     if (busy && slot) {
       const started = performanceNow();
       slot.hidden = false;
@@ -295,6 +306,14 @@ export class NotebookView {
       tick();
       this._busyTimers.set(cellId, setInterval(tick, 100));
     }
+  }
+
+  /** Stop a cell's elapsed clock, if it has one. Safe to call twice. */
+  _stopBusyTimer(cellId) {
+    const timer = this._busyTimers.get(cellId);
+    if (timer === undefined) return;
+    clearInterval(timer);
+    this._busyTimers.delete(cellId);
   }
 
   _renderCell(cell, index) {
@@ -318,6 +337,13 @@ export class NotebookView {
     const tools = el('div', { class: 'cell-tools' }, [
       isCode ? button('run', 'Run', 'Run this cell (Ctrl+Enter)') : button('run', 'Render', 'Render (Ctrl+Enter)'),
       isCode ? button('bytecode', 'Bytecode', 'Compile this cell and read the bytecode — nothing runs') : null,
+      // Always built, hidden by CSS when the running build has no `dv_`
+      // ABI. Deciding here instead looked right and was not: cells render
+      // before the kernel has answered what it can do -- and in the worker
+      // path before the handshake has even happened -- so the button was
+      // absent on every first paint. Hiding it from a body attribute also
+      // means switching runtimes updates it without a re-render.
+      isCode ? button('sandbox', 'Sandbox', 'Run this cell as an isolated instance with an instruction budget') : null,
       isCode ? button('fullscreen', '⛶', 'Show this cell\'s output full screen') : null,
       button('to-code', 'Code', 'Turn into a code cell'),
       button('to-markdown', 'Markdown', 'Turn into a markdown cell'),
@@ -364,6 +390,10 @@ export class NotebookView {
       const panel = el('div', { class: 'bytecode', 'data-bytecode': cell.id });
       panel.hidden = !this.showingBytecode.has(cell.id);
       kids.push(panel);
+
+      const sandbox = el('div', { class: 'sandbox', 'data-sandbox': cell.id });
+      sandbox.hidden = !this.showingSandbox.has(cell.id);
+      kids.push(sandbox);
     } else {
       const rendered = el('div', { class: 'rendered', 'data-rendered': true });
       rendered.innerHTML = renderMarkdown(cell.source);
@@ -417,6 +447,7 @@ export class NotebookView {
       case 'fold': this.model.setFolded(cellId, !this.model.isFolded(cellId)); break;
       case 'fullscreen': this._fullscreenOutputs(cellId); break;
       case 'bytecode': this.toggleBytecode(cellId); break;
+      case 'sandbox': this.toggleSandbox(cellId); break;
       case 'delete': this.model.deleteCell(cellId); break;
       case 'move-up': this.model.moveCell(cellId, -1); break;
       case 'move-down': this.model.moveCell(cellId, +1); break;
@@ -460,6 +491,33 @@ export class NotebookView {
     const view = new BytecodeView(panel, () => this.handlers.compile(this.model.get(cellId)?.source ?? ''));
     this.bytecodeViews.set(cellId, view);
     view.refreshFromCell();
+  }
+
+  /**
+   * Show or hide the sandbox panel.
+   *
+   * Nothing runs on opening, unlike the bytecode panel which compiles
+   * straight away. Compiling is free and running is not: a sandboxed run
+   * is a real execution with a real budget, and it should happen because
+   * somebody asked for it.
+   */
+  toggleSandbox(cellId) {
+    const panel = this.cellNode(cellId)?.querySelector('[data-sandbox]');
+    if (!panel) return;
+    if (this.showingSandbox.has(cellId)) {
+      this.showingSandbox.delete(cellId);
+      this.sandboxViews.delete(cellId);
+      panel.hidden = true;
+      panel.replaceChildren();
+      return;
+    }
+    this.showingSandbox.add(cellId);
+    panel.hidden = false;
+    this.sandboxViews.set(cellId, new SandboxView(
+      panel,
+      (code, options) => this.handlers.runInstance(code, options),
+      () => this.model.get(cellId)?.source ?? '',
+    ));
   }
 
   _toType(cellId, type) {

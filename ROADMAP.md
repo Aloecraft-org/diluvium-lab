@@ -1722,3 +1722,97 @@ worth recording because the fix is "isolate", not "update the number":
   including that the published mirror is behind — and the filter is
   exercised against `releases-built.json`, which does carry the pinned
   build.
+
+### An instance tier, opening from a URL, and recents ✅ done
+
+Three things, and one bug that had been there all along.
+
+#### Sandboxed instances
+
+`build3` put the whole `dv_` ABI in the browser artifact, so the Lab is
+now a **host**: a per-cell **Sandbox** panel runs the cell's source as a
+`dv_` instance — its own state, its own queues, an instruction budget —
+and reports what it cost.
+
+Every offset comes from `dv_layout`, which exists precisely so a binding
+outside C can ask rather than hardcode; that it exists at all is a fair
+sign the ABI expected to be driven from somewhere like this. Two entry
+points are unreachable from JavaScript and only two: `dv_set_notify` and
+`dv_set_endpoint_handler` take C function pointers, and a function pointer
+in wasm is a table index that JS cannot mint. That is the same wall the
+swarm host vtable hits — and worth knowing it stops *there*, since run,
+budget, usage and queue calls are all pointers and integers.
+
+Probed before any of it was written, because reading is not running:
+
+- `dv_new(NULL)` works; a config is needed only for `DV_FLAG_TEXT_ONLY`,
+  which the panel sets — a sandbox should not accept precompiled chunks
+  by default.
+- **Instances are isolated.** A global set in one is `nil` in the next.
+- **`inbox` and `outbox` are pre-declared** in every instance;
+  `system/events` and `system/lifecycle` are not, exactly as §9.2 says.
+  That is why the panel looks queues up by name — the ABI has no
+  enumerate call.
+- **The instruction counter is the budget hook.** An instance with no
+  budget reports `instructions: 0` however much it ran, so the panel
+  always sets one and the control chooses how big. Measuring costs an
+  armed hook; that is the trade.
+- A runaway loop stops at its budget with `dv_exceeded` true, and the
+  notebook's own kernel is untouched — which is the difference between
+  this and a cell, where the same loop costs a worker.
+
+#### Opening from a URL
+
+**From URL…**, plus `?open=<url>` links. The link form **asks first** and
+names the host: "no external requests at load" is a hard constraint, and
+a link somebody sent you is not a decision you made. The parameter is
+dropped from the address bar either way, so a reload does not ask twice.
+
+A `github.com/.../blob/...` URL is rewritten to `raw.githubusercontent.com`
+— the mistake everyone makes, whose natural error is JSON complaining
+about `<`. And a cross-origin fetch a host has not opted into fails as an
+indistinguishable `TypeError` with no status and no reason, by design, so
+the message explains the likely cause instead of repeating "Failed to
+fetch".
+
+#### Recents
+
+In IndexedDB, keyed by source so reopening moves an entry up rather than
+duplicating it. **The content is kept, not just the name.** A browser
+gives no way to re-read a local file without asking again, so an entry
+that remembered only a location would work for URLs and be decoration for
+files. Keeping the bytes makes every entry work and makes a URL entry work
+offline. Capped at 12 entries and 2 MB each, and every failure is
+swallowed: a recents list must never be why a notebook does not open.
+
+#### The elapsed clock never stopped
+
+Reported from use, and real: `1 + 2` answered `3` instantly and the timer
+kept counting for as long as the page stayed open.
+
+`updateOutputs` cleared `data-busy` and left the interval running, so
+`_applyTiming` wrote the true duration and the tick overwrote it 100 ms
+later. Nothing called `setBusy(id, false)` on the success path — and
+nothing should have to, because having outputs is what finishing *means*.
+The timer is stopped where the outputs arrive now. Both halves are pinned:
+that it stops, and that it still runs while a cell is running, since "never
+start the clock" would also have made the first test pass.
+
+#### Two more of the same shape
+
+- **Capabilities arrive after the last status change.** The worker's own
+  kernel publishes `idle` while starting, which crosses the boundary and
+  marks the proxy idle; only *then* does the handshake deliver
+  `capabilities`. By that point `_setStatus(IDLE)` is a no-op, so no
+  further status event fires — and the Sandbox button, gated on a
+  capability read from the status handler, never appeared. Published from
+  its own method now, called from the status handler *and* after start.
+- **`page.route('https://**')` matches nothing.** Playwright's glob does
+  not take `**` directly after the scheme, and the symptom is silence: no
+  interception, and a real fetch failing with "Failed to fetch" — which
+  reads exactly like the CORS error the feature under test is supposed to
+  produce. A regex works. `storage.spec.js` also pinned the IndexedDB
+  version number and broke the moment a store was added; it opens the
+  current schema now.
+- **The bake's duplicate-name guard fired a fourth time**, on `STATUS` in
+  `instance.js` against `kernel.js`. It keeps earning its place.

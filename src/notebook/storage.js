@@ -6,7 +6,7 @@
 // telling you anything useful.
 
 const DB_NAME = 'diluvium-lab';
-const DB_VERSION = 2;
+const DB_VERSION = 3;
 const STORE = 'notebooks';
 /**
  * Downloaded runtimes, so switching versions costs a megabyte once rather
@@ -14,7 +14,21 @@ const STORE = 'notebooks';
  * also secure-context-only, and one store is one thing to clear.
  */
 const RUNTIME_STORE = 'runtimes';
+/**
+ * Notebooks opened before, most recent first.
+ *
+ * The content is kept, not just the name. A recents list that only
+ * remembers where something came from can reopen a URL and cannot reopen
+ * a file -- the browser gives no way to re-read a local file without
+ * asking again -- so half the entries would be decoration. Keeping the
+ * bytes makes every entry work, and works offline.
+ */
+const RECENT_STORE = 'recent';
 const AUTOSAVE_KEY = 'autosave';
+
+/** How many to keep, and how large one may be before it is not worth it. */
+export const MAX_RECENT = 12;
+export const MAX_RECENT_BYTES = 2 * 1024 * 1024;
 
 function open() {
   return new Promise((resolve, reject) => {
@@ -23,6 +37,11 @@ function open() {
       const db = request.result;
       if (!db.objectStoreNames.contains(STORE)) db.createObjectStore(STORE);
       if (!db.objectStoreNames.contains(RUNTIME_STORE)) db.createObjectStore(RUNTIME_STORE);
+      if (!db.objectStoreNames.contains(RECENT_STORE)) {
+        // Keyed by `openedAt` so a cursor walks them in time order and the
+        // oldest is the first thing a trim reaches.
+        db.createObjectStore(RECENT_STORE, { keyPath: 'openedAt' });
+      }
     };
     request.onsuccess = () => resolve(request.result);
     request.onerror = () => reject(request.error);
@@ -70,6 +89,54 @@ export async function getRuntime(key) {
 
 export async function listRuntimeKeys() {
   return (await withDb((db) => transact(db, RUNTIME_STORE, 'readonly', (s) => s.getAllKeys()))) ?? [];
+}
+
+/**
+ * Remember a notebook that was just opened.
+ *
+ * Deduplicated on `source` -- the URL, or the filename -- so reopening the
+ * same notebook moves it up the list rather than filling the list with
+ * itself. Failure is swallowed by the caller: a recents list is a
+ * convenience, and losing it must never be what stops a notebook opening.
+ */
+export async function rememberRecent(entry) {
+  const json = JSON.stringify(entry.ipynb ?? null);
+  const record = {
+    openedAt: Date.now(),
+    name: entry.name ?? 'notebook.ipynb',
+    origin: entry.origin ?? 'file',      // 'file' | 'url' | 'example'
+    url: entry.url ?? null,
+    source: entry.url ?? entry.name ?? 'notebook.ipynb',
+    cells: Array.isArray(entry.ipynb?.cells) ? entry.ipynb.cells.length : 0,
+    // Held as text rather than as a live object: structured clone of a
+    // deeply nested notebook is slower than one JSON round trip, and this
+    // runs on every open.
+    ipynb: json.length <= MAX_RECENT_BYTES ? json : null,
+    bytes: json.length,
+  };
+
+  return withDb(async (db) => {
+    const existing = await transact(db, RECENT_STORE, 'readonly', (s2) => s2.getAll());
+    const keep = (existing ?? [])
+      .filter((r) => r.source !== record.source)
+      .sort((a, b) => b.openedAt - a.openedAt)
+      .slice(0, MAX_RECENT - 1);
+    const wanted = new Set(keep.map((r) => r.openedAt));
+    return transact(db, RECENT_STORE, 'readwrite', (s2) => {
+      for (const r of existing ?? []) if (!wanted.has(r.openedAt)) s2.delete(r.openedAt);
+      return s2.put(record);
+    });
+  });
+}
+
+/** The recents, newest first. */
+export async function listRecent() {
+  const all = await withDb((db) => transact(db, RECENT_STORE, 'readonly', (s2) => s2.getAll()));
+  return (all ?? []).sort((a, b) => b.openedAt - a.openedAt);
+}
+
+export function clearRecent() {
+  return withDb((db) => transact(db, RECENT_STORE, 'readwrite', (s2) => s2.clear()));
 }
 
 export function clearRuntimes() {

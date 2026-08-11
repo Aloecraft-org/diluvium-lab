@@ -204,3 +204,37 @@ test.describe('output height', () => {
     await expect(codeCell(page).locator('[data-action="fullscreen"]')).toHaveCount(1);
   });
 });
+
+test.describe('the elapsed clock', () => {
+  test('stops when the cell finishes', async ({ page }) => {
+    // It did not. `updateOutputs` cleared `data-busy` and left the
+    // interval running, so the final duration was written and then
+    // overwritten 100ms later, for as long as the page stayed open --
+    // `1 + 2` answered `3` instantly and went on counting. Nothing called
+    // `setBusy(id, false)` on the success path, and nothing should have
+    // to: having outputs is what finishing means.
+    await openLab(page);
+    const cell = await runFirst(page, '1 + 2');
+    await expect(cell.locator('.output-execute_result pre')).toHaveText('3');
+
+    const timing = cell.locator('[data-timing]');
+    const settled = await timing.textContent();
+    expect(settled).toMatch(/\d/);
+    await page.waitForTimeout(900);
+    expect(await timing.textContent()).toBe(settled);
+  });
+
+  test('and it still runs while a cell is running', async ({ page }) => {
+    // The fix must not be "never start the clock". A cell that has been
+    // going for eight seconds has to look different from one that just
+    // started -- that is the difference between "be patient" and "press
+    // Stop".
+    await openLab(page);
+    const cell = codeCell(page);
+    await cell.locator('[data-editor]').fill('local t = 0 for i = 1, 40000000 do t = t + i end return t');
+    await cell.locator('[data-editor]').press('Control+Enter');
+    await expect(cell).toHaveAttribute('data-busy', 'true');
+    await expect(cell.locator('[data-timing]')).toBeVisible();
+    await expect(cell).toHaveAttribute('data-busy', 'false', { timeout: 60_000 });
+  });
+});
