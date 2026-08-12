@@ -665,6 +665,66 @@ test.describe('the index scripts/build-mirror.sh writes', () => {
   });
 });
 
+test.describe('the swarm follows the runtime', () => {
+  test('a switched runtime carries its own swarm module, checksummed', async ({ page }) => {
+    // Pairing one build's swarm layer with another build's kernel would
+    // put two different Diluviums in one page and call the pair a runtime.
+    // So the swarm artifact is fetched from the *same tag*, verified the
+    // same way, and a tag that publishes none simply has no swarm.
+    const swarmBytes = await readFile(new URL('../vendor/diluvium_swarm_wasi.wasm', import.meta.url));
+    const requests = await stubMirror(page, {
+      bodies: {
+        'v5.5.0/SHA256SUMS.txt':
+          `${sha256(kernelBytes)}  libdiluvium_wasi.wasm\n`
+          + `${sha256(swarmBytes)}  diluvium_swarm_wasi.wasm\n`,
+        'v5.5.0/diluvium_swarm_wasi.wasm': swarmBytes,
+        'v5.5.0/libdiluvium_wasi.wasm': kernelBytes,
+      },
+    });
+    await openLab(page);
+    await checkVersions(page);
+    await select(page).selectOption('v5.5.0');
+    await expect(page.locator('body')).toHaveAttribute('data-switching', 'false');
+    await expect(page.locator('[data-kernel-status]')).toHaveText('idle');
+
+    // It really went and got it, from that tag's directory.
+    expect(requests.some((r) => r === 'v5.5.0/diluvium_swarm_wasi.wasm')).toBe(true);
+
+    // And the swarm works on the switched-to runtime, which is the claim
+    // that matters -- the panel being present is not the same as it
+    // running anything.
+    await page.locator('[data-tool="swarm"]').click();
+    await page.locator('[data-swarm="swarm-start"]').click();
+    await page.locator('[data-swarm="swarm-run"]').click();
+    await expect(page.locator('[data-swarm-roster] tr[data-instance]'))
+      .toHaveCount(4, { timeout: 20_000 });
+  });
+
+  test('a runtime that publishes no swarm module says so, and still runs cells', async ({ page }) => {
+    // Every release before v5.5.1_build5 is this case. It must not stop
+    // the kernel loading, and the panel must say why rather than sit
+    // there empty.
+    await stubMirror(page);          // no swarm artifact in any release
+    await openLab(page);
+    await checkVersions(page);
+    await select(page).selectOption('v5.5.0');
+    await expect(page.locator('body')).toHaveAttribute('data-switching', 'false');
+    await expect(page.locator('[data-kernel-status]')).toHaveText('idle');
+
+    const cell = await runInCell(page, 'print("cells still run")');
+    await expect(cell).toContainText('cells still run');
+
+    // And the panel says why rather than offering a Start that could not
+    // work. Disabled-not-inert is the house rule; absent-and-explained is
+    // the same rule for a control that has nothing to act on.
+    await page.locator('[data-tool="swarm"]').click();
+    await expect(page.locator('[data-tool-panel-body]'))
+      .toContainText('cannot host a swarm');
+    await expect(page.locator('[data-tool-panel-body]')).toContainText('v5.5.1_build5');
+    await expect(page.locator('[data-swarm="swarm-start"]')).toHaveCount(0);
+  });
+});
+
 test.describe('a prerelease says so', () => {
   test('a prerelease on the mirror is labelled in the dropdown', async ({ page }) => {
     // The index carried this flag and `entries()` dropped it, so a

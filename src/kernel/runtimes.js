@@ -9,7 +9,9 @@
 // fails any of the first three must leave the running kernel exactly where
 // it was -- switching versions should never be how you lose a session.
 
-import { MirrorSource, ReleaseError, DEFAULT_MIRROR, KERNEL_ARTIFACT, compareVersions } from './releases.js';
+import {
+  MirrorSource, ReleaseError, DEFAULT_MIRROR, KERNEL_ARTIFACT, SWARM_ARTIFACT, compareVersions,
+} from './releases.js';
 import { DEFAULT_WASM_URL, checkModuleBytes } from './wasm-kernel.js';
 import { WorkerKernel } from './worker-kernel.js';
 import { canVerify } from './digest.js';
@@ -31,6 +33,10 @@ export class RuntimeRegistry {
     this.pinnedIsPrerelease = options.pinnedIsPrerelease === true;
     this.bundledBytes = options.bundledBytes ?? null;
     this.wasmUrl = options.wasmUrl ?? DEFAULT_WASM_URL;
+    // Where the *bundled* swarm module is, or null when this build ships
+    // none. Passed in rather than imported so this file keeps knowing
+    // nothing about vendor/.
+    this.swarmUrl = options.swarmUrl ?? null;
     this.remote = null;      // null until the user asks
     this.lastError = null;
   }
@@ -129,6 +135,34 @@ export class RuntimeRegistry {
   }
 
   /**
+   * The swarm module for a tag, or `null`.
+   *
+   * Fetched from the *same tag* as the kernel and verified the same way.
+   * Failure is `null` rather than a throw: a release with no swarm layer
+   * is the ordinary case for everything before v5.5.1_build5, and a
+   * mirror that is missing the file must not stop the kernel loading.
+   * The Instances panel says which of those happened.
+   */
+  async swarmBytesFor(id) {
+    if (id === PINNED) {
+      if (!this.swarmUrl) return null;
+      return fetchLocal(this.swarmUrl).then((r) => r.bytes).catch(() => null);
+    }
+    const key = `${id}/${SWARM_ARTIFACT}`;
+    const cached = await getRuntime(key).catch(() => null);
+    if (cached?.bytes) return new Uint8Array(cached.bytes);
+    try {
+      const indexChecksum = this.remote?.find((r) => r.tag === id)?.assets?.[SWARM_ARTIFACT] ?? null;
+      const bytes = await this.source.fetchSwarm(id, { indexChecksum });
+      if (!bytes) return null;
+      await putRuntime(key, { bytes, tag: id, storedAt: Date.now() }).catch(() => {});
+      return bytes;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
    * Produce a started kernel for `id`, or throw without disturbing anything.
    * The caller swaps only on success.
    */
@@ -146,15 +180,17 @@ export class RuntimeRegistry {
     // crypto.subtle and IndexedDB live here and the worker has no business
     // with either. Only the verified module crosses over.
     const entry = this.entries().find((e) => e.id === id);
+    // The swarm module for *this* tag, verified the same way. Pairing one
+    // build's swarm layer with another build's kernel would put two
+    // different Diluviums in one page and call the pair a runtime, so it
+    // is this tag's or it is nothing.
+    const swarmBytes = await this.swarmBytesFor(id);
     const kernel = new WorkerKernel({
       moduleBytes: bytes,
-      // No swarm on a switched-to runtime, and that is a refusal rather
-      // than an omission. The bundled `diluvium_swarm_wasi.wasm` belongs to
-      // the *pinned* tag; handing it to a kernel running some other build's
-      // `libdiluvium_wasi.wasm` would put two different Diluviums in one
-      // page and call the pair a runtime. Fetching the matching swarm
-      // artifact per tag is the fix and is a checksummed download this
-      // registry does not do yet -- see ROADMAP.
+      swarmBytes,
+      // `null` rather than a URL: the bytes were fetched and checksummed
+      // on this thread, because crypto.subtle and IndexedDB live here and
+      // the worker has no business with either. Only verified bytes cross.
       swarmUrl: null,
       label: `On-page WASM (${entry?.label ?? id})`,
     });

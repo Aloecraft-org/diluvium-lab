@@ -27,6 +27,18 @@ export const DEFAULT_MIRROR = 'https://diluvium.aloecraft.org/release/';
 /** The artifact the Lab runs. Never the command module, never luac. */
 export const KERNEL_ARTIFACT = 'libdiluvium_wasi.wasm';
 
+/**
+ * The swarm build, when a release has one.
+ *
+ * Fetched beside the kernel and from the *same tag*, which is the whole
+ * point: pairing one build's swarm module with another build's kernel
+ * would put two different Diluviums in one page and call the pair a
+ * runtime. A tag that publishes no checksum for this simply has no swarm,
+ * which is every release before v5.5.1_build5 and is a fact rather than a
+ * failure.
+ */
+export const SWARM_ARTIFACT = 'diluvium_swarm_wasi.wasm';
+
 export class ReleaseError extends Error {}
 
 /**
@@ -42,6 +54,9 @@ export class ReleaseSource {
 
   /** @returns {Promise<Uint8Array>} the verified kernel for `tag` */
   async fetchKernel(tag) { throw new Error('not implemented'); }
+
+  /** The swarm build, or null when this release has none. */
+  async fetchSwarm(tag) { return null; }
 }
 
 /**
@@ -145,7 +160,7 @@ export class MirrorSource extends ReleaseSource {
    * @param {string} tag
    * @param {string|null} [fromIndex] the sha256 the index claimed
    */
-  async checksumFor(tag, fromIndex = null) {
+  async checksumFor(tag, fromIndex = null, artifact = KERNEL_ARTIFACT) {
     const dir = encodeURIComponent(tag);
     const claims = new Map();
     if (fromIndex) claims.set('the release index', fromIndex.toLowerCase());
@@ -153,7 +168,7 @@ export class MirrorSource extends ReleaseSource {
     for (const file of ['SHA256SUMS.txt', 'BUILDINFO.txt']) {
       const response = await this._getOptional(`${dir}/${file}`);
       if (!response) continue;
-      const found = parseChecksums(await response.text()).get(KERNEL_ARTIFACT);
+      const found = parseChecksums(await response.text()).get(artifact);
       if (found) claims.set(file, found);
     }
     if (claims.size === 0) return null;
@@ -162,7 +177,7 @@ export class MirrorSource extends ReleaseSource {
     if (distinct.size > 1) {
       const detail = [...claims].map(([where, sum]) => `  ${sum}  (${where})`).join('\n');
       throw new ReleaseError(
-        `${tag} publishes more than one checksum for ${KERNEL_ARTIFACT} and they disagree, `
+        `${tag} publishes more than one checksum for ${artifact} and they disagree, `
         + `so the mirror is stale or damaged and nothing was loaded:\n${detail}`);
     }
     // Preference order is insertion order minus the index, which is only
@@ -177,21 +192,38 @@ export class MirrorSource extends ReleaseSource {
    * Download and verify. The Lab fetches a binary and then executes it, so
    * the checksum is not a nicety.
    */
-  async fetchKernel(tag, { indexChecksum = null } = {}) {
-    const expected = await this.checksumFor(tag, indexChecksum);
+  async fetchKernel(tag, options = {}) {
+    return this.fetchArtifact(tag, KERNEL_ARTIFACT, options);
+  }
+
+  /**
+   * The swarm build for a tag, or `null` when it publishes none.
+   *
+   * Absence is answered rather than thrown, because "this release has no
+   * swarm layer" is the ordinary state of every build before
+   * v5.5.1_build5 and must not stop the kernel loading.
+   */
+  async fetchSwarm(tag, { indexChecksum = null } = {}) {
+    const expected = await this.checksumFor(tag, indexChecksum, SWARM_ARTIFACT);
+    if (!expected) return null;
+    return this.fetchArtifact(tag, SWARM_ARTIFACT, { indexChecksum });
+  }
+
+  async fetchArtifact(tag, artifact = KERNEL_ARTIFACT, { indexChecksum = null } = {}) {
+    const expected = await this.checksumFor(tag, indexChecksum, artifact);
     if (!expected) {
       throw new ReleaseError(
-        `${tag} publishes no checksum for ${KERNEL_ARTIFACT}. Looked in the release index, `
+        `${tag} publishes no checksum for ${artifact}. Looked in the release index, `
         + `and for SHA256SUMS.txt and BUILDINFO.txt under ${this.url(`${encodeURIComponent(tag)}/`)}. `
         + 'A runtime that cannot be verified is not loaded.');
     }
 
-    const response = await this._get(`${encodeURIComponent(tag)}/${KERNEL_ARTIFACT}`, KERNEL_ARTIFACT);
+    const response = await this._get(`${encodeURIComponent(tag)}/${artifact}`, artifact);
     const bytes = new Uint8Array(await response.arrayBuffer());
     const actual = await sha256Hex(bytes);
     if (actual !== expected) {
       throw new ReleaseError(
-        `${tag} failed its checksum and was not loaded.\n` +
+        `${tag}'s ${artifact} failed its checksum and was not loaded.\n` +
         `  expected ${expected}\n  actual   ${actual}`);
     }
     return bytes;

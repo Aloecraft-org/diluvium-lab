@@ -2504,3 +2504,45 @@ It reports `status` now, and the panel's assertion says three.
 That is the argument for driving something written elsewhere: every test
 in this repository was written by the same hand as the code, so a shared
 misreading of the spec is invisible to all of them at once.
+
+### The swarm follows the runtime ✅ done
+
+Selecting a build from the dropdown used to cost you the swarm:
+`runtimes.js` passed `swarmUrl: null` for anything but the pinned tag,
+deliberately, because the bundled swarm module belongs to the *pinned*
+release and handing it to a kernel running some other build would put two
+different Diluviums in one page and call the pair a runtime.
+
+With the mirror regenerated — it now carries all six tags, including
+`diluvium_swarm_wasi.wasm` for build5 and build6 — the honest fix is
+available: fetch the swarm artifact from the **same tag**, verified the
+same way, cached the same way. `ReleaseSource.fetchKernel` became
+`fetchArtifact(tag, artifact)` with the checksum resolution parameterised;
+`fetchSwarm` is the same call that answers `null` instead of throwing when
+a release publishes none.
+
+Absence is a fact, not a failure. Everything before v5.5.1_build5 is in
+that case, and it must not stop the kernel loading — so a missing swarm
+artifact leaves cells working and the Instances panel saying which build
+first shipped one. Both are tested: one switches to a stubbed release that
+carries a swarm and drives it to four instances, the other switches to one
+that does not and asserts the panel explains itself rather than offering a
+Start that could not work.
+
+### A test that passed locally and failed on CI
+
+`panel.spec.js`'s "open or closed survives a reload" went red on CI while
+passing locally every time, including twelve parallel repeats on a loaded
+machine. Not flaky-in-the-usual-sense: the panel's state goes to
+IndexedDB, the write was fire-and-forget, and a reload issued in the same
+breath as the click can outrun the transaction. Rare on a fast laptop,
+routine on a slower runner.
+
+`panelSettled()` resolves when the write lands and the test waits for it,
+which is asserting the actual contract — what was stored comes back —
+rather than racing it.
+
+Two process notes, recorded because both were avoidable: a green local run
+was trusted over a cold one, and the work was landed on main before CI had
+spoken. The suite passing on the machine that wrote it is the weakest form
+of green there is.

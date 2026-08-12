@@ -111,6 +111,10 @@ export class App {
       // real build1 would also have been offered a second time. Every
       // other use of BUNDLED in this file was already right; this one
       // predated the import.
+      // The bundled swarm module, when this release publishes one, so a
+      // re-selection of the pinned runtime keeps its swarm.
+      swarmUrl: options.swarmUrl
+        ?? (BUNDLED.swarm ? `vendor/${BUNDLED.swarm.artifact}` : null),
       pinnedLabel: options.pinnedLabel ?? BUNDLED.version,
       pinnedIsPrerelease: options.pinnedIsPrerelease ?? BUNDLED.stable === false,
       bundledBytes: options.moduleBytes ?? null,

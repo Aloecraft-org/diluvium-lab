@@ -159,10 +159,12 @@ bytes; every other build the mirror carries is one click away in the
 dropdown, and the Lab says which of those are prereleases rather than
 leaving you to read a tag name.
 
-One caveat while it is true: the mirror's index is behind the releases, so
-the dropdown cannot yet offer `build5` or `build6` even though `vendor/`
-is pinned to the latter. Regenerating the mirror fixes it; nothing in the
-Lab has to change.
+Switching runtimes keeps the swarm. The matching
+`diluvium_swarm_wasi.wasm` is fetched from the **same tag** and verified
+the same way — pairing one build's swarm layer with another build's
+kernel would put two different Diluviums in one page and call the pair a
+runtime. A release that publishes none (everything before `build5`) still
+runs cells; the Instances panel says why it cannot run a swarm.
 
 **And since `build5` this *is* a swarm.** `dvs.c` used to be absent from
 every published artifact, so there was no supervisor, no capability
