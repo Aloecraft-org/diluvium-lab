@@ -212,6 +212,36 @@ print("cached", sleeping.cachedSize > 0, "seen", ack.seen)
   expect(problems).toEqual([]);
 });
 
+test('the root is not reported as spawned, because the runtime does not', async ({ page }) => {
+  await openKernel(page);
+  // §9.2's events are what a *guest* reads from `system/events`, and the
+  // swarm layer emits no `spawned` for a root: nothing is its parent and
+  // nothing was watching when it came to exist. A host that synthesised
+  // one would be inventing a record the runtime never produces -- and a
+  // supervisor counting spawns in a window would count one too many.
+  const r = await run(page, `
+${START}
+${ADMIT('alpha')}
+local spawns = 0
+for _, e in ipairs(swarm.step(1)) do
+  if e.event == "spawned" then spawns = spawns + 1 end
+end
+-- One admission, one spawn, across the whole run so far.
+local total = 0
+print("alpha id", swarm.status().alpha.id, "root id", swarm.status().root.id)
+`);
+  expect(r.status).toBe('ok');
+
+  const counted = await run(page, `
+${START}
+local seen = {}
+for _, e in ipairs(swarm.step(1)) do seen[#seen + 1] = e.event end
+print(table.concat(seen, ","))
+`);
+  // Starting a swarm and stepping it once must not look like a spawn.
+  expect(counted.stdout).not.toContain('spawned');
+});
+
 test('status is keyed by alias and by id, onto the same row', async ({ page }) => {
   await openKernel(page);
   const r = await run(page, `

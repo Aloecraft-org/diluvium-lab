@@ -49,8 +49,10 @@ test('starting a swarm fills the roster with the instances it created', async ({
   await expect(root).toContainText('root');
 
   // And the event list shows them arriving, which is the thing the panel
-  // exists for: sub-instances, as they are created.
-  await expect(page.locator('[data-swarm-events] [data-event="spawned"]')).toHaveCount(4);
+  // exists for: sub-instances, as they are created. Three, not four: the
+  // root is not `spawned`, because the runtime emits no such event for a
+  // program nothing is the parent of.
+  await expect(page.locator('[data-swarm-events] [data-event="spawned"]')).toHaveCount(3);
   expect(problems).toEqual([]);
 });
 

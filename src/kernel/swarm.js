@@ -600,7 +600,17 @@ export class SwarmHost {
         caps: this._capsOf(id),
         budget: this._budgetOf(id),
       });
-      this._emit({ event: 'spawned', id, detail: parent === 0 ? 'the root' : `child of ${parent}` });
+      // The root is not `spawned`, and this is a fidelity bug worth
+      // stating because it was one. §9.2's events are what a *guest* reads
+      // from `system/events`, and the swarm layer emits no `spawned` for a
+      // root -- nothing is its parent, and nothing was watching when it
+      // came to exist. A host that synthesised one would be inventing a
+      // record the runtime does not produce, and a supervisor counting
+      // spawns in a window would count one too many. It does, and did:
+      // caught by a notebook asserting exactly one spawn per admission.
+      this._emit(parent === 0
+        ? { event: 'status', id, detail: 'the root is running' }
+        : { event: 'spawned', id, detail: `child of ${parent}` });
       return id;
     } catch (err) {
       this._fault('create', id, err);

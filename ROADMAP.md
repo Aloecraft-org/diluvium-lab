@@ -2483,3 +2483,24 @@ inventing any, and each one is a test:
 `utf8` and `toHex`, against the vendored msgpack codec and the bytecode
 reader. The guard has now caught seven; the vendored file stays
 byte-identical and ours are the ones that rename.
+
+#### What running a real notebook against it found
+
+The Lab's own tests are written by whoever wrote the code, which is the
+one thing they cannot check. Running an outside notebook — one written
+against `doc/Host.md` and `doc/Messaging.md` rather than against this
+implementation — found a fidelity bug the whole suite had agreed with:
+
+**The host was synthesising a `spawned` event for the root.** §9.2's
+events are what a *guest* reads from `system/events`, and the swarm layer
+emits no `spawned` for a root — nothing is its parent, and nothing was
+watching when it came to exist. Inventing one is a record the runtime
+never produces, and a supervisor counting spawns in a window counts one
+too many. The panel had asserted four spawned events for a root and three
+workers, which is exactly the wrong number, confidently.
+
+It reports `status` now, and the panel's assertion says three.
+
+That is the argument for driving something written elsewhere: every test
+in this repository was written by the same hand as the code, so a shared
+misreading of the spec is invisible to all of them at once.
