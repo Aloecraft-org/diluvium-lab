@@ -355,6 +355,51 @@ The **Stop** button is called Stop rather than Interrupt for the same
 reason the kernel's is: it frees the swarm and every instance's Lua state
 goes with it.
 
+Each row also lists its queues as `name len/capacity`, with a full one
+marked. That is usually the answer to "why is this parked": every queue in
+Diluvium is bounded, so a program blocks because its outbound queue is
+full, waits because its inbound one is empty, or is refused because it
+declared `on_full = "reject"`.
+
+### From a cell, not only from the panel
+
+A cell can drive the same swarm, on runtimes that have `json`
+(5.5.1_build6) and a swarm module:
+
+```lua
+swarm.start{
+  root = [==[ ... ]==],
+  caps = { "lifecycle", "queue:*", "host:time" },
+  budget = { instructions = 5000000, memory_kb = 512 },
+  max_instances = 16, spawns_per_step = 4,
+  hibernation = "on",
+  connectors = { time = true },
+}
+swarm.push("root", "inbox", { op = "admit", label = "alpha" })
+for _, e in ipairs(swarm.step(10)) do
+  if e.event == "spawned" then swarm.alias("alpha", e.id) end
+end
+events(swarm.step(5))
+for _, m in ipairs(swarm.drain("alpha", "outbox")) do print(m.kind) end
+print(swarm.status().alpha.resident)
+```
+
+`start`, `alias`, `push`, `drain`, `step`, `status`, `hibernate`, `wake`,
+`kill`, `stop`. The config is `host/example.host.lua`'s shape and the same
+keys — `spawns_per_step`, `memory_kb`, `hibernation = "on"` — so a
+deployment prototyped here is a translation rather than a rewrite.
+
+**These return synchronously, inside the cell**, which is the whole trick:
+`run_lua` is one blocking WASM call with no event loop to return to, so
+the round trip is one unbuffered write to stdout carrying the request and
+one read from stdin collecting the answer, both intercepted by the page's
+own WASI shim. Everything a connector does must therefore be synchronous
+too.
+
+`swarm` is simply **absent** when the runtime has no `json`, or the build
+publishes no swarm module — so `type(swarm) == "table"` is a capability a
+notebook can test for, rather than a global that exists and throws.
+
 ### The host, and why a guest cannot tell
 
 What the panel drives is a **host** in `doc/Host.md`'s sense: the code
@@ -375,6 +420,7 @@ which:
 | `time` | wall clock | wall clock — identical |
 | `sql/query`, `sql/exec` | a small engine in `src/kernel/mock-sql.js` | the system SQLite |
 | `listen` | a request composer in the panel | a bound socket |
+| `crypto/*` | a vendored synchronous SHA-256/HMAC | the same, over the runtime's SHA-256 |
 | `rng`, `js/invoke` | `crypto`, a registered function | host's choice |
 
 Connectors are **all off by default**; a deployment names the ones it
@@ -382,6 +428,18 @@ wires, and a call to an unwired one is `denied` with a sentence saying so.
 The configuration is `host/example.host.lua`'s shape on purpose, so moving
 a deployment to the C host is a translation of the same keys rather than a
 rewrite.
+
+**`crypto/*` is where the runtime's sharpest claim becomes visible.** A
+program granted `host:crypto/jwt_sign` holds the right to ask for a
+signature, not the key: it cannot exfiltrate a secret it was never handed,
+and the key is in neither its heap nor its snapshot. The Lab copies the C
+host's semantics rather than inventing any — two subkeys derived under
+separate labels so `host:crypto/hmac` is not an oracle for forging a
+token, a fixed header compared rather than parsed so `alg` confusion is
+closed structurally, and `iat`/`exp` owned by the host so a guest cannot
+mint a token that never expires. The primitive underneath is vendored and
+synchronous, and checked against FIPS 180-4 and RFC 4231 vectors rather
+than against itself.
 
 **The SQL engine is not SQLite, and its whole design is refusing rather
 than approximating.** It answers the same two calls over the same shapes,

@@ -21,6 +21,7 @@ import { luaLongString, parseRecord, makeNonce } from '../src/kernel/lua-harness
 import { MockDatabase, parseSql } from '../src/kernel/mock-sql.js';
 import { buildConnectors } from '../src/kernel/connectors.js';
 import { encode, decode } from '../vendor/msgpack.js';
+import { sha256, hmacSha256, utf8Bytes, bytesToHex } from '../src/kernel/sha256.js';
 
 const kernel = new WasmKernel({
   wasmUrl: '../vendor/libdiluvium_wasi.wasm',
@@ -44,6 +45,7 @@ window.lab = {
   parseSql,
   buildConnectors,
   msgpack: { encode, decode },
+  crypto: { sha256, hmacSha256, utf8: utf8Bytes, toHex: bytesToHex },
 };
 
 kernel.start().then(

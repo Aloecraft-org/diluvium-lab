@@ -21,6 +21,8 @@
 // Length-prefixing means the payload can contain anything at all, including
 // newlines, tabs and the separator itself.
 
+import { CONTROL_MARK } from './wasi.js';
+
 /** Record kinds the harness can emit. */
 export const RECORD = {
   COMPILE_ERROR: 'C',
@@ -498,11 +500,95 @@ __install("events", __events)
 __install("widget", __widget)
 `;
 
-export function executeChunk(code, nonce) {
+/**
+ * `swarm` — the Lab's host, reachable from a cell.
+ *
+ * Everything else a cell can draw is one-way: the program emits a record
+ * and the page renders it after `run_lua` returns. A swarm cannot work
+ * that way, because `swarm.step(10)` has to *return* the events to the
+ * line that asked for them. So this is a synchronous round trip made out
+ * of the two things a sealed-but-not-that-sealed Lua state already has:
+ * one unbuffered write to stdout carrying the request, one read from stdin
+ * collecting the answer. Both are ordinary WASI calls on the same thread,
+ * inside the same `run_lua`, with nothing awaited anywhere.
+ *
+ * Three conditions, all checked rather than assumed, and all of which make
+ * `swarm` simply absent when unmet — a global that exists and throws is
+ * worse than one a program can test for:
+ *
+ * - `json`, for the wire. It arrived in 5.5.1_build6, which is also the
+ *   first build whose swarm module the Lab can drive, so the two gates
+ *   coincide by luck rather than design.
+ * - `io`, for the channel. The notebook's own state has it; a sealed
+ *   instance does not, which is correct — an instance reaches its host
+ *   through hostcalls, not through this.
+ * - a host that answers. The page installs the responder only when a
+ *   swarm module is actually loadable.
+ *
+ * The functions never close over the request nonce, for the reason the
+ * display API does not either: they outlive the chunk that defined them.
+ */
+/**
+ * The control marker as a Lua literal: derived from the shim's constant
+ * rather than retyped, because two spellings of the same control sequence
+ * that drift apart produce a request nothing recognises and a cell that
+ * prints its own plumbing.
+ */
+const CONTROL_MARK_LUA = [...CONTROL_MARK]
+  .map((c) => (c.charCodeAt(0) < 32 ? `\\${c.charCodeAt(0)}` : c))
+  .join('');
+
+const swarmLua = (enabled) => (enabled ? `
+if type(json) == "table" and type(io) == "table" then
+  local function __ask(__op, __args)
+    io.stdout:setvbuf("no")
+    io.write("${CONTROL_MARK_LUA}" .. json.encode({ op = __op, args = __args or {} }))
+    local __line = io.read("l")
+    if __line == nil then
+      error("the swarm host did not answer; the kernel may have been restarted", 3)
+    end
+    local __ok, __reply = pcall(json.decode, __line)
+    if not __ok then error("the swarm host answered with something that is not JSON", 3) end
+    if __reply.error then error(__reply.error, 3) end
+    return __reply.value
+  end
+
+  local __swarm = {
+    start = function(__config) return __ask("start", __config) end,
+    alias = function(__name, __id) return __ask("alias", { name = __name, id = __id }) end,
+    -- Two returns, and a *boolean* first: a caller writes
+    -- \`assert(swarm.push(...))\`, and answering with a table would make
+    -- that assertion pass on every refusal, since a table is truthy.
+    push = function(__t, __q, __v)
+      local __r = __ask("push", { target = __t, queue = __q, value = __v })
+      return __r.ok, __r.why
+    end,
+    drain = function(__t, __q) return __ask("drain", { target = __t, queue = __q }) end,
+    step = function(__n) return __ask("step", { n = __n or 1 }) end,
+    status = function() return __ask("status") end,
+    hibernate = function(__t) return __ask("hibernate", { target = __t }) end,
+    wake = function(__t) return __ask("wake", { target = __t }) end,
+    kill = function(__t) return __ask("kill", { target = __t }) end,
+    stop = function() return __ask("stop") end,
+  }
+  __install("swarm", __swarm)
+end
+` : '');
+
+/**
+ * @param {string} code the cell
+ * @param {string} nonce this request's record tag
+ * @param {object} [options]
+ * @param {boolean} [options.swarm] install the `swarm` global. Off unless
+ *   the page has a host to answer it -- a global that exists and throws is
+ *   worse than one a program can test for with `type(swarm)`.
+ */
+export function executeChunk(code, nonce, { swarm = false } = {}) {
   return `local __N = "${nonce}"
 local __src = ${luaLongString(code)}
 ${RENDER_LUA}
 ${DISPLAY_LUA}
+${swarmLua(swarm)}
 
 -- Finding the value to echo, in three attempts.
 --

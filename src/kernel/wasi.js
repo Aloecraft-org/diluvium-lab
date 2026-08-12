@@ -20,10 +20,37 @@ const E = { SUCCESS: 0, BADF: 8, NOSYS: 52, NOTSUP: 58 };
 export const HARD_MAX_BYTES = 4 * 1024 * 1024;
 export const HARD_MAX_LINES = 100_000;
 
-export function createWasi() {
+/**
+ * The marker a control request carries, and why it is this.
+ *
+ * A cell reaches the host *during* `run_lua` by writing one chunk to
+ * stdout and reading the answer from stdin. Both are synchronous calls in
+ * the same thread, which is the entire reason this works: `run_lua` cannot
+ * await, so anything a cell needs an answer to has to be answerable
+ * without leaving the call.
+ *
+ * The marker is two control characters and a word. `print` cannot produce
+ * it by accident — it writes its arguments and separators as separate
+ * `fd_write` calls, and a chunk only counts when the marker is at its very
+ * start — and a program that goes out of its way to forge one gets its own
+ * request answered, which is not an escalation: the same program could
+ * call `swarm` directly.
+ */
+export const CONTROL_MARK = '\x01\x1bDLCTL ';
+
+export function createWasi({ onControl = null } = {}) {
   let memory = null;
   const decoders = { 1: new TextDecoder(), 2: new TextDecoder() };
   let streams = fresh();
+  /**
+   * The answer to the last control request, waiting to be read from fd 0.
+   *
+   * Held as bytes, not as a string: a reply is delivered across as many
+   * reads as libc's buffer needs, and advancing a *string* by a byte count
+   * would cut a multi-byte character in half the first time a program's
+   * name was not ASCII.
+   */
+  let controlReply = null;
 
   function fresh() {
     return {
@@ -59,6 +86,40 @@ export function createWasi() {
     fd_write(fd, iovs, iovsLen, nwrittenPtr) {
       if (fd !== 1 && fd !== 2) return E.BADF;
       const d = dv();
+
+      // A control request must be one whole chunk, so it is recognised
+      // before any of it reaches the output stream. `io.write` on an
+      // unbuffered stdout produces exactly that; anything else falls
+      // through and is ordinary output.
+      if (fd === 1 && onControl && iovsLen > 0) {
+        const ptr = d.getUint32(iovs, true);
+        const len = d.getUint32(iovs + 4, true);
+        const head = new TextDecoder().decode(u8().subarray(ptr, ptr + len));
+        if (head.startsWith(CONTROL_MARK)) {
+          let total = len;
+          let text = head;
+          for (let i = 1; i < iovsLen; i++) {
+            const p = d.getUint32(iovs + i * 8, true);
+            const l = d.getUint32(iovs + i * 8 + 4, true);
+            text += new TextDecoder().decode(u8().subarray(p, p + l));
+            total += l;
+          }
+          // Never throws into wasm: the request is answered with an error
+          // the caller can read, because unwinding `run_lua` from here
+          // would take the Lua state with it.
+          try {
+            controlReply = new TextEncoder().encode(`${onControl(text.slice(CONTROL_MARK.length))}\n`);
+          } catch (err) {
+            controlReply = new TextEncoder()
+              .encode(`${JSON.stringify({ error: err?.message ?? String(err) })}\n`);
+          }
+          // Swallowed: a request is not output, and showing it would put
+          // the Lab's own plumbing in the user's cell.
+          d.setUint32(nwrittenPtr, total, true);
+          return E.SUCCESS;
+        }
+      }
+
       let total = 0;
       for (let i = 0; i < iovsLen; i++) {
         const ptr = d.getUint32(iovs + i * 8, true);
@@ -73,11 +134,32 @@ export function createWasi() {
       return E.SUCCESS;
     },
 
-    // There is no stdin in a notebook. Report EOF rather than blocking --
-    // run_lua is synchronous, so blocking would hang the tab outright.
+    // There is no stdin in a notebook, so this reports EOF rather than
+    // blocking -- run_lua is synchronous and blocking would hang the
+    // thread outright. The one exception is a control reply waiting to be
+    // collected, which is the return half of the round trip above.
     fd_read(fd, iovs, iovsLen, nreadPtr) {
       if (fd !== 0) return E.BADF;
-      dv().setUint32(nreadPtr, 0, true);
+      const d = dv();
+      if (controlReply === null) {
+        d.setUint32(nreadPtr, 0, true);
+        return E.SUCCESS;
+      }
+      const bytes = controlReply;
+      const mem = u8();
+      let off = 0;
+      for (let i = 0; i < iovsLen && off < bytes.length; i++) {
+        const ptr = d.getUint32(iovs + i * 8, true);
+        const len = d.getUint32(iovs + i * 8 + 4, true);
+        const take = Math.min(len, bytes.length - off);
+        mem.set(bytes.subarray(off, off + take), ptr);
+        off += take;
+      }
+      // A reply larger than the reader's buffer is delivered across
+      // several reads rather than truncated, which is what libc's own
+      // buffered reader expects.
+      controlReply = off >= bytes.length ? null : bytes.subarray(off);
+      d.setUint32(nreadPtr, off, true);
       return E.SUCCESS;
     },
 

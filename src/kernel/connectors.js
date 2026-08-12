@@ -33,6 +33,9 @@
 // wires, and a call to an unwired one is `denied` with a sentence saying so.
 
 import { MockDatabase } from './mock-sql.js';
+import {
+  sha256, hmacSha256, utf8Bytes, bytesToHex, base64url, fromBase64url, equalBytes,
+} from './sha256.js';
 
 /** What a connector returns. Mirrors `dh_call_status` on the C side. */
 const ok = (value) => ({ status: 'ok', value });
@@ -71,6 +74,9 @@ export function buildConnectors(description = {}, services = {}) {
       case 'listen':
         listener = new Listener(spec === true ? {} : spec);
         break;
+      case 'crypto':
+        connectors.set('crypto', cryptoConnector(spec === true ? {} : spec));
+        break;
       case 'js':
         connectors.set('js', jsConnector(services.invoke));
         break;
@@ -78,7 +84,7 @@ export function buildConnectors(description = {}, services = {}) {
         // An unknown key is a typo about to become a silent default. The C
         // host refuses one by name at parse time and so does this.
         throw new Error(
-          `unknown connector '${name}'; this host wires time, rng, sql, listen and js`);
+          `unknown connector '${name}'; this host wires time, rng, crypto, sql, listen and js`);
     }
   }
   return { connectors, listener, database };
@@ -155,6 +161,127 @@ export function sqlConnector(database) {
       return failed(`the sql connector answers 'sql/query' and 'sql/exec'; '${call}' is neither`);
     } catch (err) {
       return failed(err.message);
+    }
+  };
+}
+
+/**
+ * `crypto/*` — the primitives an API server needs, with the property the
+ * whole sandbox exists to give: **the signing key lives in the host and
+ * never in a guest.**
+ *
+ * A program granted `host:crypto/jwt_sign` holds the right to ask for a
+ * signature, not the key. A compromised instance cannot exfiltrate a secret
+ * it was never handed, and the key is in neither its heap nor its snapshot.
+ * That claim is the reason this connector is worth having in a Lab at all:
+ * it is the one place the runtime's central promise becomes something you
+ * can watch happen.
+ *
+ * Semantics copied from `host/dhost_crypto.c` rather than invented, because
+ * a guest must not be able to tell the two hosts apart:
+ *
+ * - **The master secret signs nothing.** Two subkeys are derived from it,
+ *   one for `crypto/hmac` and one for the JWT MAC, under versioned
+ *   domain-separation labels. Without that split, a program holding only
+ *   `host:crypto/hmac` could HMAC a JWT signing-input itself and assemble a
+ *   token, bypassing `host:crypto/jwt_sign` entirely.
+ * - **The header is fixed and compared, not parsed.** `alg` confusion —
+ *   `alg: none`, `alg: RS256` — is closed structurally: there is no header
+ *   field a token can set that changes how it is checked.
+ * - **The host owns `iat` and `exp`.** Any `iat`/`exp`/`nbf` a guest puts in
+ *   its claims is dropped and replaced, so a guest cannot mint a token that
+ *   never expires. Verify requires an integer `exp`.
+ * - **Verify checks the MAC before it decodes anything**, so the JSON
+ *   parser only ever runs on bytes this host signed.
+ */
+export function cryptoConnector({
+  secret = 'diluvium-lab-development-secret',
+  default_ttl: defaultTtl = 3600,
+  now = () => Math.floor(Date.now() / 1000),
+  random = (n) => crypto.getRandomValues(new Uint8Array(n)),
+} = {}) {
+  const master = typeof secret === 'string' ? utf8Bytes(secret) : secret;
+  const kHmac = hmacSha256(master, utf8Bytes('diluvium/crypto/hmac/v1'));
+  const kJwt = hmacSha256(master, utf8Bytes('diluvium/crypto/jwt-hs256/v1'));
+  // The one header this connector will sign or accept, pre-encoded so
+  // verify can compare the segment rather than parse it.
+  const HEADER = base64url(utf8Bytes('{"alg":"HS256","typ":"JWT"}'));
+
+  return (call, args = {}) => {
+    switch (call) {
+      case 'crypto/random': {
+        const n = Number(args.bytes ?? 32);
+        if (!Number.isInteger(n) || n < 1 || n > 1024) {
+          return failed(`crypto/random: bytes must be 1..1024, not ${args.bytes}`);
+        }
+        return ok(bytesToHex(random(n)));
+      }
+      case 'crypto/hash': {
+        const data = args.data ?? args.value;
+        if (typeof data !== 'string') return failed('crypto/hash: args.data must be a string');
+        return ok(bytesToHex(sha256(utf8Bytes(data))));
+      }
+      case 'crypto/hmac': {
+        const data = args.data ?? args.value;
+        if (typeof data !== 'string') return failed('crypto/hmac: args.data must be a string');
+        return ok(bytesToHex(hmacSha256(kHmac, utf8Bytes(data))));
+      }
+      case 'crypto/jwt_sign': {
+        const claims = args.claims;
+        if (claims === null || typeof claims !== 'object' || Array.isArray(claims)) {
+          return failed('crypto/jwt_sign: args.claims must be a map');
+        }
+        const ttl = Number(args.ttl ?? defaultTtl);
+        if (!Number.isFinite(ttl) || ttl <= 0) {
+          return failed(`crypto/jwt_sign: ttl must be a positive number of seconds`);
+        }
+        const iat = now();
+        const payload = {};
+        for (const [k, v] of Object.entries(claims)) {
+          // Dropped rather than refused, exactly as the C host does: a
+          // guest that sets them is not attacking, it is guessing, and the
+          // host's own values are the answer either way.
+          if (k === 'iat' || k === 'exp' || k === 'nbf') continue;
+          payload[k] = v;
+        }
+        payload.iat = iat;
+        payload.exp = iat + Math.floor(ttl);
+        const signingInput = `${HEADER}.${base64url(utf8Bytes(JSON.stringify(payload)))}`;
+        const mac = hmacSha256(kJwt, utf8Bytes(signingInput));
+        return ok(`${signingInput}.${base64url(mac)}`);
+      }
+      case 'crypto/jwt_verify': {
+        const token = args.token ?? args.jwt;
+        if (typeof token !== 'string') {
+          return ok({ valid: false, reason: 'no token was supplied' });
+        }
+        const parts = token.split('.');
+        if (parts.length !== 3) return ok({ valid: false, reason: 'malformed token' });
+        const [header, body, signature] = parts;
+        // Compared, not parsed. This is what closes alg confusion.
+        if (header !== HEADER) return ok({ valid: false, reason: 'unexpected header' });
+        const expected = hmacSha256(kJwt, utf8Bytes(`${header}.${body}`));
+        let given;
+        try { given = fromBase64url(signature); } catch { given = new Uint8Array(0); }
+        if (!equalBytes(expected, given)) return ok({ valid: false, reason: 'bad signature' });
+        // Only now, on bytes this host signed, is anything parsed.
+        let claims;
+        try {
+          claims = JSON.parse(new TextDecoder().decode(fromBase64url(body)));
+        } catch {
+          return ok({ valid: false, reason: 'the payload is not JSON' });
+        }
+        if (!Number.isInteger(claims?.exp)) {
+          // A token with no enforceable expiry is treated as one that has
+          // none, rather than as one that never expires.
+          return ok({ valid: false, reason: 'no integer exp' });
+        }
+        if (claims.exp <= now()) return ok({ valid: false, reason: 'expired' });
+        return ok({ valid: true, claims });
+      }
+      default:
+        return failed(`the crypto connector answers crypto/random, crypto/hash, crypto/hmac, `
+          + `crypto/jwt_sign and crypto/jwt_verify; '${call}' is none of them`);
     }
   };
 }

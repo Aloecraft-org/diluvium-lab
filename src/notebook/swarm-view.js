@@ -189,15 +189,32 @@ function instanceRow(row, onAction) {
   cells.push(actions);
 
   const tr = el('tr', { 'data-instance': row.id, 'data-state': row.state }, cells);
+  const extra = [];
+
+  // Queue depths, which are most of the answer to "why is this parked".
+  //
+  // Every queue in Diluvium is bounded, and that is the whole backpressure
+  // story: a program blocks because its outbound queue is full, or waits
+  // because its inbound one is empty, or gets a refusal because it declared
+  // `on_full = "reject"`. A roster that showed instances and not queues
+  // could tell you an instance was parked and never why.
+  if (row.queues?.length) {
+    extra.push(el('tr', { class: 'swarm-queues', 'data-queues': row.id }, [
+      el('td', { colspan: '7' }, row.queues.map((q) => el('span', {
+        class: `swarm-queue${q.length >= q.capacity && q.capacity > 0 ? ' swarm-queue-full' : ''}`,
+        title: `${q.name}: ${q.length} of ${q.capacity}`
+          + `${q.exported ? ', exported' : ''}${q.enabled ? '' : ', disabled'}`,
+      }, [`${q.name} ${q.length}/${q.capacity}`]))),
+    ]));
+  }
   if (row.detail) {
     // The detail is a runtime message and often a traceback, so it gets its
     // own full-width row rather than being squeezed into a cell.
-    const note = el('tr', { class: 'swarm-detail' }, [
+    extra.push(el('tr', { class: 'swarm-detail' }, [
       el('td', { colspan: '7' }, [String(row.detail).split('\n')[0]]),
-    ]);
-    return el('tbody', {}, [tr, note]);
+    ]));
   }
-  return tr;
+  return extra.length ? el('tbody', {}, [tr, ...extra]) : tr;
 }
 
 function usageText(row) {

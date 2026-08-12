@@ -54,6 +54,31 @@ test('starting a swarm fills the roster with the instances it created', async ({
   expect(problems).toEqual([]);
 });
 
+test('the roster shows queue depths, which is why a program is parked', async ({ page }) => {
+  await openLab(page);
+  await openPanel(page);
+  // The request handler, because it *parks* rather than running to
+  // completion. Queue depths are read from a live instance, so a swarm
+  // that has already drained has no queues left to show — which is correct
+  // and is why this cannot use the supervisor demo.
+  await page.locator('[data-swarm-program]').selectOption('service');
+  await page.locator('[data-swarm="swarm-start"]').click();
+  await page.locator('[data-swarm="swarm-run"]').click();
+  await expect(page.locator('[data-swarm-roster] tr[data-state="parked"]')).toHaveCount(1, { timeout: 15_000 });
+
+  // Every queue in Diluvium is bounded, and that is the whole backpressure
+  // story. A roster that showed instances and not queues could say a
+  // program was parked and never why.
+  const depths = page.locator('[data-queues="1"] .swarm-queue');
+  await expect(depths.first()).toBeVisible();
+  const labels = (await depths.allTextContents()).join(' ');
+  expect(labels).toMatch(/http_in \d+\/\d+/);
+  expect(labels).toMatch(/host\/calls \d+\/\d+/);
+  // Bounded, and the bound is shown: "0/16" says both that nothing is
+  // waiting and how much room there is before a sender is refused.
+  expect(labels).toMatch(/\d+\/[1-9]\d*/);
+});
+
 test('a refused spawn is visible rather than silent', async ({ page }) => {
   await openLab(page);
   await openPanel(page);

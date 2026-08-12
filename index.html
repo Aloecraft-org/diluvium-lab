@@ -189,6 +189,18 @@
   .swarm-roster .swarm-id { font-family: var(--mono); white-space: nowrap; }
   .swarm-caps { font-family: var(--mono); font-size: .72rem; color: var(--quiet); word-break: break-all; }
   .swarm-detail td { color: var(--bad); font-size: .74rem; padding-top: 0; }
+  .swarm-queues td { padding-top: 0; }
+  .swarm-queue {
+    display: inline-block; font-family: var(--mono); font-size: .68rem;
+    color: var(--quiet); border: 1px solid var(--edge); border-radius: 4px;
+    padding: 0 .25rem; margin: 0 .25rem .15rem 0; white-space: nowrap;
+  }
+  /* A full queue is the backpressure showing, not an error -- but it is
+     the first thing to look at when a program is not moving. */
+  .swarm-queue-full {
+    color: var(--ink);
+    border-color: color-mix(in srgb, #b45309 60%, transparent);
+  }
   .swarm-state { padding: .05rem .35rem; border-radius: 999px; border: 1px solid var(--edge); }
   .swarm-state-running { border-color: color-mix(in srgb, var(--accent) 50%, transparent); }
   .swarm-state-parked { color: var(--quiet); }
@@ -1313,6 +1325,7 @@
     "./src/kernel/protocol.js": "./src/kernel/protocol.js?v=0.11.0",
     "./src/kernel/releases.js": "./src/kernel/releases.js?v=0.11.0",
     "./src/kernel/runtimes.js": "./src/kernel/runtimes.js?v=0.11.0",
+    "./src/kernel/sha256.js": "./src/kernel/sha256.js?v=0.11.0",
     "./src/kernel/swarm.js": "./src/kernel/swarm.js?v=0.11.0",
     "./src/kernel/wasi.js": "./src/kernel/wasi.js?v=0.11.0",
     "./src/kernel/wasm-kernel.js": "./src/kernel/wasm-kernel.js?v=0.11.0",

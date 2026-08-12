@@ -2370,3 +2370,116 @@ browser cannot read GitHub release assets (no CORS), so the runtime
 dropdown still cannot offer build5 or build6 until
 `scripts/build-mirror.sh` is re-run against a `changelog.json` whose
 `mirror_tags` now lists both.
+
+### The swarm, from a cell — and the four gaps it exposed ✅ done
+
+The panel could drive a swarm and a notebook could not, which made the
+Lab's newest capability the only one unreachable from the thing the Lab
+*is*. You could not script it, save a session as an `.ipynb`, or hand
+someone a file that reproduces what you saw. This closes that, and closing
+it surfaced three other things that were wrong.
+
+#### A synchronous channel, because `run_lua` cannot await
+
+Everything else a cell draws is one-way: the program emits a record and
+the page renders it once `run_lua` returns. `swarm.step(10)` cannot work
+that way — it has to *return* its events to the line that asked. And
+`run_lua` is one blocking WASM call with no event loop to come back to.
+
+So the round trip is made of the two things the notebook's own Lua state
+already has: **one unbuffered write to stdout carrying the request, one
+read from stdin collecting the answer**, both intercepted in `wasi.js`,
+both inside the same call. Measured before it was built — a throwaway
+harness did two round trips inside one `run_lua` — because the alternative
+design (buffered ops with per-cell consistency) would have changed what a
+notebook could say, and that is not a thing to discover late.
+
+Consequences, all of them real constraints rather than notes:
+
+- **Every connector must be synchronous.** That is why the crypto
+  primitive below is vendored rather than `crypto.subtle`.
+- **The swarm module is preloaded before the chunk runs**, when the cell
+  mentions `swarm` at all, because fetching it is the one part that must
+  be awaited and `execute` is the last place that can.
+- **`swarm` is absent rather than broken** when there is no host, no
+  `json` (5.5.1_build6) or no `io`. A global that exists and throws is
+  worse than one a program can test for, and `type(swarm) == "table"` is
+  how a notebook decides whether to run its swarm sections.
+- **`io.read()` returning EOF first does not poison the channel** —
+  checked, because a cached EOF flag on stdin would have broken every
+  later call and only in notebooks that happened to read first.
+
+The marker is two control characters and a word, matched only at the start
+of a chunk. `print` writes its arguments as separate `fd_write` calls and
+cannot produce it; a program that forges one gets its own request
+answered, which is not an escalation because it could have called `swarm`
+directly.
+
+#### The host was eating its guests' output
+
+Found by trying to satisfy `swarm.drain`. Exported queues were popped into
+the event list every step and only a *rendering* of each message kept, so
+the host consumed its guests' output and nothing could read the values
+back. A message has to be drained eagerly — a full queue stops the program
+writing to it, and a dying instance's queues vanish with it — and it has
+to be **kept**.
+
+Both now: the event list gets a line for the panel, and a per-instance,
+per-queue mailbox gets the value. Reading a mailbox empties it, which is
+`queue.pop`'s semantics on the guest side and what a caller draining one
+expects. `test/swarm-cell.spec.js` asserts a second drain returns nothing,
+and that a program whose final act is a push still has its answer read.
+
+#### Queue depths, which are most of "why is it parked"
+
+Every queue in Diluvium is bounded, and that is the whole backpressure
+story: a program blocks because its outbound queue is full, waits because
+its inbound one is empty, or is refused because it declared `on_full =
+"reject"`. The roster showed instances and not queues, so it could say a
+program was parked and never why. Each row now carries its queues as
+`name len/capacity`, with a full one marked.
+
+The test for it had to switch demo programs, which is worth recording: the
+supervisor demo runs to completion, and a drained swarm has no live
+instances and therefore no queues. That is correct rather than a gap — the
+figures are read from the instance at the moment of asking — and a test
+that had not noticed would have been asserting against an empty table.
+
+#### `crypto/*`, so the sharpest claim is demonstrable
+
+Diluvium's best idea is that a guest granted `host:crypto/jwt_sign` holds
+**the right to ask for a signature, not the key** — a compromised instance
+cannot exfiltrate a secret it was never handed, and the key is in neither
+its heap nor its snapshot. The Lab could not demonstrate that at all.
+
+`src/kernel/sha256.js` is a vendored synchronous SHA-256 and HMAC, ~120
+lines, because `crypto.subtle` is asynchronous and would poison the
+channel above — and, not incidentally, is absent entirely on the `file://`
+page the baked build runs from. It is checked against **published
+vectors** (FIPS 180-4, RFC 4231, including the longer-than-block key case)
+rather than against itself: a hash that agrees only with its author is
+worthless here, because a token minted in the Lab has to verify on the C
+host.
+
+The connector copies `host/dhost_crypto.c`'s semantics rather than
+inventing any, and each one is a test:
+
+- **The master secret signs nothing.** Two subkeys are derived under
+  versioned domain-separation labels, one for `crypto/hmac` and one for
+  the JWT MAC — so a program holding only `host:crypto/hmac` cannot HMAC a
+  signing input and assemble a token, bypassing `jwt_sign`.
+- **The header is fixed and compared, not parsed**, which closes alg
+  confusion structurally: there is no field a token can set that changes
+  how it is checked. `alg: none` and `alg: RS256` are both refused as
+  "unexpected header".
+- **The host owns `iat` and `exp`.** Any the guest sets are dropped, so it
+  cannot mint a token that never expires; verify requires an integer
+  `exp`.
+- **Verify checks the MAC before decoding anything**, so the JSON parser
+  only ever runs on bytes this host signed.
+
+#### Two more bake collisions
+
+`utf8` and `toHex`, against the vendored msgpack codec and the bytecode
+reader. The guard has now caught seven; the vendored file stays
+byte-identical and ours are the ones that rename.

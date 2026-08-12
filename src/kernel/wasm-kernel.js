@@ -226,7 +226,9 @@ export class WasmKernel extends Kernel {
   }
 
   _instantiate() {
-    const wasi = createWasi();
+    // The control responder is what makes `swarm.*` reachable from a cell:
+    // one unbuffered write out, one read back, inside the same `run_lua`.
+    const wasi = createWasi({ onControl: (text) => this._control(text) });
     const problems = incompatibilities(this._module, wasi);
     if (problems.length) {
       throw new Error(`this build cannot be used by the Lab: ${problems.join('; ')}`);
@@ -334,8 +336,17 @@ export class WasmKernel extends Kernel {
     const count = this._executionCount;
     const nonce = makeNonce();
 
+    // The swarm module is fetched and compiled here, *before* the chunk
+    // runs, because that is the last moment anything can be awaited: a
+    // cell's `swarm.start` is answered from inside `run_lua`, where there
+    // is no event loop to return to. A cell that never mentions `swarm`
+    // pays nothing, and a mention that turns out to be a variable name
+    // costs one preload nobody notices.
+    if (/\bswarm\b/.test(code)) await this._preloadSwarm();
+
     this._setStatus(STATUS.BUSY);
-    const run = this._runInterleaved(executeChunk(code, nonce), nonce);
+    const run = this._runInterleaved(
+      executeChunk(code, nonce, { swarm: this._swarmInstance !== null }), nonce);
     return this._report(run, count, nonce, onMessage);
   }
 
@@ -640,6 +651,116 @@ export class WasmKernel extends Kernel {
   }
 
   /**
+   * Get the swarm module in place if it can be, and say nothing if it
+   * cannot.
+   *
+   * Failure here is not an error the cell should see: a runtime with no
+   * swarm artifact is a legitimate configuration, and the cell's own
+   * `type(swarm) == "table"` probe is the right place for it to find out.
+   * What must not happen is a thrown fetch error turning an ordinary cell
+   * into a failed one because the word "swarm" appeared in a comment.
+   */
+  async _preloadSwarm() {
+    try {
+      await this._swarmExports();
+    } catch {
+      // Left absent. `executeChunk` will not install the global.
+    }
+  }
+
+  /**
+   * The synchronous half: what a cell's `swarm.*` call reaches.
+   *
+   * Called from inside `fd_write`, which is inside `run_lua`, which is a
+   * single synchronous WASM call. So there is nothing to await here and
+   * nothing may throw past this frame — a JavaScript exception crossing
+   * back into wasm would unwind the Lua state. Everything is answered as
+   * `{value}` or `{error}` and the guest turns the second into a Lua error
+   * at its own call site.
+   */
+  _control(text) {
+    let request;
+    try {
+      request = JSON.parse(text);
+    } catch (err) {
+      return JSON.stringify({ error: `the request was not JSON: ${err.message}` });
+    }
+    try {
+      return JSON.stringify({ value: this._swarmOp(request.op, request.args ?? {}) ?? null });
+    } catch (err) {
+      return JSON.stringify({ error: err?.message ?? String(err) });
+    }
+  }
+
+  /** One `swarm.*` operation. Synchronous throughout, by construction. */
+  _swarmOp(op, args) {
+    if (op === 'start') {
+      if (!this._swarmInstance) {
+        // Cannot be fixed from here: fetching and compiling a module is
+        // asynchronous and this frame is inside `run_lua`. `execute`
+        // preloads it before the chunk runs, so reaching this means the
+        // preload was skipped or failed, and saying so beats hanging.
+        throw new Error('the swarm module is not loaded; run the cell again');
+      }
+      if (this._host) this._host.free();
+      const config = hostConfigFrom(args);
+      const host = new SwarmHost(this._swarmInstance.exports, this._swarmRef, {
+        drain: () => this._swarmWasi.drain(),
+      });
+      const { connectors, listener, database } = buildConnectors(config.connectors ?? {});
+      for (const [name, fn] of connectors) host.connect(name, fn);
+      this._listener = listener;
+      this._database = database;
+      this._host = host;
+      this._eventMark = 0;
+      return host.start(config.root, config);
+    }
+
+    this._requireSwarm();
+    const host = this._host;
+    const target = () => host.resolve(args.target);
+
+    switch (op) {
+      case 'alias':
+        return host.alias(args.name, args.id);
+      case 'push': {
+        const result = host.push(target(), args.queue, args.value ?? null);
+        return { ok: result.status === 'ok', why: result.detail ?? result.status };
+      }
+      case 'drain':
+        return host.drain(target(), args.queue);
+      case 'step': {
+        // "Up to n steps": a swarm that drains early stops early rather
+        // than spinning, and the events are everything emitted since the
+        // caller last looked -- a watermark, not the whole log, because a
+        // cell asking twice should not see the first batch again.
+        const n = Math.max(1, Math.min(Number(args.n) || 1, 1000));
+        for (let i = 0; i < n; i++) if (host.step() === 0) break;
+        const since = this._eventMark;
+        const events = host.snapshot().events.filter((e) => e.seq > since);
+        this._eventMark = events.length ? events.at(-1).seq : since;
+        return events.map(({ event, id, detail, queue }) => ({
+          event, id, detail: detail ?? null, queue: queue ?? null,
+        }));
+      }
+      case 'status':
+        return host.status();
+      case 'hibernate': return host.hibernate(target()).status === 'ok';
+      case 'wake': return host.wake(target()).status === 'ok';
+      case 'kill': return host.kill(target()).status === 'ok';
+      case 'stop': {
+        host.free();
+        this._host = null;
+        this._listener = null;
+        this._database = null;
+        return true;
+      }
+      default:
+        throw new Error(`no swarm operation called '${op}'`);
+    }
+  }
+
+  /**
    * Everything the panel needs, in one structured-cloneable object.
    *
    * One round trip rather than six, because the panel is on the other side
@@ -716,6 +837,60 @@ export class WasmKernel extends Kernel {
     const matches = run.record.payload === '' ? [] : run.record.payload.split('\n');
     return completeReply(matches, start, cursorPos);
   }
+}
+
+/**
+ * A deployment in `host/example.host.lua`'s shape, as `SwarmHost` wants it.
+ *
+ * The translation is deliberately the only place the two spellings meet.
+ * A guest program's config is written in the *.host.lua vocabulary —
+ * `spawns_per_step`, `memory_kb`, `hibernation = "on"` — because the whole
+ * point is that the same file describes the deployment here and on the C
+ * host. Renaming those to match JavaScript's habits inside the guest's
+ * config would mean a deployment that could not move.
+ */
+export function hostConfigFrom(config = {}) {
+  const root = config.root ?? config.supervisor;
+  if (typeof root !== 'string' || root.trim() === '') {
+    throw new Error("a swarm needs a root program: pass `root = [[...]]` (or `supervisor`)");
+  }
+  const budget = config.budget ?? {};
+  return {
+    root,
+    maxInstances: config.max_instances ?? config.maxInstances ?? 64,
+    spawnsPerStep: config.spawns_per_step ?? config.spawnsPerStep ?? 4,
+    identity: config.identity ?? null,
+    // A string on the wire because that is what the Lua config says, and
+    // anything other than an explicit "off" leaves the mechanism on --
+    // which is the runtime's own default.
+    hibernation: (config.hibernation ?? 'on') !== 'off',
+    caps: asArray(config.caps),
+    budget: {
+      instructions: budget.instructions ?? 0,
+      memoryKb: budget.memory_kb ?? budget.memoryKb ?? 0,
+    },
+    connectors: config.connectors ?? {},
+    watch: config.watch ? asArray(config.watch) : undefined,
+  };
+}
+
+/**
+ * A Lua sequence, as an array.
+ *
+ * An empty Lua table is indistinguishable from an empty map, so it arrives
+ * as `{}` and would otherwise become an object where the ABI wants a list
+ * of capability strings. A non-empty sequence arrives as an array already;
+ * a table with numeric keys is accepted too, because that is what a
+ * sparsely-built list encodes as.
+ */
+function asArray(value) {
+  if (value === undefined || value === null) return [];
+  if (Array.isArray(value)) return value;
+  if (typeof value === 'object') {
+    const keys = Object.keys(value).filter((k) => /^\d+$/.test(k)).sort((a, b) => a - b);
+    return keys.map((k) => value[k]);
+  }
+  return [value];
 }
 
 /**

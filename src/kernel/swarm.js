@@ -62,6 +62,16 @@ const DV = { OK: 0, IDLE: 6, DONE: 7, ERROR: 8, BUSY: 11 };
 export const MAX_REQUEST_BYTES = 32768;
 
 /**
+ * The exported queues a host drains each step unless a deployment says
+ * otherwise. A name list rather than a discovery because there is no
+ * enumeration call for queues: a host is expected to know the names it
+ * agreed with the guest, and these three are the conventional ones —
+ * `outbox` is reserved per instance (§6.6), `log` is the usual narration,
+ * and `http_out` is `doc/Host.md`'s listener reply queue.
+ */
+export const DEFAULT_WATCH = ['log', 'outbox', 'http_out'];
+
+/**
  * The `dvs_*` calls this host needs before it will drive a module.
  *
  * Deliberately not every export: `dvs_set_host_identity` and
@@ -309,6 +319,15 @@ export class SwarmHost {
     /** The connector registry of duty 5; empty means every call is denied. */
     this._connectors = new Map();
     this._events = [];
+    /** `${id} ${queue}` -> messages drained from that guest, undelivered. */
+    this._mail = new Map();
+    /**
+     * Names for instance ids, so a caller can say "coordinator" instead of
+     * remembering that this run happened to number it 2. Ids are the
+     * swarm's and are never reused, so an alias is a label on a fact
+     * rather than a handle that could go stale into something else.
+     */
+    this.aliases = new Map();
     this._steps = 0;
     this._seq = 0;
     this._waitset = 0;
@@ -404,6 +423,10 @@ export class SwarmHost {
     // `sql = {path = ...}` and `dhost_sql.c` is what answers -- and it is
     // what lets the configuration cross a worker boundary at all.
     this._declared = connectors;
+    // Pre-aliased, so a caller never has to learn that the root happens to
+    // be instance 1 -- and so that `push("root", ...)` reads as topology
+    // rather than as a magic number.
+    this.aliases.set('root', this.rootId);
     this._emit({ event: 'host', id: 0, detail: `swarm up: root is instance ${this.rootId}` });
     return this.rootId;
   }
@@ -639,6 +662,11 @@ export class SwarmHost {
         parent: slot.parent,
         role: slot.parent === 0 ? 'root' : 'child',
         state: slot.gone ? 'gone' : resident ? (slot.parked ? 'parked' : 'running') : 'hibernated',
+        // The plain boolean beside the word, because "is it resident" is
+        // the question the hibernate/wake drill actually asks and
+        // string-matching a display state to answer it is how a test ends
+        // up asserting the UI's vocabulary rather than the runtime's.
+        resident,
         outcome: slot.outcome,
         detail: slot.detail,
         caps: slot.caps,
@@ -655,6 +683,54 @@ export class SwarmHost {
     return out.sort((a, b) => a.id - b.id);
   }
 
+  /**
+   * Name an instance. `root` is pre-aliased by `start`.
+   *
+   * Refuses an id the roster has never seen, because the alternative is a
+   * name that silently addresses nothing and a `push` that reports `gone`
+   * three steps later with no clue why.
+   */
+  alias(name, id) {
+    const numeric = Number(id);
+    if (!this.slots.has(numeric)) {
+      throw new Error(`there is no instance ${id} to call '${name}'`);
+    }
+    this.aliases.set(String(name), numeric);
+    return numeric;
+  }
+
+  /**
+   * An alias or an id, as an id.
+   *
+   * Aliases win over bare numbers only when they exist, so a caller that
+   * never names anything can pass ids throughout and one that names
+   * everything never sees a number.
+   */
+  resolve(target) {
+    if (this.aliases.has(String(target))) return this.aliases.get(String(target));
+    const numeric = Number(target);
+    if (Number.isInteger(numeric) && this.slots.has(numeric)) return numeric;
+    throw new Error(`no instance is called '${target}'`);
+  }
+
+  /**
+   * The roster keyed by every name that addresses it — its id, and any
+   * alias. Two keys onto one object rather than two objects, so a caller
+   * cannot see a stale copy under one name and a fresh one under another.
+   */
+  status() {
+    const out = {};
+    const byId = new Map();
+    for (const row of this.roster()) {
+      byId.set(row.id, row);
+      out[String(row.id)] = row;
+    }
+    for (const [name, id] of this.aliases) {
+      if (byId.has(id)) out[name] = byId.get(id);
+    }
+    return out;
+  }
+
   /** Everything the panel needs in one round trip, because it is across a worker. */
   snapshot() {
     return {
@@ -665,6 +741,7 @@ export class SwarmHost {
       config: this._config,
       connectors: [...this._connectors.keys()].sort(),
       roster: this.roster(),
+      aliases: Object.fromEntries(this.aliases),
       events: this._events,
       faults: this._faults,
     };
@@ -712,19 +789,57 @@ export class SwarmHost {
     }
   }
 
-  /** One instance's watched queues, emptied. Safe to call twice; a queue
-   * that has already been drained is simply empty. */
+  /**
+   * One instance's watched queues, emptied into the host's mailbox.
+   *
+   * **The mailbox is why this does not simply log.** The first version of
+   * this file popped a guest's exported queues straight into the event
+   * list and kept only a rendering of each message — so the host consumed
+   * its guests' output and nothing could ever read the values back. A
+   * message has to be drained eagerly (a queue that fills stops the
+   * program that writes to it, and a dying instance's queues vanish with
+   * it), and it has to be *kept*, because `drain()` is how a caller
+   * collects what a program said.
+   *
+   * So both: the event list gets a line for the panel, and the mailbox
+   * gets the value for whoever asks. Reading the mailbox is destructive —
+   * it is a queue, not a log — which is the semantics `queue.pop` has on
+   * the guest side and the one a caller draining a mailbox expects.
+   */
   _drainInstance(id, inst) {
-    const watch = this._config?.watch ?? ['log', 'outbox', 'http_out'];
+    const watch = this._config?.watch ?? DEFAULT_WATCH;
     for (const name of watch) {
       const qid = this._lookup(inst, name);
       if (!qid) continue;
       for (;;) {
         const msg = this._pop(inst, qid);
         if (msg === undefined) break;
+        this._mailbox(id, name).push(msg);
         this._emit({ event: 'message', id, queue: name, detail: describeMessage(msg), value: msg });
       }
     }
+  }
+
+  /** The kept messages for one instance and queue, created on demand. */
+  _mailbox(id, queue) {
+    const key = `${id} ${queue}`;
+    let box = this._mail.get(key);
+    if (!box) { box = []; this._mail.set(key, box); }
+    return box;
+  }
+
+  /**
+   * Take everything a guest has put on one of its exported queues since
+   * the last call. Empties the mailbox: a message is delivered once.
+   *
+   * The instance may be gone — that is not an error and is often the
+   * point. A program's last act is frequently to push its answer and
+   * return, and the answer outlives it here because `_settle` drains at
+   * the last moment the instance exists.
+   */
+  drain(id, queue) {
+    const box = this._mailbox(id, queue);
+    return box.splice(0, box.length);
   }
 
   // --- duty 5: hostcalls ---------------------------------------------
@@ -890,6 +1005,11 @@ export class SwarmHost {
     }
     this._waitset = 0;
     this._queueInfo = 0;
+    // The mailboxes and aliases described *that* swarm. Ids are never
+    // reused within a swarm, but a second swarm starts numbering again --
+    // so keeping them would let `push("root", ...)` address a corpse.
+    this._mail.clear();
+    this.aliases.clear();
   }
 
   // --- the small mechanical half -------------------------------------
