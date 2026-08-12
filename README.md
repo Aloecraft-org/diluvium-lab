@@ -219,6 +219,7 @@ situation someone reaches for it would be worth less than no button.
 | **Messages and queues** | msgpack, `queue.declare` / `push` / `pop` / `info`, endpoints |
 | **Sandboxed instances** | budgets, isolation, and what a sandboxed run refuses |
 | **Showing things** | charts, event streams, controls, raw mime bundles |
+| **SQL, without SQLite** | a relational engine and a working SQL parser in pure Lua |
 | **Browser check** | what works in the browser you are reading this in |
 
 Opening one replaces what is on screen, so save first if you have unsaved

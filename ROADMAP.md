@@ -2102,3 +2102,29 @@ Deferred, still: checkpoints/history UI behind the clock, unified text
 undo, multi-cell selection, Ctrl-accelerators beyond S/Z/Shift+Z/Y, a
 persisted console/report-mode preference, and anything swarm-shaped in
 the chrome until the artifact ships `dvs_`.
+
+### An SQL notebook, without pretending SQLite ✅ done
+
+The request was "an example notebook using sqlite". The artifact has no
+SQLite — nothing in the amalgamation links it — and the Lab never builds
+Diluvium, so the notebook that request deserves is an honest one:
+`notebooks/sql.ipynb`, "SQL, without SQLite".
+
+It builds the real thing SQL names: relational verbs over Lua tables
+(filter, project, sort, group, join — each about ten lines), then a
+working SQL layer on top — a five-pattern tokenizer, a recursive-descent
+parser with OR/AND/NOT/comparison precedence, and a compiler that turns
+the WHERE tree into closures. `SELECT item, amount FROM orders WHERE
+amount >= 90 ORDER BY amount DESC` genuinely parses, compiles and runs
+on the pinned kernel, errors included ("expected name, got from" / "no
+table starships" / "no column age"). The finale charts a query through
+`plot.bar`, and the closing section specifies the upstream recipe for
+the real thing: the sqlite3.c amalgamation plus an lsqlite3-shaped
+binding in the WASI target, `:memory:` only at first (no filesystem
+needed), probably as a separate artifact given the ~1 MB. `run_sql` is
+deliberately spelled the way a real `sql.exec` would be, so the queries
+move over nearly verbatim the day a release ships it.
+
+Every snippet was verified against the pinned kernel before the notebook
+was written, and the examples suite runs all 21 cells on every CI run
+like the other seven. The launcher and gallery counts moved 7 → 8.

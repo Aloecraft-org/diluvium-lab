@@ -37,6 +37,7 @@ const ORDER = [
   'messaging.ipynb',
   'sandbox.ipynb',
   'showing-things.ipynb',
+  'sql.ipynb',
   'browser-check.ipynb',
 ];
 

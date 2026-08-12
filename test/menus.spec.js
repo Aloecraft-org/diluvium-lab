@@ -273,7 +273,7 @@ test.describe('the launcher', () => {
     await openLab(page);
     await page.locator('[data-home]').click();
     await expect(page.locator('[data-launcher]')).toBeVisible();
-    await expect(page.locator('[data-launcher-examples] .example-entry')).toHaveCount(7);
+    await expect(page.locator('[data-launcher-examples] .example-entry')).toHaveCount(8);
 
     // Opening an example from it adopts the notebook and closes it.
     await page.locator('[data-launcher-examples] .example-entry').first().click();
