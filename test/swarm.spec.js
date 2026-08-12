@@ -90,18 +90,59 @@ test.describe('the module', () => {
     expect(facts.swarm.dvs).toBeGreaterThan(20);
   });
 
-  test('the shadow stack is too small for dvs_step, and the Lab says so', async ({ page }) => {
+  test('the shadow stack is measured, and this build no longer needs relocating', async ({ page }) => {
     await openKernel(page);
     const report = await drive(page, SUPERVISOR, ROOT_CONFIG);
 
-    // This test is written to fail loudly the day upstream fixes the link
-    // flag, which is the point: a workaround nobody notices is a
-    // workaround nobody removes. If `moved` goes false, delete
-    // `ensureStack` and this assertion together.
+    // The history, because this assertion inverted once and should not
+    // quietly invert back. v5.5.1_build5 shipped wasm-ld's default 64 KiB
+    // shadow stack and `dvs_step` did not fit in it: `drain()` declares a
+    // 32 KiB buffer the compiler inlines, the frame underflowed on entry,
+    // and the first read through the stack pointer trapped -- surfacing as
+    // `memory access out of bounds` inside `dv_queue_lookup`, a function
+    // that worked perfectly when called directly one line earlier. The Lab
+    // relocated the stack into a heap block to get a swarm at all.
+    //
+    // build6 puts `-Wl,-z,stack-size=1048576` on the swarm link line, so
+    // the workaround now measures the module and correctly leaves it
+    // alone. `ensureStack` stays, because the runtime dropdown can still
+    // select build5, and it is conditional on measurement rather than on a
+    // version -- but on the *pinned* build it must be inert.
     expect(report.stack).toBeTruthy();
-    expect(report.stack.moved).toBe(true);
-    expect(report.stack.had).toBe(65536);
-    expect(report.stack.why).toContain('stack-size');
+    expect(report.stack.moved).toBe(false);
+    expect(report.stack.had).toBeGreaterThanOrEqual(96 * 1024);
+    expect(report.stack.why).toContain('enough');
+  });
+
+  test('a build with too small a stack would still be relocated', async ({ page }) => {
+    await openKernel(page);
+    // The machinery kept for build5 and older, exercised directly rather
+    // than left as dead code nobody would notice rotting. `ensureStack`
+    // reads `__stack_low`/`__stack_high` off the module and relocates only
+    // when they are too small, so a stand-in reporting build5's numbers is
+    // the honest way to test the branch the pinned build no longer takes.
+    const verdicts = await page.evaluate(async () => {
+      const { ensureStack, STACK_FLOOR } = await import('../src/kernel/swarm.js');
+      const fake = (low, high) => ({
+        __stack_low: { value: low },
+        __stack_high: { value: high },
+        __stack_pointer: { value: high },
+        malloc: () => 4096,
+      });
+      return {
+        small: ensureStack(fake(0, 65536), { wanted: 1024 }),
+        ample: ensureStack(fake(0, STACK_FLOOR * 2), { wanted: 1024 }),
+        silent: ensureStack({ malloc: () => 4096 }),
+      };
+    });
+    expect(verdicts.small.moved).toBe(true);
+    expect(verdicts.small.had).toBe(65536);
+    expect(verdicts.small.why).toContain('stack-size');
+    expect(verdicts.ample.moved).toBe(false);
+    // A module that does not say where its stack is gets left alone rather
+    // than guessed at.
+    expect(verdicts.silent.moved).toBe(false);
+    expect(verdicts.silent.why).toContain('does not say');
   });
 });
 

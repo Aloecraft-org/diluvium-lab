@@ -2333,3 +2333,40 @@ the shape rather than a workaround.
 Selecting a markdown cell, or an empty one, is refused with a sentence.
 `dvs_root` would accept an empty program perfectly happily, and one
 instance that did nothing reads as the Lab being broken.
+
+### Pinned to 5.5.1_build6, and a workaround retired ✅ done
+
+build6 landed with `json`, `bytes` and `time` as guest libraries, and with
+the one thing this repository had asked for out loud: **`-Wl,-z,stack-size=1048576`
+on the `diluvium_swarm_wasi.wasm` link line.**
+
+The re-pin is the whole story of why that assertion was written as it was.
+Two tests went red the moment `vendor/` moved to build6 — `the shadow stack
+is too small for dvs_step, and the Lab says so`, and the panel test that
+required the note to be on screen. Neither is a regression; both are the
+tripwire firing. A workaround that keeps announcing itself after the defect
+it worked around is fixed is noise, and the note is precisely what would
+tell a reader the Lab is still patching around something live.
+
+So `ensureStack` **stays** and its tests **inverted**:
+
+- On the pinned build it must be inert: `moved: false`, `had >= 96 KiB`.
+  The panel must carry *no* stack note.
+- The relocation branch is still exercised, against a stand-in reporting
+  build5's numbers, because the runtime dropdown can still select build5 —
+  where it remains the difference between a swarm panel and a trap in
+  `dv_queue_lookup`. Dead code nobody notices rotting is the alternative.
+- A module that does not say where its stack is gets left alone rather than
+  guessed at.
+
+Measured on the new artifact rather than assumed: 24 `dvs_*` exports, the
+kernel exports intact, `__stack_high` 1 MiB, and the guest now answers
+`type(json)`, `type(bytes)`, `type(time)` as `table` — which is the
+capability gate a build6-dependent notebook checks.
+
+**The mirror is still stamped `2026-08-08` with two releases**, so
+`vendor/` was pinned from GitHub with `DILUVIUM_RELEASE_BASE` again. The
+browser cannot read GitHub release assets (no CORS), so the runtime
+dropdown still cannot offer build5 or build6 until
+`scripts/build-mirror.sh` is re-run against a `changelog.json` whose
+`mirror_tags` now lists both.

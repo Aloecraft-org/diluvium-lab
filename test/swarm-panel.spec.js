@@ -118,14 +118,18 @@ test('stopping a swarm leaves the roster as the last thing the host saw', async 
   await expect(page.locator('[data-tool-panel-body]')).toContainText('This swarm has stopped');
 });
 
-test('the stack workaround is stated in the panel, not only in the source', async ({ page }) => {
+test('the stack workaround is silent on a build that does not need it', async ({ page }) => {
   await openLab(page);
   await openPanel(page);
   await page.locator('[data-swarm="swarm-start"]').click();
-  // A patch nobody can see is a patch nobody will remove. When upstream
-  // ships `-z stack-size` this element stops existing and this test fails,
-  // which is the intended way to be told.
-  await expect(page.locator('[data-swarm-stack]')).toContainText('shadow stack');
+  await expect(page.locator('[data-swarm-summary]')).toBeVisible();
+  // The panel used to carry a note saying the Lab had moved this module's
+  // shadow stack, because v5.5.1_build5 shipped one too small for
+  // `dvs_step`. build6 fixed the link flag, so the note must now be
+  // *absent* -- a workaround that keeps announcing itself after the thing
+  // it worked around is fixed is just noise, and the note is what would
+  // tell a reader the Lab is still patching around a live defect.
+  await expect(page.locator('[data-swarm-stack]')).toHaveCount(0);
 });
 
 test('the notebook still works while a swarm is running', async ({ page }) => {

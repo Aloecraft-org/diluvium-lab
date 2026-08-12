@@ -7,7 +7,7 @@ page. No framework, no bundler, no CDN — plain modules and the DOM.
 Cells and the console share one kernel, so state carries between them. The
 kernel is `libdiluvium_wasi.wasm` running in the tab: a real Lua state
 with the full standard library, reached through a WASI shim the page
-supplies itself. The bundled build is **Diluvium 5.5.1_build1**; the
+supplies itself. The bundled build is **Diluvium 5.5.1_build6**; the
 Runtime dropdown swaps it for any other the mirror carries, including
 5.4.x.
 
@@ -75,7 +75,7 @@ npm run bake         # emit dist/diluvium-lab.html, a single double-click file
 Other scripts:
 
 ```sh
-scripts/fetch-runtime.sh v5.5.1_build1    # re-pin the bundled runtime
+scripts/fetch-runtime.sh v5.5.1_build6    # re-pin the bundled runtime
 scripts/build-mirror.sh mirror            # build the runtime mirror (see below)
 scripts/check-bake.mjs                    # assert the baked file is self-contained
 ```
@@ -149,28 +149,29 @@ and `msgpack`, so those records need not be hand-written: a program can
 push them into an actual `system/events` queue and drain it, which is the
 queue a swarm writes to.
 
-**The Lab bundles `build3`, and says so.** It is marked a prerelease
-upstream — not for being unfinished, but because its supported
-configuration is narrower than what it ships: hibernation is off, and the
-capability layer is a structuring device rather than a security boundary.
-Both are statements about sandboxed *instances*, and the Lab creates none:
-it runs one Lua state that you type into, already with full `debug`, `io`
-and `os`. So the dropdown reads `5.5.1_build3 (bundled, prerelease)`, the
-About panel states the release status, and every stable build —
-`5.5.1_build2`, `5.5.1_build1`, `5.4.7` — is one click away in the
-dropdown.
+From **5.5.1_build6** onward it also ships `json`, `bytes` and `time`,
+which is what lets a program encode a response, base64url a token segment
+and stamp a record without reaching for `os`.
 
-To go back to the latest stable build as the default:
+**The Lab bundles `build6`, and says so.** It is marked stable upstream.
+The About panel states the release status and the sha256 of the exact
+bytes; every other build the mirror carries is one click away in the
+dropdown, and the Lab says which of those are prereleases rather than
+leaving you to read a tag name.
 
-```sh
-scripts/fetch-runtime.sh v5.5.1_build2
-```
+One caveat while it is true: the mirror's index is behind the releases, so
+the dropdown cannot yet offer `build5` or `build6` even though `vendor/`
+is pinned to the latter. Regenerating the mirror fixes it; nothing in the
+Lab has to change.
 
-That is still not a swarm. Nothing spawns anything, because `dvs.c` is
-absent from every published artifact — so there is no supervisor, no
-capability attenuation and no subtree kill. The pipe and the record shape
-are real; the layer above them is not there yet. See ROADMAP, "A swarm
-runner: what is actually in the way".
+**And since `build5` this *is* a swarm.** `dvs.c` used to be absent from
+every published artifact, so there was no supervisor, no capability
+attenuation and no subtree kill — the pipe and the record shape were real
+and the layer above them was not there. `diluvium_swarm_wasi.wasm` carries
+it now, and the Instances panel above drives it: programs spawn programs,
+grants only ever narrow, and a budget stops a runaway. Hand-written
+`events{...}` records still work, and they are no longer the only way to
+get one.
 
 `widget` makes it interactive. The callback stays in the kernel — it
 captured locals that exist nowhere else — so the page holds an id and asks
@@ -509,7 +510,7 @@ violate. A page does.
 ### Standing up the mirror
 
 ```sh
-scripts/build-mirror.sh mirror v5.5.1_build1      # downloads and verifies
+scripts/build-mirror.sh mirror v5.5.1_build6      # downloads and verifies
 # upload mirror/ so releases.json lands at the URL the Lab points to
 ```
 

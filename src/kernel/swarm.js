@@ -54,10 +54,10 @@ const DV = { OK: 0, IDLE: 6, DONE: 7, ERROR: 8, BUSY: 11 };
  * The largest lifecycle request the swarm layer will read (`DVS_MAX_REQUEST_BYTES`).
  *
  * Worth exporting rather than hiding, because a spawn request carries the
- * child's *source*: the toy swarm example in the Diluvium tree came up
- * with one instance
- * instead of eight after four lines of comment pushed its coordinator past
- * this, and the only symptom was `denied ... the request is too large`.
+ * child's *source*: the toy swarm example in the Diluvium tree came up with
+ * one instance instead of eight after four lines of comment pushed its
+ * coordinator past this, and the only symptom at run time was
+ * `denied ... the request is too large`.
  */
 export const MAX_REQUEST_BYTES = 32768;
 
@@ -144,6 +144,12 @@ export function swarmProblems(exports) {
  * that ships with a large enough stack is left alone and this quietly stops
  * happening. `test/swarm.spec.js` asserts the condition either way, so the
  * day upstream fixes it, the suite says so instead of going quiet.
+ *
+ * **And that day came: v5.5.1_build6 puts `-Wl,-z,stack-size=1048576` on
+ * the swarm link line.** The suite said so, exactly as designed -- two
+ * tests went red on the re-pin. This code stays because the runtime
+ * dropdown can still select build5, where it is the difference between a
+ * swarm panel and a trap; on build6 it measures 1 MiB and does nothing.
  */
 export const STACK_FLOOR = 96 * 1024;
 export const STACK_WANTED = 1024 * 1024;
