@@ -2027,3 +2027,38 @@ proofread:
 The sweep runs cells one at a time rather than pressing **Run all**,
 because Run all stops at the first error — which in `hello.ipynb` is cell
 9 of 17, and would have left most of the notebook unchecked.
+
+### A tool panel, and the outline that lives in it ✅ done
+
+The left edge now carries a rail of tools and one collapsible panel —
+the generic surface — and the notebook outline, its first resident.
+
+The genericity is the design decision, made before the second tool
+exists: a tool is `{id, label, icon, render(container)}` registered with
+`ToolPanel`, which owns the rail button, the open/close/toggle state, its
+persistence (a `panel` key in the existing IndexedDB store — no version
+bump), and nothing about any tool's content. `render` is called with an
+empty container on open and on every refresh, so a tool holds no DOM
+between paints and cannot leak listeners into the panel. The obvious
+future residents — find, snippets, kernel variables — register the same
+way.
+
+The outline is Jupyter's TOC / Colab's outline pane: ATX headings from
+markdown cells, in order, indented by depth, click to jump. Three details
+carry the weight:
+
+- **Fences are respected.** `# comment` inside a ```` ```lua ```` fence
+  is a comment, and an outline that listed it would be lying about the
+  document.
+- **The active mark is the *section*, not the heading cell.** Selecting
+  any cell marks the last heading at or above it, which is how both
+  reference implementations read.
+- **It follows the document, not the panel.** Model changes route
+  through one `panel.refresh()` — a no-op while collapsed, a repaint
+  (scroll position preserved) while open — so the outline needs no
+  subscription of its own and survives the model being replaced wholesale
+  by *Open* or *Start here*.
+
+Layout-wise the body grid grew a column: workbench, then sheet, with the
+toolbar, console and banners spanning both. The mobile suite passes
+unchanged; rail buttons join the 44px touch-target rule.

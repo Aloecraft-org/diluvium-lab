@@ -79,6 +79,22 @@ export function clearAutosave() {
   return withDb((db) => transact(db, STORE, 'readwrite', (s) => s.delete(AUTOSAVE_KEY)));
 }
 
+/**
+ * The tool panel's state -- which tool is open, or that none is. A second
+ * key in the notebooks store rather than a store of its own: it is one
+ * tiny record, and a new store means a DB version bump every reader pays
+ * for.
+ */
+const PANEL_KEY = 'panel';
+
+export function savePanelState(state) {
+  return withDb((db) => transact(db, STORE, 'readwrite', (s) => s.put(state, PANEL_KEY)));
+}
+
+export async function loadPanelState() {
+  return (await withDb((db) => transact(db, STORE, 'readonly', (s) => s.get(PANEL_KEY)))) ?? null;
+}
+
 export function putRuntime(key, record) {
   return withDb((db) => transact(db, RUNTIME_STORE, 'readwrite', (s) => s.put(record, key)));
 }

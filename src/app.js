@@ -13,7 +13,9 @@ import { NotebookModel, EXPECT, expectationOf } from './notebook/model.js';
 import { toIpynb, fromIpynb, messageToOutput, IpynbError } from './notebook/ipynb.js';
 import { NotebookView, renderOutputs } from './notebook/ui.js';
 import { ConsoleView } from './notebook/console.js';
-import { saveAutosave, loadAutosave, debounceSave, rememberRecent, listRecent, clearRecent } from './notebook/storage.js';
+import { saveAutosave, loadAutosave, debounceSave, rememberRecent, listRecent, clearRecent, savePanelState, loadPanelState } from './notebook/storage.js';
+import { ToolPanel } from './notebook/panel.js';
+import { renderOutline } from './notebook/outline.js';
 import { fetchNotebook, hostOf, describeOpenError, normaliseNotebookUrl } from './notebook/remote.js';
 import { EXAMPLES, exampleById } from './notebook/examples.js';
 import { FALLBACK_KEYWORDS, FALLBACK_GLOBALS } from './notebook/highlight.js';
@@ -114,6 +116,28 @@ export class App {
       instancesEnabled: () => this.kernel.capabilities.instances === true,
       widgetsEnabled: () => this.kernel.capabilities.widgets === true
         && this.kernel.status !== STATUS.DEAD,
+      // The panel exists a few lines down; by the time a user can select
+      // anything it is there. Refresh keeps the outline's active-section
+      // marker in step, and is a no-op while the panel is collapsed.
+      onSelect: () => this.panel?.refresh(),
+    });
+
+    // The tool workbench: a rail on the left, one collapsible panel. The
+    // outline is its first tool; anything else that earns a home on the
+    // left edge registers the same way.
+    this.panel = new ToolPanel(document_.querySelector('[data-workbench]'), {
+      onStateChange: (state) => { savePanelState(state).catch(() => {}); },
+    });
+    this.panel.register({
+      id: 'outline',
+      label: 'Outline',
+      icon: '☰',
+      title: 'Outline — the notebook\'s markdown headings',
+      render: (body) => renderOutline(body, {
+        cells: this.model.cells,
+        selectedId: this.view.selectedId,
+        onJump: (cellId) => this._jumpToCell(cellId),
+      }),
     });
 
     this.console = new ConsoleView(document_.querySelector('[data-console]'), {
@@ -178,6 +202,13 @@ export class App {
     const restored = await phase('restoring the saved notebook', () => this._restore());
     await phase('rendering the notebook', () => {
       this._setModel(restored ?? fromIpynb(DEFAULT_NOTEBOOK));
+    });
+
+    // After the notebook, so an outline restored open has something to
+    // outline on first paint rather than a flash of "no headings".
+    await phase('restoring the tool panel', async () => {
+      const state = await loadPanelState();
+      if (state?.open) this.panel.open(state.open);
     });
 
     // After a notebook is on screen, so the bar appears over something
@@ -423,6 +454,19 @@ export class App {
     this._bindModel();
     this._renderFilename();
     this._renderTitle();
+    // A new document is a new outline.
+    this.panel.refresh();
+  }
+
+  /**
+   * Go to a cell: select it and bring it into view. What an outline entry
+   * does, and generic enough that anything else with a cell id can use it.
+   */
+  _jumpToCell(cellId) {
+    const node = this.view.cellNode(cellId);
+    if (!node) return;
+    this.view.select(cellId);
+    node.scrollIntoView({ block: 'start' });
   }
 
   _bindModel() {
@@ -431,6 +475,10 @@ export class App {
       if (change.type === 'structure') this.view.render();
       else if (change.type === 'outputs') this.view.updateOutputs(change.cellId);
       else if (change.type === 'title') this._renderTitle();
+      // Headings live in cell sources, and cells come and go -- both are
+      // outline-visible. Cheap when the panel is closed (a no-op) and
+      // cheap when open (a list repaint).
+      if (change.type === 'structure' || change.type === 'source') this.panel.refresh();
       this._scheduleAutosave();
     });
   }

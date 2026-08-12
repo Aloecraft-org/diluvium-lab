@@ -240,6 +240,9 @@ export class NotebookView {
       if (selected) node.setAttribute('aria-current', 'true');
       else node.removeAttribute('aria-current');
     }
+    // Selection is state other surfaces care about -- the outline marks
+    // the section the selection is in -- so it is reported, not polled.
+    this.handlers.onSelect?.(this.selectedId);
   }
 
   setModel(model) {

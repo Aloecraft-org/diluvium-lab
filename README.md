@@ -238,6 +238,23 @@ looks like, and one that loops forever so you have something to press
   skipped. Pressing **Run** on it yourself still runs it, because that is
   the demonstration.
 
+## The tool panel
+
+The rail down the left edge holds tools; clicking one opens a collapsible
+panel beside it, and clicking again (or ✕) puts it away. Whether it was
+open — and to what — survives a reload.
+
+The first tool is the **outline**: every markdown heading in the
+notebook, in order, the way Jupyter's TOC and Colab's outline pane read.
+Click a heading to jump to its cell; the entry for the section your
+selection is in stays marked. Headings inside fenced code blocks are
+ignored, because `# comment` in a ```` ```lua ```` fence is a comment.
+
+The panel is generic on purpose — a tool is an id, a label, and a render
+function registered in `app.js`; the rail and collapse behaviour come for
+free (`src/notebook/panel.js`). The outline just happens to be the first
+resident.
+
 ## Naming a notebook
 
 The name at the top of the page is the notebook's, and it is **not** its
