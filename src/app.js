@@ -87,6 +87,8 @@ export class App {
     // theatre for moving a cell), and + Cell remembers what it last made.
     this.readOnly = false;
     this.cellClipboard = null;
+    /** The last panel-state write, so `panelSettled` has something to await. */
+    this._panelWrite = Promise.resolve();
     this._lastCellType = 'code';
     this.autosave = debounceSave(async (record) => {
       this._setSaveStatus('saving');
@@ -151,7 +153,15 @@ export class App {
     // outline is its first tool; anything else that earns a home on the
     // left edge registers the same way.
     this.panel = new ToolPanel(document_.querySelector('[data-workbench]'), {
-      onStateChange: (state) => { savePanelState(state).catch(() => {}); },
+      // Kept rather than dropped, because "survives a reload" is a claim
+      // about a write that has *landed*. IndexedDB is asynchronous, so a
+      // navigation issued in the same breath as a click can outrun the
+      // transaction -- rare for a human, routine for a loaded CI machine,
+      // and the difference between a test that passes on a fast laptop
+      // and one that passes anywhere.
+      onStateChange: (state) => {
+        this._panelWrite = savePanelState(state).catch(() => {});
+      },
     });
     this.panel.register({
       id: 'outline',
@@ -538,6 +548,15 @@ export class App {
    * Go to a cell: select it and bring it into view. What an outline entry
    * does, and generic enough that anything else with a cell id can use it.
    */
+  /**
+   * Resolve once the panel's last persisted state has actually been
+   * written. For tests, and for anything that means to navigate away
+   * immediately after changing it.
+   */
+  async panelSettled() {
+    await this._panelWrite;
+  }
+
   _jumpToCell(cellId) {
     const node = this.view.cellNode(cellId);
     if (!node) return;

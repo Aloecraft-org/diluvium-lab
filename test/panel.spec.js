@@ -23,6 +23,7 @@ async function openLab(page) {
 
 const railButton = (page) => page.locator('[data-tool-rail] [data-tool="outline"]');
 const panel = (page) => page.locator('[data-tool-panel]');
+const settled = (page) => page.evaluate(() => window.lab.panelSettled());
 const entries = (page) => page.locator('.outline-entry');
 
 // A first visit seeds the sample notebook, which has headings. These
@@ -66,6 +67,11 @@ test.describe('the tool panel', () => {
     await railButton(page).click();
     await expect(panel(page)).toBeVisible();
 
+    // The state is written to IndexedDB, which is asynchronous, so a
+    // reload issued in the same breath as the click can outrun the
+    // transaction. Waiting for the write is asserting the real contract
+    // -- "what was stored comes back" -- rather than racing it.
+    await settled(page);
     await page.reload();
     await page.waitForSelector('body[data-ready="true"]', { timeout: 30_000 });
     await dismissLauncher(page);
@@ -73,6 +79,7 @@ test.describe('the tool panel', () => {
     await expect(railButton(page)).toHaveAttribute('aria-pressed', 'true');
 
     await page.locator('[data-tool-panel-close]').click();
+    await settled(page);
     await page.reload();
     await page.waitForSelector('body[data-ready="true"]', { timeout: 30_000 });
     await dismissLauncher(page);
