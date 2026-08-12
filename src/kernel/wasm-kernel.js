@@ -8,6 +8,8 @@
 import { Kernel, STATUS } from './kernel.js';
 import { instanceCapable, runInstance } from './instance.js';
 import { createWasi, unshimmedImports, HARD_MAX_BYTES } from './wasi.js';
+import { SwarmHost, swarmImports, swarmProblems, swarmCapable, ensureStack } from './swarm.js';
+import { buildConnectors } from './connectors.js';
 import {
   RECORD, KEYWORD_CANDIDATES, makeNonce, executeChunk, isCompleteChunk,
   completeChunk, languageInfoChunk, dumpChunk, widgetChunk, luaLiteral,
@@ -18,6 +20,33 @@ import {
 } from './protocol.js';
 
 export const DEFAULT_WASM_URL = 'vendor/libdiluvium_wasi.wasm';
+
+/**
+ * The swarm build, and why it is a *second* module rather than the kernel.
+ *
+ * `diluvium_swarm_wasi.wasm` is the same objects as `libdiluvium_wasi.wasm`
+ * plus `dvs.o` and `dvs_shim.o` -- measured, not assumed: identical 45 WASI
+ * imports, identical `init_lua`/`run_lua`/`malloc`/`free`/`memory`, plus
+ * three `env` imports and 24 `dvs_*` exports. So it could simply *be* the
+ * kernel, and one module would cost less memory than two.
+ *
+ * It is not, for two reasons and one rule.
+ *
+ * The rule: CLAUDE.md names `libdiluvium_wasi.wasm` as the kernel artifact,
+ * and that is a decision rather than a preference. Changing which binary
+ * every notebook cell runs on is a conversation.
+ *
+ * The reasons are better than the rule, though. Every runtime before
+ * v5.5.1_build5 publishes no swarm module at all, so the dropdown would
+ * otherwise have entries that could not be selected. And a swarm is a place
+ * where guest programs fault on purpose: keeping it in its own module means
+ * a swarm that dies cannot take the notebook's Lua state with it, which is
+ * exactly the isolation the two-module cost buys.
+ *
+ * The second module is loaded on demand -- when the swarm panel is first
+ * used -- so a session that never opens it pays nothing.
+ */
+export const DEFAULT_SWARM_URL = 'vendor/diluvium_swarm_wasi.wasm';
 
 /**
  * What this adapter needs a module to export before it will run it.
@@ -42,7 +71,7 @@ const REQUIRED_EXPORTS = [
  *
  * @returns {string[]} reasons it cannot be used; empty means it can
  */
-export function incompatibilities(module, wasi) {
+export function incompatibilities(module, wasi, extraImports = {}) {
   const problems = [];
 
   const exports = new Map(WebAssembly.Module.exports(module).map((e) => [e.name, e.kind]));
@@ -58,7 +87,7 @@ export function incompatibilities(module, wasi) {
     problems.push('it has neither `init_lua` nor `__wasm_call_ctors`, so it is probably not libdiluvium_wasi.wasm');
   }
 
-  const missing = unshimmedImports(module, wasi);
+  const missing = unshimmedImports(module, wasi, extraImports);
   if (missing.length) problems.push(`it imports things this page cannot supply: ${missing.join(', ')}`);
 
   return problems;
@@ -92,6 +121,17 @@ export class WasmKernel extends Kernel {
     this._instance = null;
     this._wasi = null;
     this._encoder = new TextEncoder();
+
+    // The swarm's half. `null` for `swarmUrl` means this runtime publishes
+    // no swarm module, which is every Diluvium before v5.5.1_build5 and is
+    // a fact rather than a fault.
+    this.swarmUrl = options.swarmUrl === undefined ? DEFAULT_SWARM_URL : options.swarmUrl;
+    this.swarmBytes = options.swarmBytes ?? null;
+    this._swarmModule = null;
+    this._swarmInstance = null;
+    this._swarmWasi = null;
+    this._swarmRef = null;
+    this._host = null;
   }
 
   get capabilities() {
@@ -102,6 +142,14 @@ export class WasmKernel extends Kernel {
       // written against or it does not, and the answer changes when the
       // runtime dropdown changes.
       instances: this._instance ? instanceCapable(this._instance.exports) : false,
+      // Unlike `instances`, this cannot be answered by asking the running
+      // module: the swarm lives in a *second* module that is not loaded
+      // until someone opens the panel. So this says "there is a swarm
+      // module to load", and `swarmStart` says whether it could be driven.
+      // Getting that distinction wrong would mean a panel that is present
+      // and inert, which this project has shipped once and does not intend
+      // to again.
+      swarm: !!(this.swarmUrl || this.swarmBytes),
     };
   }
 
@@ -131,6 +179,10 @@ export class WasmKernel extends Kernel {
     this._instance = null;
     this._wasi = null;
     this._executionCount = 0;
+    // A swarm belongs to the kernel that was running when it started: its
+    // instances hold Lua states in a module this restart is discarding, and
+    // an instance held across one is a leaked linear memory twice over.
+    this._dropSwarm();
     this._setStatus(STATUS.STARTING);
     try {
       if (!this._module) this._module = await this._compile();
@@ -146,7 +198,26 @@ export class WasmKernel extends Kernel {
     this._instance = null;
     this._wasi = null;
     this._module = null;
+    this._dropSwarm();
+    this._swarmModule = null;
     this._setStatus(STATUS.DEAD);
+  }
+
+  /**
+   * Let the swarm's instance go, keeping its compiled Module.
+   *
+   * The same asymmetry `restart` documents for the kernel: a Module is code
+   * and owns no memory, an Instance owns a linear memory, and holding one is
+   * exactly how a restart leaks.
+   */
+  _dropSwarm() {
+    try { this._host?.free(); } catch { /* the module is already gone */ }
+    this._host = null;
+    this._listener = null;
+    this._database = null;
+    this._swarmInstance = null;
+    this._swarmWasi = null;
+    this._swarmRef = null;
   }
 
   async _compile() {
@@ -420,6 +491,204 @@ export class WasmKernel extends Kernel {
       this._setStatus(STATUS.IDLE);
       throw err;
     }
+  }
+
+  // --- the swarm ----------------------------------------------------
+  //
+  // `doc/Host.md`'s duties live in `swarm.js`; this is the part that owns a
+  // module and a lifetime. Kept here rather than in the host so that
+  // `SwarmHost` is testable against any set of exports, and so the two
+  // modules' teardown is in one place -- an instance held after a restart
+  // is a leaked linear memory, and there are two of them now.
+
+  /**
+   * Compile and instantiate the swarm module, once.
+   *
+   * Deliberately not part of `start()`: a session that never opens the
+   * panel should not pay a second megabyte, and a runtime with no swarm
+   * artifact should fail when someone asks for a swarm rather than when
+   * they open a notebook.
+   */
+  async _swarmExports() {
+    if (this._swarmInstance) return this._swarmInstance.exports;
+    if (!this.swarmUrl && !this.swarmBytes) {
+      throw new Error(
+        'this runtime publishes no swarm module. `diluvium_swarm_wasi.wasm` arrived in '
+        + 'v5.5.1_build5; on anything older the Lab can run instances but nothing can spawn.');
+    }
+    if (!this._swarmModule) {
+      const bytes = this.swarmBytes ?? await fetchModuleBytes(this.swarmUrl);
+      this._swarmModule = new WebAssembly.Module(bytes);
+    }
+    const wasi = createWasi();
+    const { ref, imports } = swarmImports();
+    const problems = incompatibilities(this._swarmModule, wasi, { env: imports });
+    if (problems.length) {
+      throw new Error(`this swarm module cannot be used by the Lab: ${problems.join('; ')}`);
+    }
+    const instance = new WebAssembly.Instance(this._swarmModule, {
+      wasi_snapshot_preview1: wasi.exports,
+      // Supplied whether or not anything calls them: a wasm module's
+      // imports are mandatory, which is the entire reason this is a
+      // separate artifact from the kernel.
+      env: imports,
+    });
+    wasi.bind(instance.exports.memory);
+    instance.exports.__wasm_call_ctors?.();
+
+    const problemsAfter = swarmProblems(instance.exports);
+    if (problemsAfter.length) throw new Error(problemsAfter.join('; '));
+
+    // After the constructors and before anything calls `dvs_step`: see
+    // `ensureStack`. On v5.5.1_build5 this is the difference between a
+    // swarm panel and a trap in `dv_queue_lookup`.
+    this._stack = ensureStack(instance.exports);
+
+    this._swarmInstance = instance;
+    this._swarmWasi = wasi;
+    this._swarmRef = ref;
+    return instance.exports;
+  }
+
+  /**
+   * Bring a swarm up: duty 1, plus the connectors a configuration names.
+   *
+   * The connectors are built *here* rather than passed in, because a
+   * connector is a function and this may be running in a worker. The
+   * configuration is data and crosses; the code does not. That is the same
+   * split the C host has, where `example.host.lua` names `sql = {path =
+   * ...}` and `dhost_sql.c` is what answers.
+   */
+  async swarmStart(source, config = {}) {
+    const exports = await this._swarmExports();
+    if (this._host) this._host.free();
+    const host = new SwarmHost(exports, this._swarmRef, {
+      drain: () => this._swarmWasi.drain(),
+    });
+    const { connectors, listener, database } = buildConnectors(config.connectors ?? {});
+    for (const [name, fn] of connectors) host.connect(name, fn);
+    this._listener = listener;
+    this._database = database;
+    host.start(source, config);
+    this._host = host;
+    return this._swarmReport();
+  }
+
+  /** One `dvs_step`. Exposed alongside `swarmRun` because watching a swarm
+   * advance one step at a time is most of what a lab is for. */
+  async swarmStep() {
+    this._requireSwarm();
+    this._host.step();
+    return this._swarmReport();
+  }
+
+  /** Step until nothing is alive or a slice runs out. See `runSlice`. */
+  async swarmRun(options = {}) {
+    this._requireSwarm();
+    const result = this._host.runSlice(options);
+    return { ...this._swarmReport(), ...result };
+  }
+
+  async swarmSnapshot() {
+    if (!this._host) return { running: false, roster: [], events: [], faults: [] };
+    return this._swarmReport();
+  }
+
+  /**
+   * Push a message into a guest's queue -- duty 4's inbound half, and the
+   * one that makes a mocked listener indistinguishable from a socket.
+   */
+  async swarmPush(id, queue, value) {
+    this._requireSwarm();
+    return this._host.push(id, queue, value);
+  }
+
+  /** A request from the page, in the listener's shape. */
+  async swarmRequest(request) {
+    this._requireSwarm();
+    if (!this._listener) {
+      throw new Error('this deployment wired no listener; add `listen` to its connectors');
+    }
+    const message = this._listener.request(request);
+    const result = this._host.push(this._host.rootId, this._listener.queue, message);
+    return { ...result, conn: message.conn };
+  }
+
+  async swarmControl(action, id) {
+    this._requireSwarm();
+    switch (action) {
+      case 'kill': return this._host.kill(id);
+      case 'hibernate': return this._host.hibernate(id);
+      case 'wake': return this._host.wake(id);
+      default: throw new Error(`unknown swarm control: ${action}`);
+    }
+  }
+
+  /** Duty 7. Idempotent, because a Stop that has already happened is fine. */
+  async swarmStop() {
+    if (!this._host) return { running: false, roster: [], events: [], faults: [] };
+    const final = this._swarmReport();
+    this._host.free();
+    this._host = null;
+    this._listener = null;
+    this._database = null;
+    return { ...final, running: false };
+  }
+
+  _requireSwarm() {
+    if (!this._host) throw new Error('no swarm is running; start one first');
+  }
+
+  /**
+   * Everything the panel needs, in one structured-cloneable object.
+   *
+   * One round trip rather than six, because the panel is on the other side
+   * of a worker and a roster read per column would be six message hops per
+   * repaint.
+   */
+  _swarmReport() {
+    const report = this._host.snapshot();
+    // Carried on every report rather than only on start: the panel says
+    // what the Lab had to do to this module, and a workaround nobody can
+    // see is a workaround nobody will remove.
+    report.stack = this._stack ?? null;
+    if (this._listener) {
+      report.listener = {
+        port: this._listener.port,
+        bind: this._listener.bind,
+        bound: this._listener.bound,
+        queue: this._listener.queue,
+        replyQueue: this._listener.replyQueue,
+        pending: [...this._listener.pending.values()],
+        exchanges: this._listener.exchanges.slice(-50),
+      };
+      // Replies leave on the reply queue, which the host drains as an
+      // exported queue; matching them back to their request is the
+      // listener's job and happens here so a reply nobody asked for stays
+      // visible instead of being quietly dropped.
+      for (const event of report.events) {
+        if (event.event === 'message' && event.queue === this._listener.replyQueue && !event.matched) {
+          event.matched = true;
+          const exchange = this._listener.reply(event.value);
+          if (!exchange) {
+            event.detail += '  (no request is waiting on that conn)';
+          }
+        }
+      }
+      report.listener.exchanges = this._listener.exchanges.slice(-50);
+    }
+    if (this._database) {
+      report.database = {
+        path: this._database.path,
+        readwrite: this._database.readwrite,
+        maxRows: this._database.maxRows,
+        statements: this._database.statements,
+        tables: [...this._database.tables.entries()].map(([name, t]) => ({
+          name, rows: t.rows.length, columns: t.columns.map((c) => c.name),
+        })),
+      };
+    }
+    return report;
   }
 
   async languageInfo() {

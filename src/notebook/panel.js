@@ -62,6 +62,11 @@ export class ToolPanel {
     if (!tool) return;
     this.active = id;
     this.titleEl.textContent = tool.label;
+    // A tool may ask for more room. The outline is a list of headings and
+    // fits in 17rem; a roster with capabilities and instruction counts in
+    // it does not, and shrinking the columns to fit would be choosing the
+    // panel's width over the data's legibility.
+    this.panel.toggleAttribute('data-wide', tool.wide === true);
     this.panel.hidden = false;
     this._paint(tool);
     this._reflectPressed();

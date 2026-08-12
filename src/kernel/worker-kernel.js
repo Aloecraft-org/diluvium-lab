@@ -33,7 +33,7 @@
 import { LAB_VERSION } from '../version.js';
 import { Kernel, STATUS } from './kernel.js';
 import { MSG } from './protocol.js';
-import { WasmKernel, DEFAULT_WASM_URL } from './wasm-kernel.js';
+import { WasmKernel, DEFAULT_WASM_URL, DEFAULT_SWARM_URL } from './wasm-kernel.js';
 
 /**
  * Where the worker script lives, relative to this module.
@@ -66,6 +66,8 @@ export class WorkerKernel extends Kernel {
     this.baseLabel = options.label ?? 'WASM';
     this.label = this.baseLabel;
     this.allowFallback = options.allowFallback ?? true;
+    this.swarmUrl = options.swarmUrl === undefined ? DEFAULT_SWARM_URL : options.swarmUrl;
+    this.swarmBytes = options.swarmBytes ?? null;
 
     this._worker = null;
     this._pending = new Map();
@@ -179,6 +181,12 @@ export class WorkerKernel extends Kernel {
           // running in the page, the whole suite still passed, and the
           // only visible symptom was that stop did not work.
           wasmUrl: new URL(this.wasmUrl, self.location.href).href,
+          // Same hazard, same fix. `null` stays null: it is how a runtime
+          // says it publishes no swarm module, and resolving it would turn
+          // "there is none" into a 404 at the worst possible moment.
+          swarmUrl: this.swarmUrl === null ? null
+            : new URL(this.swarmUrl, self.location.href).href,
+          swarmBytes: this.swarmBytes,
           label: this.baseLabel,
         },
       });
@@ -326,4 +334,22 @@ export class WorkerKernel extends Kernel {
   async languageInfo() { return this._call('languageInfo', []); }
   async dumpBytecode(code, options = {}) { return this._call('dumpBytecode', [code, options]); }
   async runInstance(code, options = {}) { return this._call('runInstance', [code, options]); }
+
+  // The swarm, forwarded. Plain proxies because the worker's dispatcher
+  // calls `kernel[method](...args)` for anything without a streaming half,
+  // and every one of these answers with a structured-cloneable report.
+  //
+  // Running the host *in the worker* is the point rather than an accident:
+  // `dvs_step` is synchronous and a guest can loop forever inside it, so
+  // the thread it blocks should not be the one painting the page -- and
+  // Stop, which is `terminate()`, takes the swarm down with the kernel
+  // exactly as it takes a runaway cell.
+  async swarmStart(source, config = {}) { return this._call('swarmStart', [source, config]); }
+  async swarmStep() { return this._call('swarmStep', []); }
+  async swarmRun(options = {}) { return this._call('swarmRun', [options]); }
+  async swarmSnapshot() { return this._call('swarmSnapshot', []); }
+  async swarmPush(id, queue, value) { return this._call('swarmPush', [id, queue, value]); }
+  async swarmRequest(request) { return this._call('swarmRequest', [request]); }
+  async swarmControl(action, id) { return this._call('swarmControl', [action, id]); }
+  async swarmStop() { return this._call('swarmStop', []); }
 }

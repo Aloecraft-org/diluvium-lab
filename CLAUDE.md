@@ -43,6 +43,17 @@ a commit.
 `libdiluvium_wasi.wasm` — the reactor build: no `_start`, exports
 `init_lua`, `run_lua`, `malloc`, `free`.
 
+**And a second one, since v5.5.1_build5: `diluvium_swarm_wasi.wasm`.**
+The same objects plus `dvs.o` and `dvs_shim.o` — so it is measurably a
+superset, and it is still loaded *beside* the kernel rather than instead
+of it. It is fetched only when the instances panel is used, it is the
+only artifact carrying the `dvs_*` swarm layer, and it additionally
+imports three trampolines from module `env` (`js_host_create`,
+`js_host_destroy`, `js_host_drive`) which the page supplies. A release
+that does not publish it is a release with no swarm panel, which the page
+says rather than hides. See ROADMAP §"A swarm host, in JavaScript" for
+why two modules beats one.
+
 Not `diluvium_wasi.wasm` (a command module that runs the REPL from
 `_start`) and not `diluvium_compiler_wasi.wasm` (that is `luac`, for the
 analysis report later).

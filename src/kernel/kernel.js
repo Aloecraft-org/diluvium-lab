@@ -62,6 +62,18 @@ export class Kernel {
        * running module what it exports.
        */
       instances: false,
+      /**
+       * Host a *swarm*: many sandboxed instances, spawning each other,
+       * with capability attenuation and per-instance budgets, driven by
+       * this page implementing `doc/Host.md`'s duties.
+       *
+       * A different claim from `instances`, and the difference is the
+       * whole of `doc/Messaging.md` §9: one instance is a program in a
+       * box, and a swarm is a program that can make more boxes. Needs the
+       * `dvs_*` layer, which only `diluvium_swarm_wasi.wasm` carries and
+       * only from v5.5.1_build5.
+       */
+      swarm: false,
     };
   }
 
@@ -133,6 +145,46 @@ export class Kernel {
    * @returns {Promise<object>} a report: status, usage, queues, output
    */
   async runInstance(code, options) { throw new Error('not implemented'); }
+
+  /**
+   * Host a swarm: `doc/Host.md`'s seven duties, behind seven methods.
+   *
+   * Optional, gated on `capabilities.swarm`. They are on the interface
+   * rather than reached for on the implementation for the reason at the
+   * top of this file: a local `diluvium` over WebSocket would host a swarm
+   * too, and it would be the *same* panel driving it.
+   *
+   * Every one of them answers with a report -- roster, events, config,
+   * whatever the listener and the database have seen -- rather than with
+   * nothing, because the caller is usually across a worker and a method
+   * that returned void would cost a second round trip to learn what it did.
+   *
+   * @param {string} source the root program
+   * @param {object} config the deployment, in `host/example.host.lua`'s shape
+   * @returns {Promise<object>} a report
+   */
+  async swarmStart(source, config) { throw new Error('not implemented'); }
+
+  /** One `dvs_step`: drain lifecycle, spawn, drive every resident instance once. */
+  async swarmStep() { throw new Error('not implemented'); }
+
+  /** Step until nothing is alive, or a step budget or wall-clock slice runs out. */
+  async swarmRun(options) { throw new Error('not implemented'); }
+
+  /** The current report, without advancing anything. */
+  async swarmSnapshot() { throw new Error('not implemented'); }
+
+  /** Duty 4's inbound half: put a message in a guest's queue by name. */
+  async swarmPush(id, queue, value) { throw new Error('not implemented'); }
+
+  /** An inbound request through the mocked listener, in `{method, path, body}`. */
+  async swarmRequest(request) { throw new Error('not implemented'); }
+
+  /** `kill`, `hibernate` or `wake`, by instance id. */
+  async swarmControl(action, id) { throw new Error('not implemented'); }
+
+  /** Duty 7. Idempotent. */
+  async swarmStop() { throw new Error('not implemented'); }
 
   /** @returns {Promise<object>} complete_reply */
   async complete(code, cursorPos) { throw new Error('not implemented'); }

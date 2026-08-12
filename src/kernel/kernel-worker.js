@@ -47,6 +47,8 @@ self.onmessage = async (event) => {
       kernel = new WasmKernel({
         moduleBytes: args.moduleBytes,
         wasmUrl: args.wasmUrl,
+        swarmUrl: args.swarmUrl,
+        swarmBytes: args.swarmBytes,
         label: args.label,
       });
       // Status changes are the one thing that arrives unprompted, so they

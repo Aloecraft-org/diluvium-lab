@@ -148,6 +148,14 @@ export class RuntimeRegistry {
     const entry = this.entries().find((e) => e.id === id);
     const kernel = new WorkerKernel({
       moduleBytes: bytes,
+      // No swarm on a switched-to runtime, and that is a refusal rather
+      // than an omission. The bundled `diluvium_swarm_wasi.wasm` belongs to
+      // the *pinned* tag; handing it to a kernel running some other build's
+      // `libdiluvium_wasi.wasm` would put two different Diluviums in one
+      // page and call the pair a runtime. Fetching the matching swarm
+      // artifact per tag is the fix and is a checksummed download this
+      // registry does not do yet -- see ROADMAP.
+      swarmUrl: null,
       label: `On-page WASM (${entry?.label ?? id})`,
     });
     await kernel.start();

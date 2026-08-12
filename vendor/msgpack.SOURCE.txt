@@ -1,0 +1,20 @@
+# Where vendor/msgpack.js came from, and how to re-vendor it.
+#
+# The Lab does not build Diluvium and does not depend on npm at runtime, so
+# the codec the queue layer speaks is a pinned copy rather than a package.
+# It is byte-identical to upstream on purpose: re-vendoring is `cp`, and a
+# diff against upstream is meaningful.
+#
+# The vectors beside it (test/fixtures/msgpack-vectors.json) were generated
+# by the C implementation, src/dmsgpack.c -- so test/msgpack.spec.js checks
+# cross-implementation agreement rather than one reading of the spec.
+
+repo    https://github.com/Aloecraft-org/diluvium
+tag     v5.5.1_build5
+commit  4ddd65f65d1507d8e4757de9b5e9df7fe87e4797
+
+vendor/msgpack.js                 <- bindings/js/src/msgpack.js
+sha256  9546ea35bd41f9ba974332389bd3ed3e295a0989bb0c81f96dea1c25f49298a8
+
+test/fixtures/msgpack-vectors.json <- bindings/js/test/vectors.json
+sha256  0a36e07765543da1ba872b73a5b2c1b3a5977800017e0461b1c2e19bfcd9c617

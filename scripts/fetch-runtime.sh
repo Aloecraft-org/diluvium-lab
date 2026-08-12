@@ -2,12 +2,20 @@
 #
 # Pin a Diluvium runtime into vendor/.
 #
-#   scripts/fetch-runtime.sh [tag]        default: v5.5.1_build2
+#   scripts/fetch-runtime.sh [tag]        default: v5.5.1_build5
 #
 # Downloads the kernel module plus the release's checksum and build
 # manifest, and verifies the module against the former. This is the
 # Stage 2 mechanism in miniature -- the version dropdown does the same
 # three steps in the browser.
+#
+# Two modules now, not one. `diluvium_swarm_wasi.wasm` arrived in
+# v5.5.1_build5: the same objects as libdiluvium_wasi.wasm plus dvs.o and
+# dvs_shim.o, so it is the kernel *and* the swarm layer in one artifact.
+# It is fetched when the release has it and skipped without complaint when
+# it does not -- every tag before build5 is in the second case, and a Lab
+# pinned to one of those runs cells perfectly well and says the swarm
+# panel is unavailable rather than failing.
 #
 # Pulls from the mirror by default. Set DILUVIUM_RELEASE_BASE to point
 # somewhere else -- notably at GitHub, which is where a build the mirror
@@ -30,7 +38,7 @@
 
 set -euo pipefail
 
-TAG="${1:-v5.5.1_build2}"
+TAG="${1:-v5.5.1_build5}"
 MIRROR="${DILUVIUM_RELEASE_BASE:-https://diluvium.aloecraft.org/release}"
 BASE="$MIRROR/$TAG"
 DEST="$(cd "$(dirname "$0")/.." && pwd)/vendor"
@@ -42,18 +50,41 @@ for f in libdiluvium_wasi.wasm SHA256SUMS.txt BUILDINFO.txt; do
   curl -fsSL --retry 3 -o "$DEST/$f" "$BASE/$f"
 done
 
-expected=$(grep ' libdiluvium_wasi\.wasm$' "$DEST/SHA256SUMS.txt" | cut -d' ' -f1)
-actual=$(sha256sum "$DEST/libdiluvium_wasi.wasm" | cut -d' ' -f1)
+# Verify a downloaded artifact against the release's own SHA256SUMS.txt.
+# Kept as a function because there are two artifacts now and the second one
+# must be checked exactly as hard as the first: an unverified module is one
+# the page would execute on nobody's word.
+verify () {
+  local name="$1" expected actual
+  expected=$(grep " ${name//./\\.}\$" "$DEST/SHA256SUMS.txt" | cut -d' ' -f1)
+  actual=$(sha256sum "$DEST/$name" | cut -d' ' -f1)
+  if [ -z "$expected" ]; then
+    echo "error: $name not listed in SHA256SUMS.txt" >&2
+    return 1
+  fi
+  if [ "$expected" != "$actual" ]; then
+    echo "error: checksum mismatch for $name" >&2
+    echo "  expected $expected" >&2
+    echo "  actual   $actual" >&2
+    return 1
+  fi
+  printf '%s' "$actual"
+}
 
-if [ -z "$expected" ]; then
-  echo "error: libdiluvium_wasi.wasm not listed in SHA256SUMS.txt" >&2
-  exit 1
-fi
-if [ "$expected" != "$actual" ]; then
-  echo "error: checksum mismatch" >&2
-  echo "  expected $expected" >&2
-  echo "  actual   $actual" >&2
-  exit 1
+actual=$(verify libdiluvium_wasi.wasm)
+
+# The swarm module, when the release has one. Absence is a fact about the
+# release rather than a failure here, so it is reported and not fatal --
+# but a *listed* artifact that will not verify is still fatal, because at
+# that point something is wrong rather than merely old.
+swarm_sha=""
+if grep -q ' diluvium_swarm_wasi\.wasm$' "$DEST/SHA256SUMS.txt"; then
+  echo "fetching diluvium_swarm_wasi.wasm ..."
+  curl -fsSL --retry 3 -o "$DEST/diluvium_swarm_wasi.wasm" "$BASE/diluvium_swarm_wasi.wasm"
+  swarm_sha=$(verify diluvium_swarm_wasi.wasm)
+else
+  rm -f "$DEST/diluvium_swarm_wasi.wasm"
+  echo "note: $TAG publishes no diluvium_swarm_wasi.wasm; the swarm panel will say so"
 fi
 
 printf '%s\n' "$TAG" > "$DEST/PINNED_TAG"
@@ -105,6 +136,11 @@ export const BUNDLED = {
   built: '$built',
   sha256: '$actual',
   artifact: 'libdiluvium_wasi.wasm',
+  // The swarm build, when this release has one: the same objects plus
+  // dvs.o and dvs_shim.o. \`null\` means this tag does not publish it, and
+  // the page reads that as "no swarm panel on this runtime" rather than
+  // as an error. New in v5.5.1_build5.
+  swarm: $( [ -n "$swarm_sha" ] && printf "{ artifact: 'diluvium_swarm_wasi.wasm', sha256: '%s' }" "$swarm_sha" || printf 'null' ),
   // From changelog.json, where upstream states it. \`null\` means this
   // script could not ask -- not that the build is fine.
   stable: $stable,
@@ -112,5 +148,6 @@ export const BUNDLED = {
 EOF
 
 echo "ok: $TAG pinned, sha256 $actual"
+[ -n "$swarm_sha" ] && echo "    swarm module pinned too, sha256 $swarm_sha"
 echo "    wrote vendor/pinned.js ($version, commit ${commit:0:12}, stable: $stable)"
 [ "$stable" = "false" ] && echo "    note: this is a PRERELEASE; the dropdown and the About panel will say so"

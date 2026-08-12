@@ -16,6 +16,8 @@ import { ConsoleView } from './notebook/console.js';
 import { saveAutosave, loadAutosave, debounceSave, rememberRecent, listRecent, clearRecent, savePanelState, loadPanelState, savePref, loadPref } from './notebook/storage.js';
 import { ToolPanel } from './notebook/panel.js';
 import { renderOutline } from './notebook/outline.js';
+import { renderSwarm } from './notebook/swarm-view.js';
+import { SWARM_PROGRAMS, programById } from './notebook/swarm-programs.js';
 import { renderMenuBar, renderDrawer, attachDropdown } from './notebook/menu.js';
 import { fetchNotebook, hostOf, describeOpenError, normaliseNotebookUrl } from './notebook/remote.js';
 import { EXAMPLES, exampleById } from './notebook/examples.js';
@@ -70,6 +72,11 @@ export class App {
     this.kernel = options.kernel ?? new WorkerKernel({
       wasmUrl: options.wasmUrl ?? DEFAULT_WASM_URL,
       moduleBytes: options.moduleBytes ?? null,
+      // Only when the pinned release actually publishes one. `null` is how
+      // a runtime says it has no swarm layer, and the panel says so rather
+      // than 404ing at the moment someone presses Start.
+      swarmUrl: options.swarmUrl
+        ?? (BUNDLED.swarm ? `vendor/${BUNDLED.swarm.artifact}` : null),
       label: 'On-page WASM',
     });
     this.model = new NotebookModel();
@@ -155,6 +162,40 @@ export class App {
         cells: this.model.cells,
         selectedId: this.view.selectedId,
         onJump: (cellId) => this._jumpToCell(cellId),
+      }),
+    });
+
+    // The instances panel. Its state is three fields and a report, kept
+    // here rather than in the view because the panel re-renders from
+    // scratch on every repaint -- which is what stops a tool leaking
+    // listeners into the workbench, and what makes a live view of a
+    // running swarm need somewhere else to live.
+    this.swarm = {
+      report: null,
+      source: SWARM_PROGRAMS[0].id,
+      busy: false,
+      // The listener composer's contents, held here rather than in the DOM
+      // because the panel repaints from scratch after every action.
+      draft: { method: 'GET', path: '/', body: '' },
+    };
+    this.panel.register({
+      id: 'swarm',
+      label: 'Instances',
+      icon: '⧉',
+      title: 'Instances — a swarm, while it is running',
+      wide: true,
+      render: (body) => renderSwarm(body, {
+        report: this.swarm.report,
+        capable: this.kernel.capabilities.swarm === true,
+        busy: this.swarm.busy,
+        source: this.swarm.source,
+        draft: this.swarm.draft,
+        programs: SWARM_PROGRAMS,
+        onChange: (patch) => { Object.assign(this.swarm, patch); this.panel.refresh(); },
+        // Kept apart from `onChange` on purpose: a draft field must not
+        // repaint the panel, or the input is rebuilt under the caret.
+        onDraft: (patch) => { Object.assign(this.swarm.draft, patch); },
+        onAction: (action, arg) => this._swarmAction(action, arg),
       }),
     });
 
@@ -502,6 +543,59 @@ export class App {
     if (!node) return;
     this.view.select(cellId);
     node.scrollIntoView({ block: 'start' });
+  }
+
+  /**
+   * Everything the instances panel can ask for, in one place.
+   *
+   * Serialised through `busy`, because `dvs_step` is synchronous on the
+   * far side and two overlapping Run presses would queue a second slice
+   * behind the first with nothing on screen saying so. The kernel is
+   * across a worker, so this is a lock over a message round trip rather
+   * than over the work itself.
+   */
+  async _swarmAction(action, arg) {
+    if (this.swarm.busy && action !== 'stop') return;
+    this.swarm.busy = true;
+    this.panel.refresh();
+    try {
+      switch (action) {
+        case 'start': {
+          const program = programById(this.swarm.source);
+          this.swarm.report = await this.kernel.swarmStart(program.source, program.config);
+          break;
+        }
+        case 'step':
+          this.swarm.report = await this.kernel.swarmStep();
+          break;
+        case 'run':
+          this.swarm.report = await this.kernel.swarmRun({ maxSteps: 200, budgetMs: 50 });
+          break;
+        case 'stop':
+          this.swarm.report = await this.kernel.swarmStop();
+          break;
+        case 'request':
+          await this.kernel.swarmRequest(arg);
+          // A request is only inbound: the program has to be driven before
+          // it can answer, so the panel steps once rather than leaving a
+          // connection that looks stuck.
+          this.swarm.report = await this.kernel.swarmRun({ maxSteps: 20, budgetMs: 30 });
+          break;
+        case 'kill': case 'hibernate': case 'wake': {
+          const result = await this.kernel.swarmControl(action, arg);
+          if (result.status !== 'ok') this._toast(`${action}: ${result.detail ?? result.status}`, 'error');
+          this.swarm.report = await this.kernel.swarmSnapshot();
+          break;
+        }
+        default:
+          break;
+      }
+    } catch (err) {
+      this._toast(err.message, 'error');
+    } finally {
+      this.swarm.busy = false;
+      this.panel.refresh();
+    }
   }
 
   _bindModel() {

@@ -2128,3 +2128,188 @@ move over nearly verbatim the day a release ships it.
 Every snippet was verified against the pinned kernel before the notebook
 was written, and the examples suite runs all 21 cells on every CI run
 like the other seven. The launcher and gallery counts moved 7 → 8.
+
+### A swarm host, in JavaScript ✅ done
+
+`v5.5.1_build5` published `diluvium_swarm_wasi.wasm`, and with it the
+thing this file has been calling impossible since Stage 1: **the Lab can
+now spawn.** The instances panel shows sub-instances as they are created,
+which is the whole reason the artifact was wanted.
+
+The prediction that was wrong is worth recording first, because it was
+*this repository's* prediction as much as `doc/Lab.md`'s. Both files said
+a JavaScript host could not supply `dvs_host`'s three C function pointers,
+and concluded the host must therefore be C, compiled into the module,
+behind a narrow three-function door. The premise held and the conclusion
+did not. `src/dvs_shim.c` inverts it: the *trampolines* are C, twenty
+lines, declared as imports from module `env`, and `dvsjs_new` stands in
+for `dvs_new`. The duties are ordinary JavaScript. So the door was never
+built and is not needed — the whole `dvs_` surface is exported and
+`src/kernel/swarm.js` calls it directly.
+
+**`doc/Host.md`'s seven duties, and where each of them lives.**
+Construction and shutdown are `SwarmHost.start`/`free`. The drive loop is
+`_onDrive`, called from inside `dvs_step`. The roster is `_onCreate` and
+`_onDestroy` — there is deliberately no enumeration API, so those two
+callbacks *are* the roster, and `create` must return non-zero because
+`dvs.c` guards its destroy callback on `ctx != NULL`. The queue pump and
+the hostcall pump bracket each step. Hibernation policy is two buttons.
+
+**Two modules, not one, and the reasoning is not the obvious one.**
+`diluvium_swarm_wasi.wasm` is measurably a superset of the kernel
+artifact — identical 45 WASI imports, identical `init_lua`/`run_lua`/
+`malloc`/`free`/`memory`, plus three `env` imports and 24 `dvs_*` exports
+— so it could simply *be* the kernel and save a linear memory. It is not,
+for a rule and two reasons. The rule: CLAUDE.md names
+`libdiluvium_wasi.wasm` as the kernel artifact and that is a decision.
+The reasons are better: every release before build5 publishes no swarm
+module at all, so the dropdown would carry entries that could not be
+selected; and a swarm is where guest programs fault on purpose, so
+keeping it in its own module means a swarm that dies cannot take the
+notebook's Lua state with it. `test/swarm-panel.spec.js` runs a cell
+while a swarm is running and asserts exactly that. The second module is
+fetched on first use, so a session that never opens the panel pays
+nothing.
+
+#### The bug in the artifact, which is a linker flag
+
+**`dvs_step` traps on `v5.5.1_build5`, and the Lab works around it.**
+This is the most important thing in this section and it should stop being
+true.
+
+The symptom is `memory access out of bounds` inside `dv_queue_lookup` —
+called from `dvs_step`, on a queue lookup that works perfectly when
+called directly from JavaScript with the same arguments one line earlier.
+Upstream's own `bindings/js/test/swarm.integration.mjs` fails the same
+way, and says of itself that it "has never executed anywhere", which is
+what a first run is for.
+
+The cause, measured rather than reasoned about: the module reports
+`__stack_low = 0` and `__stack_high = 65536`, wasm-ld's default 64 KiB
+shadow stack, because `BUILD_WASM_OPT` in the Diluvium Makefile passes no
+`-z stack-size`. `dvs_step` does not fit in it — `drain()` declares
+`uint8_t buf[DVS_MAX_REQUEST]`, which is 32 KiB, and the compiler inlines
+it alongside `spawn()`'s capability array. The frame underflows the stack
+on entry, so the first read through the stack pointer traps. That is why
+the trap lands in a function that is not the problem.
+
+It was confirmed by bisection rather than by inspection, which is the
+part that makes it a diagnosis instead of a story: relocating the shadow
+stack into a heap block and re-running the *same* `dvs_step` traps at
+64 KiB and runs a three-child swarm to completion at 96 KiB.
+
+**The fix is one linker flag upstream** —
+`-Wl,-z,stack-size=1048576` on the `diluvium_swarm_wasi.wasm` link line.
+Until it ships, `ensureStack` in `src/kernel/swarm.js` relocates the
+stack itself, which it can do because `__stack_pointer` is an exported
+mutable global and a malloc'd block is memory nothing else will touch —
+the shadow stack is a convention between the linker and the generated
+code, and no other part of the runtime knows where it is.
+
+Three things keep that from rotting into folklore. It is conditional on
+*measurement* rather than on a version, so a build with a large enough
+stack is left alone. It is reported on every swarm report and shown in
+the panel, because a patch nobody can see is a patch nobody will remove.
+And `test/swarm.spec.js` asserts `moved === true` and `had === 65536`, so
+the day upstream fixes it the suite says so rather than going quiet.
+
+#### Hostcalls, and the mock that is not a simulation
+
+`doc/Hostcall.md`'s encoding is implemented whole, and its central
+reservation is honoured from the first prototype: **the correlation token
+is required.** A request without an integer `tok` is answered
+`malformed`, with the token echoed when one was readable and omitted when
+none was — an uncorrelatable reply being the sender's own diagnostic
+where silence diagnoses nothing. `test/swarm.spec.js` runs two
+outstanding calls and matches the replies by token, which is the case a
+token-less shape would have forced into one-at-a-time.
+
+Three rules from the C host were copied rather than re-derived, and each
+is load-bearing:
+
+- **Every drained request is answered** — `ok`, `denied`, `error` or
+  `malformed` — because a dropped request is invisible backpressure.
+- **A request is not drained until there is room for its reply.** This
+  looks like an optimisation and is not: answering, failing to deliver,
+  and recomputing next turn would double-apply a stateful connector's
+  write.
+- **The capability question is asked of `dvs_holds`**, not
+  reimplemented. A second copy of the pattern match would be a second
+  policy, and the two would drift.
+
+Connectors are all off until a deployment names one, and an unknown
+connector name is refused **by name** at configuration time, the way the
+C host refuses an unknown config key — an unknown key is a typo about to
+become a silent default.
+
+`time` is identical on both hosts. `sql` is `src/kernel/mock-sql.js`, and
+the honest description of it is the one the panel shows: same wire
+contract, same two calls, same read-only/readwrite split, same
+refuse-rather-than-truncate row cap; different engine, smaller dialect,
+no persistence, no transactions, no joins, no subqueries. **What makes
+that defensible is that it refuses rather than approximates.** A JOIN, a
+subquery, `BEGIN`, `PRAGMA`, an unknown function and a composite primary
+key each produce an error naming the limitation. A mock that silently
+misexecutes a query is worse than no mock, because the program written
+against it looks like it works.
+
+`listen` is the mocked port binding, and the mock is thinner than it
+sounds. `doc/Host.md` fixes the message shapes — `{conn, method, path,
+body}` in, `{conn, status, body, content_type?}` out, `conn` echoed
+verbatim — so the composer in the panel produces exactly what a socket
+would. The port is recorded and never bound, and the panel says so: the
+number is topology, it comes from configuration, and a deployment moving
+to the C host should not have to discover the field exists.
+
+#### Bugs this pass produced, and what caught each
+
+- **A dying instance's last message was lost.** A child whose final act
+  is pushing to `outbox` had that push disappear, because exported queues
+  were drained after `dvs_step` and by then the swarm had freed the
+  instance. Draining now happens in `_settle`, at the last moment the
+  instance exists. Caught by asserting on the child's message rather than
+  on the fact that the child ran.
+- **Positional `?` parameters were consumed per row.** A WHERE clause is
+  evaluated once per row, so row 1 got the first parameter and row 2 the
+  second, and the third row ran out. They are numbered at parse time now,
+  which is SQLite's rule. Caught only because the test inserts two rows;
+  with one it would have shipped.
+- **The listener composer reset itself.** The panel repaints from scratch
+  after every action, so a field holding its own value silently returned
+  to `/` when you pressed Send — and the *second* request went somewhere
+  nobody asked for. The draft lives in `app.js` now, updated through an
+  `onDraft` that deliberately does not repaint, because repainting on
+  every keystroke rebuilds the input under the caret.
+- **A demo program claimed a refusal that would not happen.** The
+  supervisor example asked for `lifecycle` to show attenuation refusing
+  it — but the root *holds* `lifecycle`, and granting what you hold is
+  attenuation's equality case, so the spawn was allowed. The panel test
+  counted five instances where the comment promised four. It asks for
+  `host:sql/exec` now.
+- **The bake's duplicate-name guard fired five times** (`REQUIRED`,
+  `readCString`, `describe`, `tokenize` and friends, `button`, `Reader`).
+  `readCString` became a shared export rather than a rename, which is the
+  outcome that guard is actually for.
+
+#### What is not done
+
+- **A switched runtime cannot host a swarm.** `runtimes.js` passes
+  `swarmUrl: null` for anything but the pinned build, deliberately:
+  handing the bundled build5 swarm module to a kernel running some other
+  build's `libdiluvium_wasi.wasm` would put two different Diluviums in
+  one page and call the pair a runtime. Fetching the matching
+  `diluvium_swarm_wasi.wasm` per tag is the fix, and it is a
+  checksum-verified download the registry does not do yet.
+- **The mirror is behind again.** `diluvium.aloecraft.org/release/` is
+  still stamped `2026-08-08` with two releases, so `vendor/` was pinned
+  from GitHub with `DILUVIUM_RELEASE_BASE`. The browser still cannot
+  reach GitHub release assets — no CORS — so the dropdown will not offer
+  build5 until the mirror is regenerated.
+- **Hibernation is wired but barely exercised.** The buttons call
+  `dvs_hibernate`/`dvs_wake` and the roster reports cached size, with the
+  documented stub for a hibernated instance's instruction count. No test
+  drives a program through a swap-out and back.
+- **`usage.instructions` reads 0 for short-lived programs.** The counter
+  is the budget hook, which fires every 1000 instructions, so a program
+  doing less than that between parks reports nothing. That is the
+  counter's resolution rather than a bug, and the panel says so.

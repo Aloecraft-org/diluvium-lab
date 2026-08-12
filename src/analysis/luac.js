@@ -130,7 +130,7 @@ function unscramble(bytes, generation = 1) {
 
 export class BytecodeError extends Error {}
 
-class Reader {
+class ChunkReader {
   constructor(bytes) {
     this.bytes = bytes;
     this.view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
@@ -210,7 +210,7 @@ class Reader {
   }
 }
 
-const decode = (bytes) => new TextDecoder('utf-8', { fatal: false }).decode(bytes);
+const decodeUtf8 = (bytes) => new TextDecoder('utf-8', { fatal: false }).decode(bytes);
 
 // --- 5.4 -------------------------------------------------------------
 
@@ -244,7 +244,7 @@ function readString54(ctx, { scrambled = false } = {}) {
   const size = ctx.reader.varint54();
   if (size === 0) return null;
   const raw = ctx.reader.take(scrambled ? size : size - 1);
-  return decode(scrambled ? unscramble(raw, ctx.generation) : raw);
+  return decodeUtf8(scrambled ? unscramble(raw, ctx.generation) : raw);
 }
 
 function readFunction54(ctx, parentSource) {
@@ -388,7 +388,7 @@ function readString55(ctx) {
   }
   const raw = reader.take(length + 1);                 // content plus the NUL
   const bytes = scrambled ? unscramble(raw, ctx.generation) : raw;
-  const value = decode(bytes.subarray(0, length));
+  const value = decodeUtf8(bytes.subarray(0, length));
   ctx.strings.push(value);
   return value;
 }
@@ -554,7 +554,7 @@ function absoluteLines(lineInfo, absLineInfo, lineDefined) {
  * looks right and is not.
  */
 export function readChunk(bytes) {
-  const reader = new Reader(bytes);
+  const reader = new ChunkReader(bytes);
 
   const signature = String.fromCharCode(...reader.take(4));
   if (signature !== LUA_SIGNATURE) {

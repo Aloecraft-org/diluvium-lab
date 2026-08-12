@@ -303,7 +303,9 @@ function readQueues(exports, instance, layout) {
   return out;
 }
 
-function readCString(exports, ptr) {
+/** A NUL-terminated string out of linear memory. Shared with `swarm.js`,
+ * which needs the same read against the same kind of pointer. */
+export function readCString(exports, ptr) {
   if (!ptr) return null;
   const bytes = new Uint8Array(exports.memory.buffer);
   let end = ptr;

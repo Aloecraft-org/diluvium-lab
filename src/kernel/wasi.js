@@ -169,8 +169,19 @@ export function createWasi() {
  * only authority here -- it is linked --allow-undefined, so no document can
  * be trusted about what it needs.
  */
-export function unshimmedImports(module, wasi) {
+export function unshimmedImports(module, wasi, extra = {}) {
   return WebAssembly.Module.imports(module)
-    .filter((i) => i.module !== 'wasi_snapshot_preview1' || typeof wasi.exports[i.name] !== 'function')
+    .filter((i) => {
+      // The swarm build imports three trampolines from module `env`
+      // (`js_host_create` / `js_host_destroy` / `js_host_drive`), which is
+      // how a JavaScript host gets to be a `dvs_host` vtable at all. They
+      // are supplied by whoever passes them here, so a caller that has not
+      // brought them still gets the same clear sentence rather than a
+      // LinkError -- which is what this function exists for.
+      const supplied = i.module === 'wasi_snapshot_preview1'
+        ? wasi.exports
+        : extra[i.module];
+      return typeof supplied?.[i.name] !== 'function';
+    })
     .map((i) => `${i.module}.${i.name}`);
 }

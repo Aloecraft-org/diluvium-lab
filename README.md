@@ -307,10 +307,90 @@ Click a heading to jump to its cell; the entry for the section your
 selection is in stays marked. Headings inside fenced code blocks are
 ignored, because `# comment` in a ```` ```lua ```` fence is a comment.
 
+The second is **Instances** — a swarm, while it is running. See below.
+
 The panel is generic on purpose — a tool is an id, a label, and a render
 function registered in `app.js`; the rail and collapse behaviour come for
 free (`src/notebook/panel.js`). The outline just happens to be the first
 resident.
+
+## Instances: running a swarm
+
+The **Instances** tool needs `diluvium_swarm_wasi.wasm`, which arrived in
+v5.5.1_build5. On anything older the panel says so and does nothing else:
+older builds can run a single sandboxed instance (the Sandbox button
+below) but nothing in them can spawn.
+
+Pick a root program, press **Start**, then **Step** one step at a time or
+**Run** to a standstill. The roster fills in as instances come to exist:
+
+| column | what it is |
+| :--- | :--- |
+| `#` | the instance id, which the swarm assigns and never reuses |
+| `parent` | who spawned it — `—` for the root |
+| `state` | running, parked, hibernated, or gone with how it ended |
+| `instructions` | used against the budget it was given |
+| `mem` | peak KB |
+| `caps` | what it holds, which can only ever narrow going down the tree |
+
+Underneath, the event list shows what happened in the order it happened:
+spawns, exits, faults, budget kills, refused grants, and every message the
+host drained from a guest's exported queues.
+
+Three things the panel is careful about, because a prettier one would be
+lying:
+
+- **A hibernated instance shows no instruction count.** The number is in
+  its snapshot header and the swarm API has no accessor for it yet, so it
+  reports budget and cached size and nothing else. Showing its last
+  resident figure would be showing a stale number as a live one.
+- **Instructions are counted by the budget hook**, which fires every 1000.
+  A program doing less than that between parks reports zero.
+- **The listener binds no port.** A browser tab binds nothing. It says
+  which port it *would* bind, because that is topology and it comes from
+  the configuration exactly as it does on the real host.
+
+The **Stop** button is called Stop rather than Interrupt for the same
+reason the kernel's is: it frees the swarm and every instance's Lua state
+goes with it.
+
+### The host, and why a guest cannot tell
+
+What the panel drives is a **host** in `doc/Host.md`'s sense: the code
+outside the sandbox speaking the `dv_`/`dvs_` ABI. Diluvium has two — one
+in C over the system SQLite and a real socket, and this one in JavaScript.
+The protocol's acceptance test is behavioural: *a guest program must not
+be able to tell them apart.* A supervisor prototyped here is the same
+bytes that run over there.
+
+So the mocked connectors are not simulations of hostcalls — they *are*
+hostcalls, answered by different code. Same encoding, same correlation
+token, same capability check, same `ok`/`denied`/`error`/`malformed`
+vocabulary. What differs is what stands behind each one, and the Lab says
+which:
+
+| connector | here | in production |
+| :--- | :--- | :--- |
+| `time` | wall clock | wall clock — identical |
+| `sql/query`, `sql/exec` | a small engine in `src/kernel/mock-sql.js` | the system SQLite |
+| `listen` | a request composer in the panel | a bound socket |
+| `rng`, `js/invoke` | `crypto`, a registered function | host's choice |
+
+Connectors are **all off by default**; a deployment names the ones it
+wires, and a call to an unwired one is `denied` with a sentence saying so.
+The configuration is `host/example.host.lua`'s shape on purpose, so moving
+a deployment to the C host is a translation of the same keys rather than a
+rewrite.
+
+**The SQL engine is not SQLite, and its whole design is refusing rather
+than approximating.** It answers the same two calls over the same shapes,
+splits read-only from readwrite the same way, and refuses rather than
+truncates at `max_rows`. It implements SELECT (with WHERE, ORDER BY,
+GROUP BY, LIMIT/OFFSET and the five aggregates), INSERT, UPDATE, DELETE,
+CREATE TABLE and DROP TABLE, over one table per statement. A JOIN, a
+subquery, `BEGIN`, `PRAGMA`, an unknown function or a composite primary
+key each produce an error naming the limitation. Test your schema here;
+test your SQL against the real thing before you ship it.
 
 ## Naming a notebook
 
@@ -364,9 +444,9 @@ same source as a Diluvium *instance* rather than in the notebook's state:
   memory, the queues it ended up with and how full they are
 
 A program that parks on a queue is reported as parked, with what it is
-waiting for, and stops there. Nothing in the Lab can send it a message —
-that is a host loop's job, and the swarm layer it belongs to is not in the
-artifact yet.
+waiting for, and stops there. Nothing here can send it a message — that is
+a host loop's job, and the Lab now has one: see **Instances** above, which
+drives many instances rather than one and can answer their parks.
 
 One thing worth knowing, because it is the reason a budget is always set:
 **the instruction counter is the budget hook.** An instance run with no
@@ -657,9 +737,12 @@ spike.html          the Stage 0 spike: raw kernel contract, run this first
 src/kernel/         the kernel interface and the one implementation behind it
 src/notebook/       the document: model, .ipynb, markdown, highlighting, rendering
 src/notebook/display.js  rich output by mime type; plot.js draws the charts
+src/kernel/swarm.js      the swarm host: doc/Host.md's seven duties, in JS
+src/kernel/connectors.js the hostcall connectors; mock-sql.js is the sql one
 notebooks/          the Start here gallery, bundled into the page by
                     scripts/bundle-examples.mjs -> src/notebook/examples.js
-vendor/             the pinned Diluvium runtime
+vendor/             the pinned Diluvium runtime, both modules, plus the
+                    msgpack codec (a verbatim copy — see msgpack.SOURCE.txt)
 ```
 
 Everything reaches the kernel through `src/kernel/kernel.js`. That is the
@@ -668,7 +751,21 @@ seam Stage 2's version dropdown and Stage 3's second backend plug into.
 The pinned runtime lives in `vendor/`. Re-pin with:
 
 ```sh
-scripts/fetch-runtime.sh v5.5.1_build1
+scripts/fetch-runtime.sh v5.5.1_build5
+```
+
+That fetches both modules — the kernel and, when the release has one, the
+swarm build — and verifies each against the release's own
+`SHA256SUMS.txt`. A release with no swarm artifact is a fact rather than a
+failure: it is skipped, and the Instances panel says why.
+
+The mirror is the default source. A build the mirror has not picked up yet
+lives on GitHub, which `curl` can read even though a browser cannot (no
+CORS on release assets):
+
+```sh
+DILUVIUM_RELEASE_BASE=https://github.com/Aloecraft-org/diluvium/releases/download \
+  scripts/fetch-runtime.sh v5.5.1_build5
 ```
 
 Diluvium itself is never built here — the Lab consumes published release

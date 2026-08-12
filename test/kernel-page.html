@@ -18,8 +18,14 @@
 import { WasmKernel, splitCompletionToken } from '../src/kernel/wasm-kernel.js';
 import { executeCollected } from '../src/kernel/kernel.js';
 import { luaLongString, parseRecord, makeNonce } from '../src/kernel/lua-harness.js';
+import { MockDatabase, parseSql } from '../src/kernel/mock-sql.js';
+import { buildConnectors } from '../src/kernel/connectors.js';
+import { encode, decode } from '../vendor/msgpack.js';
 
-const kernel = new WasmKernel({ wasmUrl: '../vendor/libdiluvium_wasi.wasm' });
+const kernel = new WasmKernel({
+  wasmUrl: '../vendor/libdiluvium_wasi.wasm',
+  swarmUrl: '../vendor/diluvium_swarm_wasi.wasm',
+});
 const statuses = [];
 kernel.onMessage((msg) => statuses.push(msg.content.execution_state));
 
@@ -31,6 +37,13 @@ window.lab = {
   parseRecord,
   makeNonce,
   run: (code) => executeCollected(kernel, code),
+  // The swarm's own surfaces, so a spec can assert the host and the
+  // connectors directly rather than through six layers of DOM. The
+  // notebook's tests drive the real panel and the real buttons.
+  MockDatabase,
+  parseSql,
+  buildConnectors,
+  msgpack: { encode, decode },
 };
 
 kernel.start().then(

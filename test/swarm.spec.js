@@ -1,0 +1,387 @@
+import { test, expect } from '@playwright/test';
+import { dismissLauncher } from './chrome.js';
+
+// The swarm host: `doc/Host.md`'s seven duties, against the real
+// `diluvium_swarm_wasi.wasm`.
+//
+// Nothing here is mocked. Every assertion is about what the runtime did --
+// which instances came to exist, what the swarm layer refused, what a
+// budget stopped -- rather than about what the panel says it did. The panel
+// gets its own describe block at the bottom, driving the real buttons.
+
+async function openKernel(page) {
+  const problems = [];
+  page.on('pageerror', (err) => problems.push(`pageerror: ${err.message}`));
+  page.on('console', (msg) => { if (msg.type() === 'error') problems.push(msg.text()); });
+  await page.goto('/test/kernel-page.html');
+  await page.waitForSelector('body[data-ready="true"]', { timeout: 30_000 });
+  return problems;
+}
+
+/** Start a swarm and run it to a standstill, then report. */
+const drive = (page, source, config, steps = 40) => page.evaluate(async ([src, cfg, n]) => {
+  await window.lab.kernel.swarmStart(src, cfg);
+  for (let i = 0; i < n; i++) {
+    const report = await window.lab.kernel.swarmStep();
+    if (report.alive === 0) return report;
+  }
+  return window.lab.kernel.swarmSnapshot();
+}, [source, config, steps]);
+
+const WORKER = `
+local out = queue.lookup('outbox')
+queue.push(out, {said = 'a child ran'})
+return 0`;
+
+const SUPERVISOR = `
+local sys = queue.declare('system/lifecycle', {capacity = 16})
+local ev  = queue.declare('system/events', {capacity = 64})
+local log = queue.declare('log', {capacity = 64, exported = true})
+queue.push(sys, {op = 'spawn', code = ${JSON.stringify(WORKER)},
+                 caps = {'queue:*'}, budget = {instructions = 2000000, memory_kb = 512}})
+local seen = 0
+while seen < 2 do
+  local q, m = queue.wait({ev})
+  queue.push(log, ('%s id=%s'):format(tostring(m.event), tostring(m.id)))
+  seen = seen + 1
+end
+return 0`;
+
+const ROOT_CONFIG = {
+  maxInstances: 16,
+  caps: ['lifecycle', 'queue:*'],
+  budget: { instructions: 50_000_000, memoryKb: 4096 },
+};
+
+test.describe('the module', () => {
+  test('the swarm build is the kernel build plus a swarm layer', async ({ page }) => {
+    await openKernel(page);
+    // Read off the binary rather than trusting any document about it --
+    // the same discipline Stage 0 used on the WASI import list.
+    const facts = await page.evaluate(async () => {
+      const shape = async (url) => {
+        const bytes = new Uint8Array(await (await fetch(url)).arrayBuffer());
+        const module = await WebAssembly.compile(bytes);
+        const imports = WebAssembly.Module.imports(module);
+        const names = WebAssembly.Module.exports(module).map((e) => e.name);
+        return {
+          env: imports.filter((i) => i.module === 'env').map((i) => i.name).sort(),
+          wasi: imports.filter((i) => i.module === 'wasi_snapshot_preview1').length,
+          dvs: names.filter((n) => n.startsWith('dvs')).length,
+          kernel: ['init_lua', 'run_lua', 'malloc', 'free', 'memory']
+            .every((n) => names.includes(n)),
+        };
+      };
+      return {
+        plain: await shape('../vendor/libdiluvium_wasi.wasm'),
+        swarm: await shape('../vendor/diluvium_swarm_wasi.wasm'),
+      };
+    });
+
+    expect(facts.plain.dvs).toBe(0);
+    expect(facts.plain.env).toEqual([]);
+    expect(facts.swarm.kernel).toBe(true);
+    expect(facts.swarm.wasi).toBe(facts.plain.wasi);
+    // The three trampolines `dvs_shim.c` declares, which are why this is a
+    // separate artifact: a wasm module's imports are mandatory, so linking
+    // the shim into libdiluvium_wasi.wasm would break every pure-WASI
+    // consumer of it.
+    expect(facts.swarm.env).toEqual(['js_host_create', 'js_host_destroy', 'js_host_drive']);
+    expect(facts.swarm.dvs).toBeGreaterThan(20);
+  });
+
+  test('the shadow stack is too small for dvs_step, and the Lab says so', async ({ page }) => {
+    await openKernel(page);
+    const report = await drive(page, SUPERVISOR, ROOT_CONFIG);
+
+    // This test is written to fail loudly the day upstream fixes the link
+    // flag, which is the point: a workaround nobody notices is a
+    // workaround nobody removes. If `moved` goes false, delete
+    // `ensureStack` and this assertion together.
+    expect(report.stack).toBeTruthy();
+    expect(report.stack.moved).toBe(true);
+    expect(report.stack.had).toBe(65536);
+    expect(report.stack.why).toContain('stack-size');
+  });
+});
+
+test.describe('duty 1 and 3 — construction and the roster', () => {
+  test('a root comes up and a spawned child appears in the roster', async ({ page }) => {
+    const problems = await openKernel(page);
+    const report = await drive(page, SUPERVISOR, ROOT_CONFIG);
+
+    expect(report.roster.length).toBe(2);
+    const [root, child] = report.roster;
+    expect(root.role).toBe('root');
+    expect(root.parent).toBe(0);
+    expect(child.parent).toBe(root.id);
+    // Ids are the swarm's and are never reused.
+    expect(child.id).toBeGreaterThan(root.id);
+    expect(problems).toEqual([]);
+  });
+
+  test('the roster records how each instance ended', async ({ page }) => {
+    await openKernel(page);
+    const report = await drive(page, SUPERVISOR, ROOT_CONFIG);
+    for (const row of report.roster) {
+      expect(row.state).toBe('gone');
+      expect(row.outcome).toBe('exited');
+    }
+  });
+
+  test('a capability set can only narrow, and the runtime is what enforces it', async ({ page }) => {
+    await openKernel(page);
+    const GREEDY = `
+local sys = queue.declare('system/lifecycle', {capacity = 8})
+local ev  = queue.declare('system/events', {capacity = 32})
+local log = queue.declare('log', {capacity = 32, exported = true})
+-- Wider than this program holds: it has queue:* and lifecycle, and asks
+-- for a host capability nobody granted it.
+queue.push(sys, {op = 'spawn', code = 'return 0',
+                 caps = {'host:sql/exec'}, budget = {instructions = 1000}})
+local q, m = queue.wait({ev})
+queue.push(log, ('%s %s'):format(tostring(m.event), tostring(m.detail)))
+return 0`;
+    const report = await drive(page, GREEDY, ROOT_CONFIG);
+
+    // Nothing was created: a refused spawn costs nothing and leaves
+    // nothing behind, so the roster holds the root alone.
+    expect(report.roster.length).toBe(1);
+    const denied = report.events.find((e) => String(e.detail ?? '').includes('denied'));
+    expect(denied).toBeTruthy();
+    expect(String(denied.detail)).toContain('host:sql/exec');
+  });
+});
+
+test.describe('duty 2 — the drive loop', () => {
+  test('an instruction budget stops a runaway, and nothing else is touched', async ({ page }) => {
+    await openKernel(page);
+    const RUNAWAY = `
+local sys = queue.declare('system/lifecycle', {capacity = 8})
+local ev  = queue.declare('system/events', {capacity = 32})
+local log = queue.declare('log', {capacity = 32, exported = true})
+queue.push(sys, {op = 'spawn', code = 'local n = 0 while true do n = n + 1 end',
+                 caps = {'queue:*'}, budget = {instructions = 500000, memory_kb = 256}})
+queue.push(sys, {op = 'spawn', code = ${JSON.stringify(WORKER)},
+                 caps = {'queue:*'}, budget = {instructions = 2000000, memory_kb = 256}})
+local seen = 0
+while seen < 4 do
+  local q, m = queue.wait({ev})
+  queue.push(log, ('%s id=%s'):format(tostring(m.event), tostring(m.id)))
+  seen = seen + 1
+end
+return 0`;
+    const report = await drive(page, RUNAWAY, ROOT_CONFIG);
+
+    const exceeded = report.roster.find((r) => r.outcome === 'exceeded');
+    expect(exceeded).toBeTruthy();
+    expect(exceeded.exceeded).toBe(true);
+    expect(exceeded.detail).toContain('budget');
+    // The limit is real: it stopped at the number it was given, not near it.
+    expect(exceeded.usage.instructions).toBe(exceeded.budget.instructions);
+
+    // And the sibling that behaved was untouched.
+    const fine = report.roster.find((r) => r.outcome === 'exited' && r.parent !== 0);
+    expect(fine).toBeTruthy();
+  });
+
+  test('a dying instance\'s last message is not lost', async ({ page }) => {
+    await openKernel(page);
+    // The child pushes to `outbox` and returns in the same drive. Its
+    // queues are freed when the swarm releases it, so a host that drained
+    // exported queues only after `dvs_step` would never see this.
+    const report = await drive(page, SUPERVISOR, ROOT_CONFIG);
+    const said = report.events.find((e) => e.event === 'message' && e.queue === 'outbox');
+    expect(said).toBeTruthy();
+    expect(said.value.said).toBe('a child ran');
+  });
+});
+
+test.describe('duty 5 — hostcalls', () => {
+  const HOSTCALL_ROOT = (body) => `
+local calls   = queue.declare('host/calls',   {capacity = 8, exported = true, on_full = 'reject'})
+local replies = queue.declare('host/replies', {capacity = 8})
+local log     = queue.declare('log', {capacity = 32, exported = true})
+${body}
+return 0`;
+
+  const CONFIG = {
+    caps: ['queue:*', 'host:time', 'host:sql/query', 'host:sql/exec'],
+    budget: { instructions: 50_000_000, memoryKb: 4096 },
+    connectors: { time: true, sql: { mode: 'readwrite' } },
+  };
+
+  test('a call is answered with its token echoed verbatim', async ({ page }) => {
+    await openKernel(page);
+    const report = await drive(page, HOSTCALL_ROOT(`
+queue.push(calls, {tok = 77, call = 'time'})
+local _, reply = queue.wait({replies})
+queue.push(log, {tok = reply.tok, status = reply.status, gotvalue = reply.value ~= nil})`), CONFIG);
+
+    const answer = report.events.find((e) => e.event === 'message' && e.queue === 'log');
+    expect(answer.value.tok).toBe(77);
+    expect(answer.value.status).toBe('ok');
+    expect(answer.value.gotvalue).toBe(true);
+  });
+
+  test('replies may arrive out of order, which is why the token exists', async ({ page }) => {
+    await openKernel(page);
+    // Two outstanding calls, and the guest matches on `tok` rather than on
+    // arrival order -- the discipline `doc/Hostcall.md` exists to reserve.
+    const report = await drive(page, HOSTCALL_ROOT(`
+queue.push(calls, {tok = 1, call = 'sql/exec',
+  args = {sql = 'CREATE TABLE t (id INTEGER PRIMARY KEY, name TEXT NOT NULL)'}})
+queue.push(calls, {tok = 2, call = 'time'})
+local got = {}
+for i = 1, 2 do
+  local _, reply = queue.wait({replies})
+  got[reply.tok] = reply.status
+end
+queue.push(log, {one = got[1], two = got[2]})`), CONFIG);
+
+    const answer = report.events.find((e) => e.event === 'message' && e.queue === 'log');
+    expect(answer.value.one).toBe('ok');
+    expect(answer.value.two).toBe('ok');
+  });
+
+  test('a call outside the grant is denied, never dropped', async ({ page }) => {
+    await openKernel(page);
+    const report = await drive(page, HOSTCALL_ROOT(`
+queue.push(calls, {tok = 5, call = 'js/invoke', args = {name = 'anything'}})
+local _, reply = queue.wait({replies})
+queue.push(log, {tok = reply.tok, status = reply.status, detail = reply.detail})`), CONFIG);
+
+    const answer = report.events.find((e) => e.event === 'message' && e.queue === 'log');
+    expect(answer.value.status).toBe('denied');
+    expect(answer.value.tok).toBe(5);
+    expect(answer.value.detail).toContain('host:js/invoke');
+  });
+
+  test('a request without a token is answered malformed, and says why', async ({ page }) => {
+    await openKernel(page);
+    const report = await drive(page, HOSTCALL_ROOT(`
+queue.push(calls, {call = 'time'})
+local _, reply = queue.wait({replies})
+queue.push(log, {status = reply.status, detail = reply.detail, tok = reply.tok})`), CONFIG);
+
+    const answer = report.events.find((e) => e.event === 'message' && e.queue === 'log');
+    expect(answer.value.status).toBe('malformed');
+    // No token was readable, so none is echoed: an uncorrelatable reply is
+    // the sender's own diagnostic where silence diagnoses nothing.
+    expect(answer.value.tok ?? null).toBeNull();
+    expect(answer.value.detail).toContain('tok');
+  });
+
+  test('an unwired connector is denied even when the grant allows it', async ({ page }) => {
+    await openKernel(page);
+    const report = await drive(page, HOSTCALL_ROOT(`
+queue.push(calls, {tok = 9, call = 'time'})
+local _, reply = queue.wait({replies})
+queue.push(log, {status = reply.status, detail = reply.detail})`), {
+      ...CONFIG,
+      // Granted, and wired to nothing. Connectors are off by default and a
+      // deployment names the ones it wants.
+      connectors: {},
+    });
+
+    const answer = report.events.find((e) => e.event === 'message' && e.queue === 'log');
+    expect(answer.value.status).toBe('denied');
+    expect(answer.value.detail).toContain('off by default');
+  });
+});
+
+test.describe('duty 4 — the listener, without a socket', () => {
+  const SERVICE = `
+local inq  = queue.declare('http_in',  {capacity = 8})
+local outq = queue.declare('http_out', {capacity = 8, exported = true})
+while true do
+  local q, req = queue.wait({inq})
+  queue.push(outq, {conn = req.conn, status = 200, content_type = 'text/plain',
+                    body = ('you asked for %s %s'):format(req.method, req.path)})
+end`;
+
+  test('a request pushed by the page is answered by the program', async ({ page }) => {
+    await openKernel(page);
+    const report = await page.evaluate(async ([source]) => {
+      const kernel = window.lab.kernel;
+      await kernel.swarmStart(source, {
+        caps: ['queue:*'],
+        budget: { instructions: 50_000_000, memoryKb: 4096 },
+        connectors: { listen: { port: 8080 } },
+      });
+      await kernel.swarmStep();
+      await kernel.swarmRequest({ method: 'GET', path: '/hello' });
+      return kernel.swarmRun({ maxSteps: 10, budgetMs: 500 });
+    }, [SERVICE]);
+
+    expect(report.listener.bound).toBe(false);
+    expect(report.listener.port).toBe(8080);
+    const exchange = report.listener.exchanges.at(-1);
+    expect(exchange.status).toBe(200);
+    expect(exchange.body).toBe('you asked for GET /hello');
+    // `conn` is the host's and comes back verbatim.
+    expect(exchange.conn).toBe(1);
+  });
+});
+
+test.describe('duty 7 — shutdown', () => {
+  test('stopping frees the swarm and is idempotent', async ({ page }) => {
+    await openKernel(page);
+    const after = await page.evaluate(async ([source, config]) => {
+      const kernel = window.lab.kernel;
+      await kernel.swarmStart(source, config);
+      await kernel.swarmStep();
+      const first = await kernel.swarmStop();
+      const second = await kernel.swarmStop();
+      return { first: first.running, second: second.running };
+    }, [SUPERVISOR, ROOT_CONFIG]);
+    expect(after.first).toBe(false);
+    expect(after.second).toBe(false);
+  });
+
+  test('a second swarm can start after the first is stopped', async ({ page }) => {
+    const problems = await openKernel(page);
+    const rosters = await page.evaluate(async ([source, config]) => {
+      const kernel = window.lab.kernel;
+      const out = [];
+      for (let i = 0; i < 2; i++) {
+        await kernel.swarmStart(source, config);
+        for (let s = 0; s < 20; s++) if ((await kernel.swarmStep()).alive === 0) break;
+        out.push((await kernel.swarmSnapshot()).roster.length);
+        await kernel.swarmStop();
+      }
+      return out;
+    }, [SUPERVISOR, ROOT_CONFIG]);
+    expect(rosters).toEqual([2, 2]);
+    expect(problems).toEqual([]);
+  });
+});
+
+test.describe('the host never lets an exception into wasm', () => {
+  test('a connector that throws becomes an error reply, not a trap', async ({ page }) => {
+    await openKernel(page);
+    // A connector's bug must not unwind the wasm stack mid-`dvs_step`.
+    const report = await page.evaluate(async () => {
+      const kernel = window.lab.kernel;
+      const source = `
+local calls   = queue.declare('host/calls',   {capacity = 4, exported = true, on_full = 'reject'})
+local replies = queue.declare('host/replies', {capacity = 4})
+local log     = queue.declare('log', {capacity = 8, exported = true})
+queue.push(calls, {tok = 3, call = 'rng/int', args = {min = 5, max = 1}})
+local _, reply = queue.wait({replies})
+queue.push(log, {status = reply.status, detail = reply.detail})
+return 0`;
+      await kernel.swarmStart(source, {
+        caps: ['queue:*', 'host:rng/int'],
+        budget: { instructions: 20_000_000, memoryKb: 2048 },
+        connectors: { rng: true },
+      });
+      for (let i = 0; i < 20; i++) if ((await kernel.swarmStep()).alive === 0) break;
+      return kernel.swarmSnapshot();
+    });
+
+    const answer = report.events.find((e) => e.event === 'message' && e.queue === 'log');
+    expect(answer.value.status).toBe('error');
+    expect(report.faults).toEqual([]);
+  });
+});
