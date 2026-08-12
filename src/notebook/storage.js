@@ -95,6 +95,19 @@ export async function loadPanelState() {
   return (await withDb((db) => transact(db, STORE, 'readonly', (s) => s.get(PANEL_KEY)))) ?? null;
 }
 
+/**
+ * Small UI preferences -- the masthead collapsed, the first visit seen.
+ * Same store, `pref:`-prefixed keys, same reasoning as the panel state:
+ * one tiny record each is not worth a store and a version bump.
+ */
+export function savePref(key, value) {
+  return withDb((db) => transact(db, STORE, 'readwrite', (s) => s.put(value, `pref:${key}`)));
+}
+
+export async function loadPref(key) {
+  return (await withDb((db) => transact(db, STORE, 'readonly', (s) => s.get(`pref:${key}`)))) ?? null;
+}
+
 export function putRuntime(key, record) {
   return withDb((db) => transact(db, RUNTIME_STORE, 'readwrite', (s) => s.put(record, key)));
 }

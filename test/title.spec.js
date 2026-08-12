@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import { dismissLauncher } from './chrome.js';
 
 // The notebook's name, which is not its filename.
 //
@@ -10,6 +11,7 @@ import { test, expect } from '@playwright/test';
 async function openLab(page) {
   await page.goto('/');
   await page.waitForSelector('body[data-ready="true"]', { timeout: 30_000 });
+  await dismissLauncher(page);
   await page.evaluate(async () => {
     const { clearAutosave, clearRecent } = await import('./src/notebook/storage.js');
     await clearAutosave();
@@ -17,6 +19,7 @@ async function openLab(page) {
   });
   await page.reload();
   await page.waitForSelector('body[data-ready="true"]', { timeout: 30_000 });
+  await dismissLauncher(page);
 }
 
 const title = (page) => page.locator('[data-nb-title]');
@@ -85,6 +88,7 @@ test.describe('naming a notebook', () => {
     await page.waitForTimeout(600);          // the autosave debounce
     await page.reload();
     await page.waitForSelector('body[data-ready="true"]', { timeout: 30_000 });
+    await dismissLauncher(page);
     await expect(title(page)).toHaveText('Persisted');
   });
 

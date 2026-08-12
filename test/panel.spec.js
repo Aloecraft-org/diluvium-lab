@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import { dismissLauncher } from './chrome.js';
 
 // The tool workbench: a rail of tools on the left edge and one collapsible
 // panel. The outline -- markdown headings as a table of contents, the way
@@ -9,6 +10,7 @@ import { test, expect } from '@playwright/test';
 async function openLab(page) {
   await page.goto('/');
   await page.waitForSelector('body[data-ready="true"]', { timeout: 30_000 });
+  await dismissLauncher(page);
   await page.evaluate(async () => {
     const { clearAutosave, clearRecent } = await import('./src/notebook/storage.js');
     await clearAutosave();
@@ -16,6 +18,7 @@ async function openLab(page) {
   });
   await page.reload();
   await page.waitForSelector('body[data-ready="true"]', { timeout: 30_000 });
+  await dismissLauncher(page);
 }
 
 const railButton = (page) => page.locator('[data-tool-rail] [data-tool="outline"]');
@@ -65,12 +68,14 @@ test.describe('the tool panel', () => {
 
     await page.reload();
     await page.waitForSelector('body[data-ready="true"]', { timeout: 30_000 });
+    await dismissLauncher(page);
     await expect(panel(page)).toBeVisible();
     await expect(railButton(page)).toHaveAttribute('aria-pressed', 'true');
 
     await page.locator('[data-tool-panel-close]').click();
     await page.reload();
     await page.waitForSelector('body[data-ready="true"]', { timeout: 30_000 });
+    await dismissLauncher(page);
     await expect(panel(page)).toBeHidden();
   });
 });

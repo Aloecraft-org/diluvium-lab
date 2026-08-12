@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import { viaControl, dismissLauncher } from './chrome.js';
 
 // Syntax highlighting, and the two things that can go wrong with an overlay
 // editor: the text can drift out of alignment with the caret, or the
@@ -10,6 +11,7 @@ async function openLab(page) {
   await page.addInitScript(() => indexedDB.deleteDatabase('diluvium-lab'));
   await page.goto('/');
   await page.waitForSelector('body[data-ready="true"]', { timeout: 30_000 });
+  await dismissLauncher(page);
   return problems;
 }
 
@@ -197,7 +199,7 @@ test.describe('the overlay lines up with the textarea', () => {
 
   test('markdown cells are not tokenized as Lua', async ({ page }) => {
     await openLab(page);
-    await page.locator('[data-toolbar="add-markdown"]').click();
+    await viaControl(page, 'add-markdown');
     const md = page.locator('.cell[data-cell-type="markdown"]').last();
     await md.locator('[data-editor]').fill('This sentence has for and end and local in it.');
     await expect(md.locator('.editor-highlight')).toHaveCount(0);

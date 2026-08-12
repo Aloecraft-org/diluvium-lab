@@ -13,9 +13,10 @@ import { NotebookModel, EXPECT, expectationOf } from './notebook/model.js';
 import { toIpynb, fromIpynb, messageToOutput, IpynbError } from './notebook/ipynb.js';
 import { NotebookView, renderOutputs } from './notebook/ui.js';
 import { ConsoleView } from './notebook/console.js';
-import { saveAutosave, loadAutosave, debounceSave, rememberRecent, listRecent, clearRecent, savePanelState, loadPanelState } from './notebook/storage.js';
+import { saveAutosave, loadAutosave, debounceSave, rememberRecent, listRecent, clearRecent, savePanelState, loadPanelState, savePref, loadPref } from './notebook/storage.js';
 import { ToolPanel } from './notebook/panel.js';
 import { renderOutline } from './notebook/outline.js';
+import { renderMenuBar, renderDrawer, attachDropdown } from './notebook/menu.js';
 import { fetchNotebook, hostOf, describeOpenError, normaliseNotebookUrl } from './notebook/remote.js';
 import { EXAMPLES, exampleById } from './notebook/examples.js';
 import { FALLBACK_KEYWORDS, FALLBACK_GLOBALS } from './notebook/highlight.js';
@@ -73,7 +74,23 @@ export class App {
     });
     this.model = new NotebookModel();
     this.filename = 'notebook.ipynb';
-    this.autosave = debounceSave(saveAutosave, options.autosaveDelayMs ?? 400);
+    // Session state for the chrome: read-only is a toggle anyone can flip
+    // (the file model is simple today; a future one makes copies
+    // mandatory), the cell clipboard is internal (no OS permission
+    // theatre for moving a cell), and + Cell remembers what it last made.
+    this.readOnly = false;
+    this.cellClipboard = null;
+    this._lastCellType = 'code';
+    this.autosave = debounceSave(async (record) => {
+      this._setSaveStatus('saving');
+      try {
+        await saveAutosave(record);
+        this._setSaveStatus('saved');
+      } catch (err) {
+        this._setSaveStatus('failed');
+        throw err;
+      }
+    }, options.autosaveDelayMs ?? 400);
 
     this.registry = options.registry ?? new RuntimeRegistry({
       mirrorUrl: options.mirrorUrl,
@@ -120,6 +137,7 @@ export class App {
       // anything it is there. Refresh keeps the outline's active-section
       // marker in step, and is a no-op while the panel is collapsed.
       onSelect: () => this.panel?.refresh(),
+      readOnly: () => this.readOnly,
     });
 
     // The tool workbench: a rail on the left, one collapsible panel. The
@@ -153,6 +171,7 @@ export class App {
     this._watchKernel();
 
     this._bindToolbar();
+    this._bindChrome();
     this._bindTitle();
     this._bindModel();
     this._bindLifecycle();
@@ -209,6 +228,22 @@ export class App {
     await phase('restoring the tool panel', async () => {
       const state = await loadPanelState();
       if (state?.open) this.panel.open(state.open);
+    });
+
+    await phase('restoring the header', async () => {
+      if ((await loadPref('masthead-hidden')) === true) {
+        this.document.querySelector('[data-masthead-toggle]')?.click();
+      }
+    });
+
+    // A first visit with nothing loaded gets the launcher, once. A
+    // `?open=` link does not: it already knows what it wants, and two
+    // dialogs racing for the same first impression helps neither.
+    await phase('offering the launcher', async () => {
+      const linked = new URLSearchParams(this.document.defaultView?.location?.search ?? '').has('open');
+      const visited = await loadPref('visited');
+      await savePref('visited', true).catch(() => {});
+      if (!restored && !visited && !linked) await this.showLauncher();
     });
 
     // After a notebook is on screen, so the bar appears over something
@@ -486,6 +521,7 @@ export class App {
   _scheduleAutosave() {
     // The title rides inside the ipynb's own metadata rather than beside
     // it, so there is one copy and a restore cannot disagree with a save.
+    this._setSaveStatus('pending');
     this.autosave.schedule({ ipynb: toIpynb(this.model), filename: this.filename, savedAt: Date.now() });
   }
 
@@ -958,6 +994,7 @@ export class App {
    * and Escape for free, which contenteditable does not.
    */
   _beginRename() {
+    if (this.readOnly) { this._readOnlyNudge(); return; }
     if (!this.titleNode || !this.titleInput || !this.titleInput.hidden) return;
     this.titleInput.value = this.model.title;
     this.titleNode.hidden = true;
@@ -996,23 +1033,20 @@ export class App {
         node.addEventListener('click', fn);
       }
     };
-    on('add-code', () => this.model.addCell('code'));
-    on('add-markdown', () => this.model.addCell('markdown'));
+    // Only the controls that are still static buttons. Everything that
+    // moved into a menu or a split dropdown is bound by its item's own
+    // `run` -- an on() for it here would bind nothing and imply otherwise.
     on('run-all', () => this.runAll());
-    on('restart', () => this.restartKernel());
     on('stop', () => this.stopKernel());
-    on('about', () => this.showAbout());
-    on('clear-outputs', () => this.model.clearAllOutputs());
-    on('save', () => this.saveFile());
 
     on('check-versions', () => this.checkVersions());
     this.versionNode?.addEventListener('change', () => this.selectRuntime(this.versionNode.value));
 
     on('examples', () => this.showExamples());
+
     this.document.querySelector('[data-examples-close]')
       ?.addEventListener('click', () => this.document.querySelector('[data-examples]')?.close());
 
-    on('recent', () => this.showRecent());
     this.document.querySelector('[data-recent-close]')
       ?.addEventListener('click', () => this.document.querySelector('[data-recent]')?.close());
     this.document.querySelector('[data-recent-clear]')?.addEventListener('click', async () => {
@@ -1023,11 +1057,6 @@ export class App {
 
     const urlDialog = this.document.querySelector('[data-open-url]');
     const urlInput = this.document.querySelector('[data-open-url-input]');
-    on('open-url', () => {
-      if (!urlDialog) return;
-      if (urlInput) urlInput.value = '';
-      urlDialog.showModal();
-    });
     this.document.querySelector('[data-open-url-cancel]')
       ?.addEventListener('click', () => urlDialog?.close());
     // On the form rather than the button, so Enter in the field works --
@@ -1038,12 +1067,444 @@ export class App {
     });
 
     const fileInput = this.document.querySelector('[data-file-input]');
-    on('open', () => fileInput?.click());
     fileInput?.addEventListener('change', async () => {
       const file = fileInput.files?.[0];
       if (file) await this.openFile(file);
       fileInput.value = '';
     });
+
+    on('add-cell', () => this.addCell(this._lastCellType));
+  }
+
+  /**
+   * The menus, as data. One definition feeds the menu bar, the drawer,
+   * and nothing else has to know what lives where. Items carry the same
+   * `data-toolbar` names the old toolbar buttons had, so the page's
+   * vocabulary (and its tests') survives the furniture moving.
+   *
+   * `enabled` / `checked` / `label` are read at open time -- a menu is a
+   * question about the present, not a rendering of the past.
+   */
+  _menus() {
+    const editable = () => !this.readOnly;
+    return [
+      { label: 'File', items: () => [
+        { label: 'New notebook', toolbar: 'new', run: () => this.newNotebook() },
+        { label: 'Open…', toolbar: 'open', run: () => this.document.querySelector('[data-file-input]')?.click() },
+        { label: 'Open from URL…', toolbar: 'open-url', run: () => this._openUrlDialog() },
+        { label: 'Recent…', toolbar: 'recent', run: () => this.showRecent() },
+        { sep: true },
+        { label: 'Save .ipynb', toolbar: 'save', accel: 'Ctrl+S', run: () => this.saveFile() },
+        { label: 'Show source', toolbar: 'show-source',
+          title: 'The raw .ipynb JSON a save would write',
+          run: () => this.showSource() },
+      ] },
+      { label: 'Edit', items: () => [
+        { label: 'Undo', accel: 'Ctrl+Z', toolbar: 'undo',
+          enabled: () => editable() && this.model.canUndo, run: () => this.undo() },
+        { label: 'Redo', accel: 'Ctrl+Shift+Z', toolbar: 'redo',
+          enabled: () => editable() && this.model.canRedo, run: () => this.redo() },
+        { sep: true },
+        { label: 'Cut cell', toolbar: 'cut-cell', enabled: editable, run: () => this.cutCell() },
+        { label: 'Copy cell', toolbar: 'copy-cell', run: () => this.copyCell() },
+        { label: 'Paste cell below', toolbar: 'paste-cell',
+          enabled: () => editable() && this.cellClipboard !== null, run: () => this.pasteCell() },
+        { sep: true },
+        { label: 'Clear all outputs', toolbar: 'clear-outputs',
+          enabled: editable, run: () => this.model.clearAllOutputs() },
+        { sep: true },
+        { label: 'Duplicate notebook', toolbar: 'duplicate',
+          title: 'Open an editable copy of this notebook',
+          run: () => this.duplicateNotebook() },
+      ] },
+      { label: 'View', items: () => [
+        // A static label with a checkmark, not a flipping verb: 'Show
+        // code, checked' reads as a contradiction in a screen reader.
+        { label: 'Hide code', toolbar: 'hide-code',
+          title: 'Markdown and outputs only — the notebook read as a report',
+          checked: () => this.document.body.dataset.hideCode === 'true',
+          run: () => this.toggleReportMode() },
+        // Folding writes cell metadata, so it is an edit like the others.
+        { label: 'Collapse all code', toolbar: 'collapse-all', enabled: editable, run: () => this.foldAll(true) },
+        { label: 'Expand all code', toolbar: 'expand-all', enabled: editable, run: () => this.foldAll(false) },
+        { sep: true },
+        { label: 'Console', toolbar: 'toggle-console',
+          checked: () => this.document.body.dataset.consoleHidden !== 'true',
+          run: () => this.toggleConsole() },
+        // One entry per registered tool, from the same registry the rail
+        // reads -- a debugger or an inspector shows up here by being
+        // registered, not by being remembered.
+        ...this.panel.tools.map((tool) => ({
+          label: tool.label, toolbar: `panel-${tool.id}`,
+          checked: () => this.panel.active === tool.id,
+          run: () => this.panel.toggle(tool.id),
+        })),
+      ] },
+      { label: 'Help', items: () => [
+        { label: 'Diluvium documentation', toolbar: 'docs',
+          title: 'The language and runtime docs, on GitHub',
+          run: () => this.document.defaultView.open('https://github.com/Aloecraft-org/diluvium/tree/main/doc', '_blank', 'noopener') },
+        { label: 'About', toolbar: 'about', run: () => this.showAbout() },
+      ] },
+    ];
+  }
+
+  /** Everything above the sheet that is not the old toolbar: the menu
+      bar, the split buttons, the masthead, the launcher, the drawer. */
+  _bindChrome() {
+    const doc = this.document;
+
+    this.menubar = renderMenuBar(doc.querySelector('[data-menu-set]'), this._menus());
+
+    // Split-button dropdowns, on the same machinery as the menus.
+    const split = (name, itemsFn) => {
+      const button = doc.querySelector(`[data-split="${name}"]`);
+      if (button) attachDropdown(button, itemsFn);
+    };
+    split('add', () => [
+      { label: 'Code cell', toolbar: 'add-code', run: () => this.addCell('code') },
+      { label: 'Markdown cell', toolbar: 'add-markdown', run: () => this.addCell('markdown') },
+    ]);
+    split('run', () => [
+      { label: 'Run focused cell', toolbar: 'run-focused',
+        enabled: () => this.view.selectedId !== null, run: () => this.runCell(this.view.selectedId) },
+      { label: 'Run cells above', toolbar: 'run-above',
+        title: 'Every code cell before the focused one',
+        run: () => this.runRange('above') },
+      { label: 'Run cell and below', toolbar: 'run-below',
+        run: () => this.runRange('below') },
+      { sep: true },
+      { label: 'Sandbox focused cell', toolbar: 'sandbox-focused',
+        title: 'Run the focused cell as an isolated instance with a budget',
+        enabled: () => this.kernel.capabilities.instances === true
+          && this.model.get(this.view.selectedId)?.cell_type === 'code',
+        run: () => this.view.toggleSandbox(this.view.selectedId) },
+      { sep: true },
+      { label: 'Clear all outputs', toolbar: 'clear-outputs',
+        enabled: () => !this.readOnly, run: () => this.model.clearAllOutputs() },
+    ]);
+    split('kernel', () => [
+      { label: 'Restart kernel', toolbar: 'restart',
+        title: 'Discard every variable and start the kernel again',
+        run: () => this.restartKernel() },
+    ]);
+
+    // The masthead: home, read-only, and the collapse toggle.
+    doc.querySelector('[data-home]')?.addEventListener('click', () => this.showLauncher());
+    doc.querySelector('[data-readonly]')?.addEventListener('click', () => this.setReadOnly(!this.readOnly));
+    const mastToggle = doc.querySelector('[data-masthead-toggle]');
+    mastToggle?.addEventListener('click', () => {
+      const masthead = doc.querySelector('[data-masthead]');
+      const hidden = !masthead.hidden;
+      masthead.hidden = hidden;
+      mastToggle.setAttribute('aria-expanded', String(!hidden));
+      mastToggle.textContent = hidden ? '˅' : '˄';
+      mastToggle.title = hidden ? 'Show the header row above' : 'Hide the header row above';
+      savePref('masthead-hidden', hidden).catch(() => {});
+    });
+
+    // The hamburger: the menus again, as a drawer, for screens where the
+    // rows that hold them are folded away.
+    const drawer = doc.querySelector('[data-drawer]');
+    doc.querySelector('[data-hamburger]')?.addEventListener('click', () => {
+      renderDrawer(drawer, this._menus(), [
+        { label: 'Home', run: () => this.showLauncher() },
+        { label: 'Start here', run: () => this.showExamples() },
+        // Masthead-only controls, which the drawer must carry or a phone
+        // cannot reach them at all.
+        { label: 'Rename notebook…', enabled: () => !this.readOnly, run: () => this.showRenameDialog() },
+        { label: 'Read-only', checked: () => this.readOnly, run: () => this.setReadOnly(!this.readOnly) },
+      ]);
+      drawer.showModal();
+    });
+    doc.querySelector('[data-drawer-close]')?.addEventListener('click', () => drawer?.close());
+
+    // The launcher's own controls.
+    const launcher = doc.querySelector('[data-launcher]');
+    doc.querySelector('[data-launcher-close]')?.addEventListener('click', () => launcher?.close());
+    doc.querySelector('[data-launcher-new]')?.addEventListener('click', () => { launcher?.close(); this.newNotebook(); });
+    doc.querySelector('[data-launcher-open]')?.addEventListener('click', () => {
+      launcher?.close();
+      doc.querySelector('[data-file-input]')?.click();
+    });
+    doc.querySelector('[data-launcher-url]')?.addEventListener('click', () => { launcher?.close(); this._openUrlDialog(); });
+
+    // The source dialog's controls.
+    const source = doc.querySelector('[data-source]');
+    doc.querySelector('[data-source-close]')?.addEventListener('click', () => source?.close());
+    doc.querySelector('[data-source-download]')?.addEventListener('click', () => this.saveFile());
+    const copyButton = doc.querySelector('[data-source-copy]');
+    copyButton?.addEventListener('click', async () => {
+      const text = doc.querySelector('[data-source-text]')?.value ?? '';
+      // Feedback in the button itself: a toast would paint under the
+      // modal backdrop, which is feedback nobody sees.
+      try {
+        await this.document.defaultView.navigator.clipboard.writeText(text);
+        copyButton.textContent = 'Copied ✓';
+      } catch {
+        copyButton.textContent = 'Copy failed — select and copy';
+      }
+      setTimeout(() => { copyButton.textContent = 'Copy'; }, 2000);
+    });
+
+    // The rename dialog.
+    const rename = doc.querySelector('[data-rename]');
+    doc.querySelector('[data-rename-cancel]')?.addEventListener('click', () => rename?.close());
+    doc.querySelector('[data-rename-form]')?.addEventListener('submit', () => {
+      this.model.setTitle(doc.querySelector('[data-rename-input]')?.value ?? '');
+    });
+
+    // Accelerators. Inside an editor, the editor's own undo owns Ctrl+Z;
+    // outside one, the structural stack does. Ctrl+S is taken everywhere,
+    // because the browser's own save dialog is never what anyone wants
+    // from a notebook page.
+    doc.addEventListener('keydown', (event) => {
+      const mod = event.ctrlKey || event.metaKey;
+      if (!mod) return;
+      const key = event.key.toLowerCase();
+      if (key === 's' && !event.shiftKey && !event.altKey) {
+        event.preventDefault();
+        this.saveFile();
+        return;
+      }
+      const inField = /^(textarea|input|select)$/i.test(event.target?.tagName ?? '');
+      if (inField) return;
+      if (key === 'z' && !event.shiftKey) { event.preventDefault(); this.undo(); }
+      else if ((key === 'z' && event.shiftKey) || key === 'y') { event.preventDefault(); this.redo(); }
+    });
+  }
+
+  // --- chrome actions -----------------------------------------------
+
+  /** Add a cell after the focused one, remembering the kind for + Cell. */
+  addCell(cellType) {
+    if (this.readOnly) { this._readOnlyNudge(); return; }
+    this._lastCellType = cellType;
+    const cell = this.model.addCell(cellType, this.view.selectedId);
+    this.view.select(cell.id);
+  }
+
+  undo() {
+    if (this.readOnly) { this._readOnlyNudge(); return; }
+    if (!this.model.undo()) this._toast('Nothing to undo.');
+  }
+
+  redo() {
+    if (this.readOnly) { this._readOnlyNudge(); return; }
+    if (!this.model.redo()) this._toast('Nothing to redo.');
+  }
+
+  copyCell() {
+    const cell = this.model.get(this.view.selectedId);
+    if (!cell) return;
+    const { id, stale, ...data } = cell;
+    this.cellClipboard = JSON.parse(JSON.stringify(data));
+    this._toast('Cell copied.');
+  }
+
+  cutCell() {
+    if (this.readOnly) { this._readOnlyNudge(); return; }
+    const cell = this.model.get(this.view.selectedId);
+    if (!cell) return;
+    this.copyCell();
+    this.model.deleteCell(cell.id);
+  }
+
+  pasteCell() {
+    if (this.readOnly) { this._readOnlyNudge(); return; }
+    if (!this.cellClipboard) { this._toast('Nothing on the cell clipboard.'); return; }
+    const cell = this.model.insertCell(this.cellClipboard, this.view.selectedId);
+    this.view.select(cell.id);
+  }
+
+  newNotebook() {
+    this.filename = 'untitled.ipynb';
+    this.setReadOnly(false);
+    this._setModel(new NotebookModel());
+    this._scheduleAutosave();
+  }
+
+  /**
+   * An editable copy of what is on screen -- read-only's escape hatch,
+   * and the shape a future file model makes mandatory.
+   */
+  async duplicateNotebook() {
+    const copy = fromIpynb(JSON.stringify(toIpynb(this.model)));
+    copy.setTitle(copy.title ? `Copy of ${copy.title}` : 'Untitled copy');
+    // A fresh copy has no past: without this, its first Undo reverts the
+    // title to the original's, which reads as the copy renaming itself.
+    copy.clearHistory();
+    this.filename = `copy-of-${this.filename}`;
+    this.setReadOnly(false);
+    this._setModel(copy);
+    this._scheduleAutosave();
+    this._toast(`Now editing ${this.filename}`);
+    try {
+      await rememberRecent({
+        name: this.filename, title: copy.title, origin: 'duplicate', url: null, ipynb: toIpynb(copy),
+      });
+    } catch { /* recents are a convenience */ }
+  }
+
+  /** Rename via a dialog -- the path that works when the masthead's
+      inline editor is folded away or hidden at phone width. */
+  showRenameDialog() {
+    if (this.readOnly) { this._readOnlyNudge(); return; }
+    const dialog = this.document.querySelector('[data-rename]');
+    const input = this.document.querySelector('[data-rename-input]');
+    if (!dialog || !input) return;
+    input.value = this.model.title;
+    dialog.showModal();
+    input.select();
+  }
+
+  showSource() {
+    const dialog = this.document.querySelector('[data-source]');
+    const text = this.document.querySelector('[data-source-text]');
+    if (!dialog || !text) return;
+    text.value = JSON.stringify(toIpynb(this.model), null, 1);
+    dialog.showModal();
+  }
+
+  /** Run a slice of the notebook relative to the focused cell. */
+  async runRange(which) {
+    const at = this.model.indexOf(this.view.selectedId);
+    if (at === -1) return;
+    const slice = which === 'above' ? this.model.cells.slice(0, at) : this.model.cells.slice(at);
+    this.document.body.dataset.running = 'true';
+    try {
+      for (const cell of [...slice]) {
+        if (cell.cell_type !== 'code' || cell.source.trim() === '') continue;
+        if (expectationOf(cell) === EXPECT.NEVER_RETURNS) continue;
+        const reply = await this.runCell(cell.id);
+        if (reply?.content.status === 'error') break;
+        if (this.kernel.status === STATUS.DEAD) break;
+      }
+    } finally {
+      this.document.body.dataset.running = 'false';
+    }
+  }
+
+  toggleReportMode() {
+    const body = this.document.body;
+    const hiding = body.dataset.hideCode !== 'true';
+    if (hiding) body.dataset.hideCode = 'true';
+    else delete body.dataset.hideCode;
+  }
+
+  toggleConsole() {
+    const body = this.document.body;
+    if (body.dataset.consoleHidden === 'true') delete body.dataset.consoleHidden;
+    else body.dataset.consoleHidden = 'true';
+  }
+
+  /** Fold or unfold every code cell. */
+  foldAll(folded) {
+    for (const cell of this.model.cells) {
+      if (cell.cell_type === 'code') this.model.setFolded(cell.id, folded);
+    }
+  }
+
+  /**
+   * Read-only. A session toggle today; the file model that *requires* a
+   * copy before editing arrives later, and this is its seam. Blocks the
+   * document changing -- source, structure, name. Running is still
+   * allowed: read-only is about the file, and it reads the way Colab
+   * does.
+   */
+  setReadOnly(readOnly) {
+    if (this.readOnly === readOnly) return;
+    this.readOnly = readOnly;
+    // `data-read-only` on body, `data-readonly` on the toggle: two names
+    // on purpose. With one name, querySelector('[data-readonly]') found
+    // the *body* once the mode was on, and the "toggle" whose textContent
+    // was then set was the whole page.
+    const body = this.document.body;
+    if (readOnly) body.dataset.readOnly = 'true';
+    else delete body.dataset.readOnly;
+    const toggle = this.document.querySelector('button[data-readonly]');
+    if (toggle) {
+      toggle.setAttribute('aria-pressed', String(readOnly));
+      toggle.textContent = readOnly ? 'Read-only' : 'Editable';
+    }
+    // Editors carry their own readOnly attribute, set at render.
+    this.view.render();
+    if (readOnly) this._toast('Read-only. Edit → Duplicate notebook to work on a copy.');
+  }
+
+  _readOnlyNudge() {
+    this._toast('This notebook is read-only. Edit → Duplicate notebook to change a copy.', 'error');
+  }
+
+  _setSaveStatus(state) {
+    const node = this.document.querySelector('[data-save-status]');
+    if (!node) return;
+    node.dataset.state = state;
+    node.textContent = { saving: 'saving…', saved: 'saved', failed: 'autosave failed', pending: 'edited' }[state] ?? '';
+    if (state === 'saved') node.title = `autosaved ${new Date().toLocaleTimeString()}`;
+  }
+
+  _openUrlDialog() {
+    const dialog = this.document.querySelector('[data-open-url]');
+    const input = this.document.querySelector('[data-open-url-input]');
+    if (!dialog) return;
+    if (input) input.value = '';
+    dialog.showModal();
+  }
+
+  /**
+   * The launcher: Home's landing place, and what a first visit sees. The
+   * same New / Open / Recent / Start here surface a launcher page would
+   * hold, without navigating away from a page that owns a live kernel.
+   */
+  async showLauncher() {
+    const dialog = this.document.querySelector('[data-launcher]');
+    if (!dialog) return;
+
+    const examplesList = this.document.querySelector('[data-launcher-examples]');
+    examplesList?.replaceChildren(...EXAMPLES.map((example) => {
+      const button = this.document.createElement('button');
+      button.type = 'button';
+      button.className = 'example-entry';
+      const title = this.document.createElement('span');
+      title.className = 'example-title';
+      title.textContent = example.title;
+      const summary = this.document.createElement('span');
+      summary.className = 'example-summary';
+      summary.textContent = example.summary;
+      button.append(title, summary);
+      button.addEventListener('click', () => { dialog.close(); this.openExample(example.id); });
+      return button;
+    }));
+
+    const recentList = this.document.querySelector('[data-launcher-recent]');
+    if (recentList) {
+      let entries = [];
+      try { entries = await listRecent(); } catch { /* an empty list renders fine */ }
+      if (entries.length === 0) {
+        const none = this.document.createElement('p');
+        none.className = 'outline-empty';
+        none.textContent = 'Nothing yet. Notebooks you open are remembered here.';
+        recentList.replaceChildren(none);
+      } else {
+        recentList.replaceChildren(...entries.slice(0, 6).map((entry) => {
+          const button = this.document.createElement('button');
+          button.type = 'button';
+          button.className = 'example-entry';
+          const title = this.document.createElement('span');
+          title.className = 'example-title';
+          title.textContent = entry.title || entry.name;
+          const summary = this.document.createElement('span');
+          summary.className = 'example-summary';
+          summary.textContent = entry.name;
+          button.append(title, summary);
+          button.addEventListener('click', () => { dialog.close(); this.openRecent(entry); });
+          return button;
+        }));
+      }
+    }
+
+    dialog.showModal();
   }
 
   /**
@@ -1207,6 +1668,15 @@ export class App {
   }
 
   _focusNext(cellId) {
+    // Reachable in read-only (running is allowed), so the append-a-cell
+    // fallback must not fire there -- Shift+Enter on the last cell was a
+    // structural edit slipping past the guard.
+    if (this.readOnly) {
+      const at = this.model.indexOf(cellId);
+      const next = this.model.cells[at + 1];
+      if (next) this.view.select(next.id);
+      return;
+    }
     const at = this.model.indexOf(cellId);
     const next = this.model.cells[at + 1] ?? this.model.addCell('code', cellId);
     this.view.cellNode(next.id)?.querySelector('[data-editor]')?.focus();

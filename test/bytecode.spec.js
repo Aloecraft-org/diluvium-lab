@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import { dismissLauncher } from './chrome.js';
 // Imported in Node rather than read out of the page: these modules are
 // plain ESM with no DOM in them, and a test that named the formats in a
 // second place would be a second place to forget to update.
@@ -24,6 +25,7 @@ async function openLab(page) {
   await page.addInitScript(() => indexedDB.deleteDatabase('diluvium-lab'));
   await page.goto('/');
   await page.waitForSelector('body[data-ready="true"]', { timeout: 30_000 });
+  await dismissLauncher(page);
   return problems;
 }
 

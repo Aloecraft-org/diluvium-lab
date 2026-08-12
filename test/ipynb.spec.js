@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import { viaControl, dismissLauncher } from './chrome.js';
 import { readFile } from 'node:fs/promises';
 
 // `.ipynb` is the storage format -- a hard constraint, and the point of it
@@ -17,6 +18,7 @@ async function openLab(page) {
   });
   await page.goto('/');
   await page.waitForSelector('body[data-ready="true"]', { timeout: 30_000 });
+  await dismissLauncher(page);
   return page;
 }
 
@@ -49,7 +51,7 @@ async function upload(page, notebook, name = 'uploaded.ipynb') {
 async function download(page) {
   const [event] = await Promise.all([
     page.waitForEvent('download'),
-    page.locator('[data-toolbar="save"]').click(),
+    viaControl(page, 'save'),
   ]);
   const stream = await event.createReadStream();
   const chunks = [];
@@ -219,7 +221,7 @@ test.describe('autosave', () => {
 
     await page.reload();
     await page.waitForSelector('body[data-ready="true"]', { timeout: 30_000 });
-
+    await dismissLauncher(page);
     await expect(cells(page)).toHaveCount(1);
     await expect(cell(page, 0).locator('[data-editor]')).toHaveValue('print("this should come back")');
   });
@@ -233,6 +235,7 @@ test.describe('autosave', () => {
 
     await page.reload();
     await page.waitForSelector('body[data-ready="true"]', { timeout: 30_000 });
+    await dismissLauncher(page);
     await expect(cell(page, 0).locator('[data-outputs]')).toContainText('expensive result');
   });
 

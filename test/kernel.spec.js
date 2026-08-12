@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import { dismissLauncher } from './chrome.js';
 
 // The kernel interface, exercised against the real WASM instance.
 //
@@ -12,6 +13,7 @@ async function openKernel(page) {
   page.on('console', (msg) => { if (msg.type() === 'error') problems.push(msg.text()); });
   await page.goto('/test/kernel-page.html');
   await page.waitForSelector('body[data-ready="true"]', { timeout: 30_000 });
+  await dismissLauncher(page);
   return problems;
 }
 

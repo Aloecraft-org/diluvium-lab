@@ -2062,3 +2062,43 @@ carry the weight:
 Layout-wise the body grid grew a column: workbench, then sheet, with the
 toolbar, console and banners spanning both. The mobile suite passes
 unchanged; rail buttons join the 44px touch-target rule.
+
+### The chrome: three rows, menus, structural undo, read-only ✅ done
+
+The single toolbar became the mockup's three rows: identity masthead,
+menu bar, action row. Decisions worth recording:
+
+- **Menus are data.** One definition renders the menu bar, the
+  split-button dropdowns and the narrow-screen drawer; items re-render
+  on every open, so `enabled`/`checked`/`label` are questions about the
+  present. Keyboard follows the menubar pattern: arrows, Escape,
+  left/right across menus.
+- **Names survived the move.** Every control kept its `data-toolbar`
+  name; the specs gained one `viaControl` helper that knows which menu
+  or split holds what, and the ~32 call sites changed mechanically.
+- **Undo is structural, not textual.** A snapshot stack in the model
+  covers add/delete/move/convert/paste/clear-outputs/rename; editors
+  keep their native undo. The expensive unified version stays deferred,
+  deliberately.
+- **Read-only is enforced where typing happens** — `textarea.readOnly`,
+  not just hidden buttons — plus hidden structural affordances, disabled
+  menu items, a refused rename, and Duplicate notebook as the way out.
+  Running stays allowed: read-only is about the file.
+- **The placeholders are deliberate.** A disabled history clock and a
+  dashed identity circle reserve the masthead's right edge for
+  checkpoints and collaboration-era identity. Reserved and labelled
+  beats sudden crowding later.
+- **The launcher is a dialog, not a page.** Navigating away would take
+  the live kernel with it. A true first visit (no autosave, no visited
+  flag, no `?open=` link) gets it unprompted, once.
+- **The bug worth remembering:** the read-only toggle originally shared
+  its `data-readonly` name with the body attribute that styles the mode.
+  `querySelector('[data-readonly]')` then found the *body* once the mode
+  was on — and setting the "toggle's" textContent replaced the entire
+  page with the word "Read-only". Two names now, and a comment at the
+  scene.
+
+Deferred, still: checkpoints/history UI behind the clock, unified text
+undo, multi-cell selection, Ctrl-accelerators beyond S/Z/Shift+Z/Y, a
+persisted console/report-mode preference, and anything swarm-shaped in
+the chrome until the artifact ships `dvs_`.

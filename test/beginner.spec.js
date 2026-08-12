@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import { dismissLauncher } from './chrome.js';
 
 // The things that decide whether someone's first afternoon with Diluvium is
 // pleasant: does a table show its contents, does an error say anything
@@ -11,6 +12,7 @@ async function openLab(page) {
   await page.addInitScript(() => indexedDB.deleteDatabase('diluvium-lab'));
   await page.goto('/');
   await page.waitForSelector('body[data-ready="true"]', { timeout: 30_000 });
+  await dismissLauncher(page);
   return problems;
 }
 

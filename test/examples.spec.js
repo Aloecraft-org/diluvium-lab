@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import { dismissLauncher } from './chrome.js';
 import { readFile, readdir } from 'node:fs/promises';
 
 // The **Start here** gallery.
@@ -13,6 +14,7 @@ import { readFile, readdir } from 'node:fs/promises';
 async function openLab(page) {
   await page.goto('/');
   await page.waitForSelector('body[data-ready="true"]', { timeout: 30_000 });
+  await dismissLauncher(page);
   await page.evaluate(async () => {
     const { clearAutosave, clearRecent } = await import('./src/notebook/storage.js');
     await clearAutosave();
@@ -20,6 +22,7 @@ async function openLab(page) {
   });
   await page.reload();
   await page.waitForSelector('body[data-ready="true"]', { timeout: 30_000 });
+  await dismissLauncher(page);
 }
 
 const gallery = (page) => page.locator('dialog[data-examples]');

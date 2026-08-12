@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { test, expect } from '@playwright/test';
+import { viaControl, dismissLauncher } from './chrome.js';
 
 // The About panel exists for bug reports.
 //
@@ -20,11 +21,12 @@ async function openLab(page) {
   await page.addInitScript(() => indexedDB.deleteDatabase('diluvium-lab'));
   await page.goto('/');
   await page.waitForSelector('body[data-ready="true"]', { timeout: 30_000 });
+  await dismissLauncher(page);
 }
 
 const dialog = (page) => page.locator('[data-about]');
 const openAbout = async (page) => {
-  await page.locator('[data-toolbar="about"]').click();
+  await viaControl(page, 'about');
   await expect(dialog(page)).toBeVisible();
 };
 

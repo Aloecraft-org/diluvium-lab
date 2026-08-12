@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import { viaControl, dismissLauncher } from './chrome.js';
 
 // Opening a notebook from a URL, and remembering what was opened.
 //
@@ -24,6 +25,7 @@ const NOTEBOOK = {
 async function openLab(page) {
   await page.goto('/');
   await page.waitForSelector('body[data-ready="true"]', { timeout: 30_000 });
+  await dismissLauncher(page);
   await page.evaluate(async () => {
     const { clearAutosave, clearRecent } = await import('./src/notebook/storage.js');
     await clearAutosave();
@@ -31,6 +33,7 @@ async function openLab(page) {
   });
   await page.reload();
   await page.waitForSelector('body[data-ready="true"]', { timeout: 30_000 });
+  await dismissLauncher(page);
 }
 
 /**
@@ -52,7 +55,7 @@ async function stubRemote(page, body, { status = 200, contentType = 'application
 }
 
 async function openFromUrl(page, url) {
-  await page.locator('[data-toolbar="open-url"]').click();
+  await viaControl(page, 'open-url');
   await page.locator('[data-open-url-input]').fill(url);
   await page.locator('[data-open-url-go]').click();
 }
@@ -162,7 +165,7 @@ test.describe('recently opened', () => {
     await openFromUrl(page, RAW);
     await expect(page.locator('[data-filename]')).toHaveText('hello.ipynb');
 
-    await page.locator('[data-toolbar="recent"]').click();
+    await viaControl(page, 'recent');
     await expect(page.locator('.recent-entry')).toHaveCount(1);
     await expect(page.locator('.recent-entry')).toContainText('hello.ipynb');
     await expect(page.locator('.recent-entry')).toContainText(RAW);
@@ -173,7 +176,7 @@ test.describe('recently opened', () => {
     // work offline.
     await page.route(/^https:\/\//, (route) => route.abort('failed'));
     await page.evaluate(() => window.lab._setModel(new (window.lab.model.constructor)()));
-    await page.locator('[data-toolbar="recent"]').click();
+    await viaControl(page, 'recent');
     await page.locator('.recent-entry').click();
     await expect(page.locator('[data-filename]')).toHaveText('hello.ipynb');
     expect(await page.evaluate(() => window.lab.model.cells.length)).toBe(2);
@@ -187,7 +190,7 @@ test.describe('recently opened', () => {
     await openFromUrl(page, RAW);
     await page.waitForTimeout(300);
 
-    await page.locator('[data-toolbar="recent"]').click();
+    await viaControl(page, 'recent');
     await expect(page.locator('.recent-entry')).toHaveCount(1);
   });
 
@@ -199,13 +202,14 @@ test.describe('recently opened', () => {
 
     await page.reload();
     await page.waitForSelector('body[data-ready="true"]', { timeout: 30_000 });
-    await page.locator('[data-toolbar="recent"]').click();
+    await dismissLauncher(page);
+    await viaControl(page, 'recent');
     await expect(page.locator('.recent-entry')).toContainText('hello.ipynb');
   });
 
   test('says so when there is nothing to show', async ({ page }) => {
     await openLab(page);
-    await page.locator('[data-toolbar="recent"]').click();
+    await viaControl(page, 'recent');
     await expect(page.locator('[data-recent-empty]')).toBeVisible();
   });
 
@@ -215,9 +219,9 @@ test.describe('recently opened', () => {
     await openFromUrl(page, RAW);
     await expect(page.locator('[data-filename]')).toHaveText('hello.ipynb');
 
-    await page.locator('[data-toolbar="recent"]').click();
+    await viaControl(page, 'recent');
     await page.locator('[data-recent-clear]').click();
-    await page.locator('[data-toolbar="recent"]').click();
+    await viaControl(page, 'recent');
     await expect(page.locator('[data-recent-empty]')).toBeVisible();
   });
 });

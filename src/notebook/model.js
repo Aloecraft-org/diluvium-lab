@@ -54,6 +54,10 @@ export function newCell(cellType = 'code', source = '') {
   };
 }
 
+/** How many undo steps to keep. Snapshots are whole notebooks, so this is
+    bounded memory: fifty of a large notebook is a few MB, transient. */
+const UNDO_LIMIT = 50;
+
 export class NotebookModel {
   constructor(cells, metadata = {}) {
     this.cells = cells && cells.length ? cells : [newCell('code')];
@@ -65,6 +69,87 @@ export class NotebookModel {
     this.metadata = (metadata && typeof metadata === 'object' && !Array.isArray(metadata))
       ? metadata : {};
     this._listeners = new Set();
+    // Structural undo. Snapshots, not inverse operations: the memento is
+    // twenty lines where a command stack is two hundred, and a notebook
+    // is small enough that copying it is nothing.
+    //
+    // Text granularity is the *session*, not the keystroke: the first
+    // setSource after any boundary takes a checkpoint, so a structural
+    // undo can never silently destroy typing it did not own -- the typing
+    // is its own step. Inside an editor, Ctrl+Z stays the textarea's
+    // native undo; the two meet only at session edges.
+    this._undoStack = [];
+    this._redoStack = [];
+    this._typing = false;
+    // Bumped by markAllStale (a kernel died). Snapshots remember which
+    // era they were taken in, so an undo across a restart cannot present
+    // a dead kernel's outputs as fresh.
+    this._generation = 0;
+  }
+
+  /** Drop all undo/redo history -- a freshly adopted document has no past. */
+  clearHistory() {
+    this._undoStack.length = 0;
+    this._redoStack.length = 0;
+    this._typing = false;
+  }
+
+  // --- undo (structural) ---------------------------------------------
+
+  _snapshot() {
+    // Deep copy via JSON: cells are plain data; ids are preserved so
+    // selection and folding survive a restore. The generation rides along
+    // for the staleness check in _restore.
+    return JSON.parse(JSON.stringify({
+      cells: this.cells, metadata: this.metadata, generation: this._generation,
+    }));
+  }
+
+  /**
+   * Remember the current state as an undo point. Every structural mutator
+   * calls this before changing anything; app-level compound operations
+   * (clear all outputs, paste) call it themselves where noted.
+   */
+  checkpoint() {
+    this._undoStack.push(this._snapshot());
+    if (this._undoStack.length > UNDO_LIMIT) this._undoStack.shift();
+    // A new edit forks history; the redone future is no longer reachable.
+    this._redoStack.length = 0;
+    // A structural boundary ends any typing session.
+    this._typing = false;
+  }
+
+  get canUndo() { return this._undoStack.length > 0; }
+  get canRedo() { return this._redoStack.length > 0; }
+
+  undo() {
+    if (!this.canUndo) return false;
+    this._redoStack.push(this._snapshot());
+    this._restore(this._undoStack.pop());
+    return true;
+  }
+
+  redo() {
+    if (!this.canRedo) return false;
+    this._undoStack.push(this._snapshot());
+    this._restore(this._redoStack.pop());
+    return true;
+  }
+
+  _restore(snap) {
+    this.cells = snap.cells;
+    this.metadata = snap.metadata;
+    // A snapshot from before a kernel restart carries outputs that kernel
+    // produced. They come back -- undo restores the document -- but marked
+    // stale, because the Lua state that made them is gone either way.
+    if ((snap.generation ?? 0) !== this._generation) {
+      for (const cell of this.cells) {
+        if (cell.execution_count !== null || (cell.outputs?.length ?? 0) > 0) cell.stale = true;
+      }
+    }
+    this._typing = false;
+    this._emit('structure');
+    this._emit('title');
   }
 
   /**
@@ -91,6 +176,7 @@ export class NotebookModel {
   setTitle(title) {
     const next = String(title ?? '').trim().slice(0, MAX_TITLE);
     if (next === this.title) return false;
+    this.checkpoint();
     this.metadata = { ...this.metadata };
     if (next) this.metadata.title = next;
     else delete this.metadata.title;
@@ -123,7 +209,24 @@ export class NotebookModel {
   // --- structure (these re-render the list) -------------------------
 
   addCell(cellType = 'code', afterId = null) {
+    this.checkpoint();
     const cell = newCell(cellType);
+    const at = afterId === null ? this.cells.length : this.indexOf(afterId) + 1;
+    this.cells.splice(at, 0, cell);
+    this._emit('structure', cell.id);
+    return cell;
+  }
+
+  /**
+   * Insert a copy of existing cell *data* -- what paste is. A fresh id,
+   * because the clipboard may be pasted twice and ids must stay unique.
+   */
+  insertCell(data, afterId = null) {
+    this.checkpoint();
+    const cell = newCell(data.cell_type ?? 'code', data.source ?? '');
+    cell.outputs = JSON.parse(JSON.stringify(data.outputs ?? []));
+    cell.metadata = JSON.parse(JSON.stringify(data.metadata ?? {}));
+    cell.execution_count = data.execution_count ?? null;
     const at = afterId === null ? this.cells.length : this.indexOf(afterId) + 1;
     this.cells.splice(at, 0, cell);
     this._emit('structure', cell.id);
@@ -133,6 +236,13 @@ export class NotebookModel {
   deleteCell(cellId) {
     const at = this.indexOf(cellId);
     if (at === -1) return;
+    // Deleting the only cell when it is already blank replaces it with an
+    // identical blank; a checkpoint for that would burn the redo stack on
+    // a visual no-op.
+    const cell = this.cells[at];
+    if (this.cells.length === 1 && cell.source === ''
+        && (cell.outputs?.length ?? 0) === 0 && cell.execution_count === null) return;
+    this.checkpoint();
     this.cells.splice(at, 1);
     // A notebook with no cells has no way back to having one, so keep a
     // blank code cell rather than stranding the user with an empty page.
@@ -145,6 +255,7 @@ export class NotebookModel {
     const at = this.indexOf(cellId);
     const to = at + delta;
     if (at === -1 || to < 0 || to >= this.cells.length) return false;
+    this.checkpoint();
     const [cell] = this.cells.splice(at, 1);
     this.cells.splice(to, 0, cell);
     this._emit('structure', cellId);
@@ -154,6 +265,7 @@ export class NotebookModel {
   setCellType(cellId, cellType) {
     const cell = this.get(cellId);
     if (!cell || cell.cell_type === cellType) return;
+    this.checkpoint();
     cell.cell_type = cellType;
     cell.outputs = [];
     cell.execution_count = null;
@@ -165,6 +277,12 @@ export class NotebookModel {
   setSource(cellId, source) {
     const cell = this.get(cellId);
     if (!cell || cell.source === source) return;
+    // First edit since a boundary: the typing session becomes one undo
+    // step, captured before the first keystroke lands.
+    if (!this._typing) {
+      this.checkpoint();
+      this._typing = true;
+    }
     cell.source = source;
     // 'source' does not re-render: the textarea is already showing this.
     this._emit('source', cellId);
@@ -227,11 +345,18 @@ export class NotebookModel {
   }
 
   clearOutputs(cellId) {
+    const cell = this.get(cellId);
+    if (!cell || ((cell.outputs?.length ?? 0) === 0 && cell.execution_count === null)) return;
+    this.checkpoint();
     this.setOutputs(cellId, []);
     this.setExecutionCount(cellId, null);
   }
 
   clearAllOutputs() {
+    // A no-op clear takes no checkpoint -- clicking it twice must not eat
+    // the redo stack.
+    if (!this.cells.some((c) => (c.outputs?.length ?? 0) > 0 || c.execution_count !== null || c.stale)) return;
+    this.checkpoint();
     for (const cell of this.cells) {
       cell.outputs = [];
       cell.execution_count = null;
@@ -253,6 +378,7 @@ export class NotebookModel {
    * teacher of it warns about exactly that.
    */
   markAllStale() {
+    this._generation += 1;
     for (const cell of this.cells) {
       if (cell.execution_count !== null || (cell.outputs?.length ?? 0) > 0) {
         cell.stale = true;

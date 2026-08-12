@@ -1,4 +1,5 @@
 import { test, expect, devices } from '@playwright/test';
+import { dismissLauncher } from './chrome.js';
 
 // A phone is where "try the language with nothing installed" is worth the
 // most, because installing anything there is worst. This runs the real
@@ -13,6 +14,7 @@ async function openLab(page) {
   await page.addInitScript(() => indexedDB.deleteDatabase('diluvium-lab'));
   await page.goto('/');
   await page.waitForSelector('body[data-ready="true"]', { timeout: 30_000 });
+  await dismissLauncher(page);
   return problems;
 }
 
@@ -120,17 +122,16 @@ test.describe('the toolbar on a small screen', () => {
     expect(metrics.overflow).toBe(0);          // it scrolls itself, not the page
   });
 
-  test('and every control is still reachable by scrolling it', async ({ page }) => {
+  test('and the menus are still reachable, through the hamburger', async ({ page }) => {
     await openLab(page);
-    // Reachable, not merely present: `overflow-x: auto` is the whole
-    // reason hiding nothing is acceptable here.
-    const scrollable = await page.evaluate(() => {
-      const bar = document.querySelector('.toolbar');
-      return bar.scrollWidth > bar.clientWidth;
-    });
-    expect(scrollable).toBe(true);
-    await page.locator('[data-toolbar="about"]').scrollIntoViewIfNeeded();
-    await page.locator('[data-toolbar="about"]').tap();
+    // The identity and menu rows fold away at this width; the hamburger
+    // is the promise that nothing folded away is lost. About lives three
+    // rows deep on a desktop and one tap deep here.
+    await expect(page.locator('.masthead')).toBeHidden();
+    await expect(page.locator('.menubar')).toBeHidden();
+    await page.locator('[data-hamburger]').tap();
+    await expect(page.locator('[data-drawer]')).toBeVisible();
+    await page.locator('[data-drawer] [data-toolbar="about"]').tap();
     await expect(page.locator('[data-about]')).toBeVisible();
   });
 });

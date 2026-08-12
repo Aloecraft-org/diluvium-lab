@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import { viaControl, dismissLauncher } from './chrome.js';
 
 // The notebook, driven through the real page and the real buttons.
 // Nothing is mocked -- every `Run` here goes to the WASM kernel.
@@ -12,6 +13,7 @@ async function openLab(page) {
   await page.addInitScript(() => indexedDB.deleteDatabase('diluvium-lab'));
   await page.goto('/');
   await page.waitForSelector('body[data-ready="true"]', { timeout: 30_000 });
+  await dismissLauncher(page);
   await expect(page.locator('[data-kernel-status]')).toHaveText('idle');
   return problems;
 }
@@ -34,7 +36,7 @@ async function typeAndRun(page, index, source) {
 /** Add a fresh code cell at the end and return its index. */
 async function addCodeCell(page) {
   const before = await cells(page).count();
-  await page.locator('[data-toolbar="add-code"]').click();
+  await viaControl(page, 'add-code');
   await expect(cells(page)).toHaveCount(before + 1);
   return before;
 }
@@ -156,7 +158,7 @@ test.describe('editing structure', () => {
     await openLab(page);
     const before = await cells(page).count();
 
-    await page.locator('[data-toolbar="add-code"]').click();
+    await viaControl(page, 'add-code');
     await expect(cells(page)).toHaveCount(before + 1);
 
     const last = cell(page, before);
@@ -197,9 +199,11 @@ test.describe('editing structure', () => {
 test.describe('markdown cells', () => {
   test('render on run and edit on double click', async ({ page }) => {
     await openLab(page);
-    await page.locator('[data-toolbar="add-markdown"]').click();
-    const index = (await cells(page).count()) - 1;
-    const node = cell(page, index);
+    await viaControl(page, 'add-markdown');
+    // + Cell inserts after the focused cell and selects it, so the new
+    // markdown cell is the selected one, wherever it landed.
+    const node = page.locator('.cell[data-selected="true"]');
+    const index = Number(await node.getAttribute('data-index'));
 
     await editorOf(node).fill('# Title\n\nSome **bold** text and `code`.');
     await editorOf(node).press('Control+Enter');
@@ -216,9 +220,11 @@ test.describe('markdown cells', () => {
 
   test('markdown cannot smuggle HTML in from a file', async ({ page }) => {
     await openLab(page);
-    await page.locator('[data-toolbar="add-markdown"]').click();
-    const index = (await cells(page).count()) - 1;
-    const node = cell(page, index);
+    await viaControl(page, 'add-markdown');
+    // + Cell inserts after the focused cell and selects it, so the new
+    // markdown cell is the selected one, wherever it landed.
+    const node = page.locator('.cell[data-selected="true"]');
+    const index = Number(await node.getAttribute('data-index'));
 
     await editorOf(node).fill('<img src=x onerror="window.__pwned = true"> and [link](javascript:alert(1))');
     await editorOf(node).press('Control+Enter');
@@ -237,7 +243,7 @@ test.describe('kernel controls', () => {
     await typeAndRun(page, index, 'gone_after_restart = "here"');
     await expect(cell(page, index).locator('[data-prompt]')).toHaveText('In [1]:');
 
-    await page.locator('[data-toolbar="restart"]').click();
+    await viaControl(page, 'restart');
     await expect(page.locator('[data-kernel-status]')).toHaveText('idle');
     // The number is kept, not blanked -- the reader still sees that this
     // ran and in what order. It is marked stale, because In [1] now
@@ -262,7 +268,7 @@ test.describe('kernel controls', () => {
     const node = await typeAndRun(page, index, 'print("something")');
     await expect(outputsOf(node)).toHaveCount(1);
 
-    await page.locator('[data-toolbar="clear-outputs"]').click();
+    await viaControl(page, 'clear-outputs');
     await expect(outputsOf(cell(page, index))).toHaveCount(0);
   });
 });

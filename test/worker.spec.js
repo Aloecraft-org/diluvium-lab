@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import { viaControl, dismissLauncher } from './chrome.js';
 
 // The kernel off the main thread, and the stop that becomes possible.
 //
@@ -20,6 +21,7 @@ async function openLab(page) {
   await page.addInitScript(() => indexedDB.deleteDatabase('diluvium-lab'));
   await page.goto('/');
   await page.waitForSelector('body[data-ready="true"]', { timeout: 30_000 });
+  await dismissLauncher(page);
   return problems;
 }
 
@@ -61,7 +63,7 @@ test.describe('the kernel runs off the main thread', () => {
     // of it would run at all -- the assertions would time out.
     await expect(page.locator('body')).toHaveAttribute('data-kernel-state', 'busy');
     const before = await page.locator('.cell').count();
-    await page.locator('[data-toolbar="add-markdown"]').click();
+    await viaControl(page, 'add-markdown');
     await expect(page.locator('.cell')).toHaveCount(before + 1);
     const typed = page.locator('.cell').last().locator('[data-editor]');
     await typed.fill('typing works while a cell runs forever');
@@ -192,7 +194,7 @@ test.describe('the worker is a real boundary', () => {
   test('restart clears state and resets the counter', async ({ page }) => {
     await openLab(page);
     await page.evaluate(() => window.lab.kernel.execute('kept = 1'));
-    await page.locator('[data-toolbar="restart"]').click();
+    await viaControl(page, 'restart');
     await expect(page.locator('body')).toHaveAttribute('data-kernel-state', 'idle', { timeout: 15_000 });
     const out = await page.evaluate(async () => {
       const { executeCollected } = await import('./src/kernel/kernel.js');

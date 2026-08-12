@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { test, expect } from '@playwright/test';
+import { dismissLauncher } from './chrome.js';
 
 // Both containers, against committed dumps from real builds.
 //
@@ -32,6 +33,7 @@ async function openLab(page) {
   await page.addInitScript(() => indexedDB.deleteDatabase('diluvium-lab'));
   await page.goto('/');
   await page.waitForSelector('body[data-ready="true"]', { timeout: 30_000 });
+  await dismissLauncher(page);
 }
 
 /** Parse in the page, so the code under test is the code the Lab ships. */

@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import { dismissLauncher } from './chrome.js';
 
 // The sandbox panel: running a cell as a `dv_` instance.
 //
@@ -14,12 +15,14 @@ import { test, expect } from '@playwright/test';
 async function openLab(page) {
   await page.goto('/');
   await page.waitForSelector('body[data-ready="true"]', { timeout: 30_000 });
+  await dismissLauncher(page);
   await page.evaluate(async () => {
     const { clearAutosave } = await import('./src/notebook/storage.js');
     await clearAutosave();
   });
   await page.reload();
   await page.waitForSelector('body[data-ready="true"]', { timeout: 30_000 });
+  await dismissLauncher(page);
 }
 
 const codeCell = (page) => page.locator('.cell[data-cell-type="code"]').first();

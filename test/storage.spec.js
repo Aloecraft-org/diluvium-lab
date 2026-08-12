@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import { viaControl, dismissLauncher } from './chrome.js';
 
 // Persistence, and the ways it realistically fails.
 //
@@ -22,6 +23,7 @@ async function openLab(page, { keepData = false } = {}) {
   page.on('pageerror', (err) => problems.push(`pageerror: ${err.message}`));
   await page.goto('/');
   await page.waitForSelector('body[data-ready="true"]', { timeout: 30_000 });
+  await dismissLauncher(page);
   if (!keepData) {
     await page.evaluate(async () => {
       const { clearAutosave } = await import('./src/notebook/storage.js');
@@ -36,6 +38,7 @@ async function openLab(page, { keepData = false } = {}) {
 async function reload(page) {
   await page.reload();
   await page.waitForSelector('body[data-ready="true"]', { timeout: 30_000 });
+  await dismissLauncher(page);
 }
 
 const codeCell = (page) => page.locator('.cell[data-cell-type="code"]').first();
@@ -93,7 +96,7 @@ test.describe('a notebook survives', () => {
   test('adding and deleting cells', async ({ page }) => {
     await openLab(page);
     const before = await page.locator('.cell').count();
-    await page.locator('[data-toolbar="add-code"]').click();
+    await viaControl(page, 'add-code');
     await page.locator('.cell').last().locator('[data-editor]').fill('-- the added cell');
     await page.waitForTimeout(600);
 
@@ -150,7 +153,7 @@ test.describe('when storage misbehaves', () => {
     });
     await page.goto('/');
     await page.waitForSelector('body[data-ready="true"]', { timeout: 30_000 });
-
+    await dismissLauncher(page);
     await expect(page.locator('[data-kernel-status]')).toHaveText('idle');
     const cell = codeCell(page);
     await cell.locator('[data-editor]').fill('return "still works"');

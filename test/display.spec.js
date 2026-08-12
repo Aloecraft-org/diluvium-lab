@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import { viaControl, dismissLauncher } from './chrome.js';
 
 // The display channel: charts, event streams, controls, images.
 //
@@ -16,12 +17,14 @@ import { test, expect } from '@playwright/test';
 async function openLab(page) {
   await page.goto('/');
   await page.waitForSelector('body[data-ready="true"]', { timeout: 30_000 });
+  await dismissLauncher(page);
   await page.evaluate(async () => {
     const { clearAutosave } = await import('./src/notebook/storage.js');
     await clearAutosave();
   });
   await page.reload();
   await page.waitForSelector('body[data-ready="true"]', { timeout: 30_000 });
+  await dismissLauncher(page);
 }
 
 const codeCell = (page) => page.locator('.cell[data-cell-type="code"]').first();
@@ -161,6 +164,7 @@ test.describe('plots', () => {
     await page.waitForTimeout(600);   // the autosave debounce is 400ms
     await page.reload();
     await page.waitForSelector('body[data-ready="true"]', { timeout: 30_000 });
+    await dismissLauncher(page);
     await expect(page.locator('.viz-svg')).toHaveCount(1);
     await expect(page.locator('.viz-line')).toHaveCount(1);
   });
@@ -267,7 +271,7 @@ test.describe('controls', () => {
     await openLab(page);
     await run(page, `widget.slider{ label = "n", min = 1, max = 5, value = 1,
       on_change = function(v) print(v) end }`);
-    await page.locator('[data-toolbar="restart"]').click();
+    await viaControl(page, 'restart');
     // `data-ready` never goes false, so waiting on it waits for nothing.
     // The restart re-renders every cell, which would wipe the control's
     // output slot straight after we filled it.

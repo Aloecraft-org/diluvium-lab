@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import { viaControl, dismissLauncher } from './chrome.js';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { stat } from 'node:fs/promises';
@@ -26,6 +27,7 @@ async function openBaked(page) {
 
   await page.goto(pathToFileURL(OUT).href);
   await page.waitForSelector('body[data-ready="true"]', { timeout: 60_000 });
+  await dismissLauncher(page);
   return { problems, requests };
 }
 
@@ -82,7 +84,7 @@ test('restart works without a network round trip', async ({ page }) => {
   await cell.locator('[data-editor]').fill('marker = "before restart"');
   await cell.locator('[data-editor]').press('Control+Enter');
 
-  await page.locator('[data-toolbar="restart"]').click();
+  await viaControl(page, 'restart');
   await expect(page.locator('[data-kernel-status]')).toHaveText('idle');
 
   await cell.locator('[data-editor]').fill('print(tostring(marker))');

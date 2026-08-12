@@ -1,5 +1,6 @@
 import { fileURLToPath } from 'node:url';
 import { test, expect } from '@playwright/test';
+import { dismissLauncher } from './chrome.js';
 
 // notebooks/browser-check.ipynb is handed to people on browsers nobody
 // here can run, and asks them to read PASS/FAIL lines. So it has to be
@@ -22,6 +23,7 @@ async function openLab(page) {
   await page.addInitScript(() => indexedDB.deleteDatabase('diluvium-lab'));
   await page.goto('/');
   await page.waitForSelector('body[data-ready="true"]', { timeout: 30_000 });
+  await dismissLauncher(page);
   return problems;
 }
 

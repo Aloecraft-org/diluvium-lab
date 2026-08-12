@@ -238,6 +238,62 @@ looks like, and one that loops forever so you have something to press
   skipped. Pressing **Run** on it yourself still runs it, because that is
   the demonstration.
 
+## The chrome
+
+Three rows. The **masthead** carries the notebook's name and filename, the
+autosave status, and three deliberate reservations on the right: a
+disabled history clock (checkpoints are planned), a **read-only** toggle,
+and a dashed circle where identity lands when live collaboration does.
+Prime real estate is reserved now rather than crowded later. The `˄` at
+the right of the menu row folds the masthead away, and remembers.
+
+The **menu row** holds File / Edit / View / Help — defined once as data
+and rendered twice, as the menu bar and as the hamburger drawer that
+replaces the top rows on a narrow screen (which also carries rename and
+read-only, so nothing masthead-only is out of reach on a phone). The
+split buttons in the action row define their own items on the same
+dropdown machinery (`src/notebook/menu.js`), so open, close, keyboard
+and positioning are one behaviour everywhere. Menus re-render on every
+open, so enabled/checked state is always current.
+
+- **File**: New, Open…, Open from URL…, Recent…, Save .ipynb (Ctrl+S),
+  and **Show source** — the exact `.ipynb` JSON a save would write, in a
+  copyable viewer.
+- **Edit**: Undo/Redo (structural — see below), cut/copy/paste cell
+  (an internal clipboard; no permission theatre), clear all outputs, and
+  **Duplicate notebook**, which is also read-only's escape hatch.
+- **View**: **Hide code** (markdown and outputs only — the notebook read
+  as a report), collapse/expand all code, the console toggle, and one
+  entry per registered panel tool — a future debugger appears here by
+  registering, not by being remembered.
+- **Help**: the Diluvium docs, and About.
+
+The **action row** keeps the working controls: **+ Cell ▾** (adds the
+kind it last added; the arrow chooses), **Run all ▾** (run focused, run
+cells above, run cell and below, sandbox the focused cell, clear all
+outputs), the runtime
+selector with its refresh, **Stop ▾** (restart lives behind the arrow —
+it says Stop, not Interrupt, because stopping terminates the worker and
+the state goes with it), and the kernel status.
+
+**Undo/redo is structural, on purpose.** Add, delete, move, convert,
+paste, clear-outputs and rename are snapshots on a stack inside the
+model, and a run of typing between structural changes is captured as one
+step of its own — so a structural undo can never silently destroy typing
+it did not own. Ctrl+Z outside an editor walks the stack; *inside* an
+editor it stays the editor's own native undo — the two meet only at
+session edges, which is how document-wide undo avoids the usual fight.
+
+**Read-only** blocks the document changing — typing (the editors
+themselves become read-only), structure, renaming — while running still
+works, the way Colab reads. Today it is a toggle anyone can flip; it is
+the seam for a file model where editing someone's notebook requires
+copying it first.
+
+**Home** (⌂) opens the launcher — New / Open / From URL, recents, and
+the Start here gallery in one place. A genuine first visit with nothing
+loaded gets it unprompted, once.
+
 ## The tool panel
 
 The rail down the left edge holds tools; clicking one opens a collapsible

@@ -199,7 +199,10 @@ export class NotebookView {
     // the kernel is swapped and a chart rendered before the swap must not
     // hold the old one.
     this.displayCtx = {
-      onWidget: (id, value, into) => this.handlers.onWidget?.(id, value, into),
+      // All four arguments: the fourth carries {auto: true} for a
+      // control's initial render, and dropping it made every first paint
+      // look like a user's drag.
+      onWidget: (id, value, into, opts) => this.handlers.onWidget?.(id, value, into, opts),
       get widgetsEnabled() { return handlers.widgetsEnabled?.() !== false; },
     };
 
@@ -364,6 +367,10 @@ export class NotebookView {
     });
     editor.value = cell.source;
     editor.hidden = !editing || folded;
+    // Read-only is enforced in three layers: the textarea's readOnly
+    // blocks typing, insertText refuses synthetic edits (Tab, Enter,
+    // completion), and _onInput drops anything that still slips through.
+    editor.readOnly = this.handlers.readOnly?.() === true;
 
     const tools = el('div', { class: 'cell-tools' }, [
       isCode ? button('run', 'Run', 'Run this cell (Ctrl+Enter)') : button('run', 'Render', 'Render (Ctrl+Enter)'),
@@ -561,6 +568,10 @@ export class NotebookView {
   }
 
   _onInput(event) {
+    // The backstop for read-only: no input event -- typed, synthetic, or
+    // pasted by an extension -- reaches the model while the document is
+    // locked.
+    if (this.handlers.readOnly?.() === true) return;
     const editor = event.target.closest('[data-editor]');
     if (!editor) return;
     const cellId = this._cellIdFor(editor);

@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import { viaControl, dismissLauncher } from './chrome.js';
 
 // Starting up in a browser that says no.
 //
@@ -20,6 +21,7 @@ async function boot(page) {
   page.on('pageerror', (err) => errors.push(err.message));
   await page.goto('/');
   await page.waitForSelector('body[data-ready="true"]', { timeout: 40_000 });
+  await dismissLauncher(page);
   return errors;
 }
 
@@ -141,7 +143,7 @@ test.describe('About reports what the browser allows', () => {
   test('so a report from an unreproducible browser is still actionable', async ({ page }) => {
     await page.addInitScript(() => indexedDB.deleteDatabase('diluvium-lab'));
     await boot(page);
-    await page.locator('[data-toolbar="about"]').click();
+    await viaControl(page, 'about');
 
     const report = await page.locator('[data-about-report]').innerText();
     for (const capability of ['WebAssembly', 'Web Worker', 'crypto.subtle',
@@ -158,7 +160,7 @@ test.describe('About reports what the browser allows', () => {
       });
     });
     await boot(page);
-    await page.locator('[data-toolbar="about"]').click();
+    await viaControl(page, 'about');
     // "blocked (SecurityError)" distinguishes a browser that refused from
     // one that simply lacks the feature, which are different bugs.
     await expect(page.locator('[data-about]')).toContainText('blocked (SecurityError)');
@@ -202,7 +204,7 @@ test.describe('a stale cache announces itself', () => {
     await page.addInitScript(() => indexedDB.deleteDatabase('diluvium-lab'));
     await boot(page);
     await expect(page.locator('body')).toHaveAttribute('data-startup-problems', '0');
-    await page.locator('[data-toolbar="about"]').click();
+    await viaControl(page, 'about');
     await expect(page.locator('[data-about]')).toContainText('agree');
   });
 });

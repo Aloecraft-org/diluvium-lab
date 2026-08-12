@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import { viaControl, dismissLauncher } from './chrome.js';
 
 // The visual-state layer: selection, run state, stale, folding, timing.
 //
@@ -11,6 +12,7 @@ import { test, expect } from '@playwright/test';
 async function openLab(page) {
   await page.goto('/');
   await page.waitForSelector('body[data-ready="true"]', { timeout: 30_000 });
+  await dismissLauncher(page);
   // Clear once, through the Lab's own module -- not via addInitScript,
   // which re-runs on the reload these tests depend on and would wipe the
   // thing under test. (The trap documented in storage.spec.js.)
@@ -20,6 +22,7 @@ async function openLab(page) {
   });
   await page.reload();
   await page.waitForSelector('body[data-ready="true"]', { timeout: 30_000 });
+  await dismissLauncher(page);
 }
 
 /** The model index of the first code cell -- cells[0] is markdown. */
@@ -60,7 +63,10 @@ test.describe('a cell is always current', () => {
     await openLab(page);
     const second = page.locator('.cell').nth(1);
     await second.locator('[data-editor]').click();
-    await page.locator('[data-toolbar="add-code"]').click();   // rebuilds the list
+    // A structural change with no selection intent of its own -- the menu
+    // "+ Cell" both inserts and selects, which would be testing something
+    // else. The model API is the raw re-render.
+    await page.evaluate(() => window.lab.model.addCell('code'));
     await expect(second).toHaveAttribute('data-selected', 'true');
   });
 });
@@ -90,6 +96,7 @@ test.describe('a run leaves a trace of how it went', () => {
     await page.waitForTimeout(600);            // let autosave land
     await page.reload();
     await page.waitForSelector('body[data-ready="true"]');
+    await dismissLauncher(page);
     // No kernel needed to know this cell errored -- the error output says so.
     await expect(codeCell(page)).toHaveAttribute('data-run-state', 'error');
   });
@@ -101,7 +108,7 @@ test.describe('stale: the state Jupyter lacks', () => {
     await runFirst(page, 'x = 41');
     await expect(codeCell(page).locator('[data-prompt]')).toHaveText('In [1]:');
 
-    await page.locator('[data-toolbar="restart"]').click();
+    await viaControl(page, 'restart');
     await expect(page.locator('[data-kernel-status]')).toHaveText('idle', { timeout: 15_000 });
 
     // The number stays -- the reader still sees this ran, and when -- but
@@ -114,7 +121,7 @@ test.describe('stale: the state Jupyter lacks', () => {
   test('running again clears the stale mark', async ({ page }) => {
     await openLab(page);
     await runFirst(page, 'return 1');
-    await page.locator('[data-toolbar="restart"]').click();
+    await viaControl(page, 'restart');
     await expect(codeCell(page)).toHaveAttribute('data-run-state', 'stale', { timeout: 15_000 });
     await runFirst(page, 'return 2');
     await expect(codeCell(page)).toHaveAttribute('data-run-state', 'ok');
@@ -124,7 +131,7 @@ test.describe('stale: the state Jupyter lacks', () => {
     await openLab(page);
     // markAllStale only touches cells that actually show a run; a blank
     // cell has no history to be stale.
-    await page.locator('[data-toolbar="restart"]').click();
+    await viaControl(page, 'restart');
     await expect(page.locator('[data-kernel-status]')).toHaveText('idle', { timeout: 15_000 });
     await expect(codeCell(page)).not.toHaveAttribute('data-run-state', 'stale');
   });
@@ -151,6 +158,7 @@ test.describe('folding', () => {
     await page.waitForTimeout(600);
     await page.reload();
     await page.waitForSelector('body[data-ready="true"]');
+    await dismissLauncher(page);
     await expect(codeCell(page)).toHaveAttribute('data-folded', 'true');
   });
 

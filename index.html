@@ -10,7 +10,7 @@
      is otherwise a silent failure: stale modules do not throw, they just
      quietly lack the newer half of the page. scripts/check-version.mjs
      keeps this in step with package.json and src/version.js. -->
-<meta name="diluvium-lab-build" content="0.8.0">
+<meta name="diluvium-lab-build" content="0.9.0">
 <script>
 /* Deliberately NOT a module, and deliberately in this file.
  *
@@ -24,7 +24,7 @@
  * So this runs with no imports, no dependencies, and no assumptions about
  * anything else having worked. */
 (function () {
-  var EXPECTED = '0.8.0';   // kept in step by scripts/check-version.mjs
+  var EXPECTED = '0.9.0';   // kept in step by scripts/check-version.mjs
   window.DILUVIUM_LAB_EXPECTED = EXPECTED;
 
   function show(title, detail) {
@@ -93,16 +93,17 @@
     margin: 0;
     font: 15px/1.5 ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
     display: grid;
-    grid-template-rows: auto 1fr auto;
-    /* Two columns: the tool workbench (rail + panel), then the sheet.
-       Toolbar, console and the banners span both. */
+    /* Three header rows (identity, menus, actions), the working row, the
+       console. Two columns: the tool workbench (rail + panel), then the
+       sheet; every header row, the console and the banners span both. */
+    grid-template-rows: auto auto auto 1fr auto;
     grid-template-columns: auto 1fr;
     height: 100vh;
   }
-  .toolbar, .console, .link-banner, [data-stale-banner] { grid-column: 1 / -1; }
+  .masthead, .menubar, .toolbar, .console, .link-banner, [data-stale-banner] { grid-column: 1 / -1; }
 
   /* --- the tool workbench: a rail of tools, and one open panel --- */
-  .workbench { grid-row: 2; grid-column: 1; display: flex; min-height: 0; }
+  .workbench { grid-row: 4; grid-column: 1; display: flex; min-height: 0; }
   .tool-rail {
     display: flex; flex-direction: column; gap: .3rem;
     padding: .5rem .3rem; border-right: 1px solid var(--edge);
@@ -151,6 +152,163 @@
   }
   .outline-entry[data-level="1"] { font-weight: 600; }
 
+  /* --- masthead: identity row --- */
+  .masthead {
+    display: flex; align-items: center; gap: .6rem;
+    padding: .4rem .75rem .3rem; border-bottom: 1px solid var(--edge);
+  }
+  .masthead .spacer, .menubar .spacer { flex: 1; }
+  .home-button {
+    font: inherit; font-weight: 650; padding: .2rem .5rem; cursor: pointer;
+    border: 1px solid transparent; border-radius: 8px;
+    background: transparent; color: inherit;
+  }
+  .home-button:hover { background: var(--sunk); }
+  .nb-identity { display: flex; flex-direction: column; align-items: flex-start; min-width: 0; }
+  .nb-identity [data-filename] { font-size: .72rem; line-height: 1.1; padding-left: .45rem; }
+  .save-status { font-size: .74rem; color: var(--quiet); white-space: nowrap; }
+  .save-status[data-state="failed"] { color: var(--bad); }
+  .round-slot {
+    font: inherit; width: 1.9rem; height: 1.9rem; border-radius: 50%;
+    border: 1px solid var(--edge); background: transparent; color: var(--quiet);
+    display: grid; place-items: center; cursor: pointer;
+  }
+  .round-slot:disabled { opacity: .45; cursor: default; }
+  .readonly-toggle {
+    font: inherit; font-size: .78rem; padding: .18rem .6rem; cursor: pointer;
+    border: 1px solid var(--edge); border-radius: 999px;
+    background: transparent; color: var(--quiet);
+  }
+  .readonly-toggle[aria-pressed="true"] { color: var(--bad); border-color: var(--bad); }
+  /* Reserved for identity. A slot, not a control: no cursor, no hover. */
+  .identity-slot {
+    width: 1.9rem; height: 1.9rem; border-radius: 50%;
+    border: 1px dashed var(--edge); background: var(--sunk); flex: none;
+  }
+
+  /* --- menu bar --- */
+  .menubar {
+    display: flex; align-items: center; gap: .15rem;
+    padding: .1rem .5rem; border-bottom: 1px solid var(--edge);
+    position: relative;
+  }
+  .menu-set { display: flex; align-items: center; gap: .1rem; }
+  .menu-top {
+    font: inherit; font-size: .86rem; padding: .2rem .6rem; cursor: pointer;
+    border: 1px solid transparent; border-radius: 6px;
+    background: transparent; color: inherit;
+  }
+  .menu-top:hover, .menu-top[aria-expanded="true"] { background: var(--sunk); }
+  .menu-pop {
+    position: absolute; z-index: 30; min-width: 13rem;
+    padding: .3rem; border: 1px solid var(--edge); border-radius: 8px;
+    background: Canvas; box-shadow: 0 6px 24px rgb(0 0 0 / .18);
+  }
+  .menu-item {
+    display: flex; align-items: center; gap: 1.2rem; width: 100%;
+    font: inherit; font-size: .86rem; text-align: left;
+    padding: .28rem .6rem; cursor: pointer;
+    border: 0; border-radius: 6px; background: transparent; color: inherit;
+  }
+  .menu-item:hover { background: var(--sunk); }
+  .menu-item:focus-visible {
+    background: var(--sunk);
+    outline: 2px solid var(--accent); outline-offset: -2px;
+  }
+  .menu-item[aria-disabled="true"] { opacity: .45; cursor: default; }
+  .menu-item[aria-disabled="true"]:hover { background: transparent; }
+  .menu-item[aria-checked="true"] .menu-label::before { content: "✓ "; }
+  .menu-item .menu-label { flex: 1; white-space: nowrap; }
+  .menu-item .menu-accel { color: var(--quiet); font-size: .74rem; font-family: var(--mono); }
+  .menu-sep { height: 1px; background: var(--edge); margin: .3rem .4rem; }
+  .masthead-toggle {
+    font: inherit; font-size: .8rem; padding: .1rem .5rem; cursor: pointer;
+    border: 1px solid transparent; border-radius: 6px;
+    background: transparent; color: var(--quiet);
+  }
+  .masthead-toggle:hover { background: var(--sunk); color: inherit; }
+
+  /* --- split buttons --- */
+  .toolbar { position: relative; }
+  .split { display: inline-flex; }
+  .split > button:first-child { border-top-right-radius: 0; border-bottom-right-radius: 0; }
+  .split > .split-arrow {
+    border-top-left-radius: 0; border-bottom-left-radius: 0;
+    border-left: 0; padding-inline: .3rem;
+  }
+
+  /* --- read-only: the document cannot change, so the affordances that
+         would change it go away. Running is still allowed -- read-only is
+         about the file, and Colab reads the same way. --- */
+  body[data-read-only="true"] .cell-tools [data-action="to-code"],
+  body[data-read-only="true"] .cell-tools [data-action="to-markdown"],
+  body[data-read-only="true"] .cell-tools [data-action="move-up"],
+  body[data-read-only="true"] .cell-tools [data-action="move-down"],
+  body[data-read-only="true"] .cell-tools [data-action="insert-below"],
+  body[data-read-only="true"] .cell-tools [data-action="delete"],
+  body[data-read-only="true"] [data-toolbar="add-cell"],
+  body[data-read-only="true"] [data-split="add"] { display: none; }
+  /* Folding writes metadata.jupyter.source_hidden -- an edit, so it rests
+     too. Report mode (View > Hide code) covers reading-time tidiness. */
+  body[data-read-only="true"] .fold-toggle { display: none; }
+  body[data-read-only="true"] .fold-preview { pointer-events: none; }
+
+  /* --- report mode: markdown and outputs, no code. The document is
+         unchanged; only what is drawn changes. --- */
+  body[data-hide-code="true"] .cell[data-cell-type="code"] .cell-head,
+  body[data-hide-code="true"] .cell[data-cell-type="code"] .editor-wrap,
+  body[data-hide-code="true"] .cell[data-cell-type="code"] textarea[data-editor],
+  body[data-hide-code="true"] .cell[data-cell-type="code"] .fold-preview,
+  body[data-hide-code="true"] .cell[data-cell-type="code"] .bytecode,
+  body[data-hide-code="true"] .cell[data-cell-type="code"] .sandbox { display: none; }
+  body[data-hide-code="true"] .cell[data-cell-type="code"] .outputs { margin-left: 0; }
+  body[data-hide-code="true"] .cell[data-cell-type="code"] { border-left-color: transparent; }
+
+  /* --- console hidden via the View menu --- */
+  body[data-console-hidden="true"] .console { display: none; }
+
+  /* --- launcher --- */
+  dialog[data-launcher] { max-width: min(52rem, 94vw); }
+  .launcher-actions { display: flex; gap: .5rem; flex-wrap: wrap; margin: .6rem 0 1rem; }
+  .launcher-actions button {
+    font: inherit; font-size: .88rem; padding: .35rem .8rem; cursor: pointer;
+    border: 1px solid var(--edge); border-radius: 8px;
+    background: transparent; color: inherit;
+  }
+  .launcher-actions button:hover { background: var(--sunk); }
+  .launcher-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 1.2rem; }
+  .launcher-head { font-size: .8rem; font-weight: 650; color: var(--quiet); margin: .2rem 0 .35rem; }
+  @media (max-width: 40rem) { .launcher-cols { grid-template-columns: 1fr; } }
+
+  /* --- notebook source dialog --- */
+  dialog[data-source] { max-width: min(56rem, 94vw); }
+  [data-source-text] {
+    width: 100%; min-height: 20rem; resize: vertical;
+    font-family: var(--mono); font-size: .78rem; line-height: 1.4;
+    border: 1px solid var(--edge); border-radius: 8px; padding: .5rem;
+    background: var(--sunk); color: inherit; white-space: pre;
+  }
+
+  dialog::backdrop { background: rgb(0 0 0 / .4); }
+
+  [data-rename-input] {
+    width: 100%; font: inherit; padding: .4rem .6rem;
+    border: 1px solid var(--edge); border-radius: 8px;
+    background: transparent; color: inherit;
+  }
+
+  /* --- the drawer: the menus, when the rows that hold them are hidden --- */
+  dialog[data-drawer] { max-width: min(20rem, 92vw); }
+  .drawer-head { font-size: .78rem; font-weight: 650; color: var(--quiet); margin: .7rem 0 .2rem; }
+
+  /* Narrow screens: the identity and menu rows fold into the hamburger,
+     which opens the drawer. The action row is the one that stays. */
+  [data-hamburger] { display: none; }
+  @media (max-width: 40rem) {
+    .masthead, .menubar { display: none; }
+    [data-hamburger] { display: inline-block; }
+  }
+
   /* --- toolbar --- */
   .toolbar {
     display: flex; align-items: center; gap: .4rem; flex-wrap: wrap;
@@ -185,7 +343,7 @@
   .status[data-status="dead"] { color: var(--bad); border-color: color-mix(in srgb, var(--bad) 40%, transparent); }
 
   /* --- cells --- */
-  .sheet { grid-row: 2; grid-column: 2; overflow: auto; padding: 1rem .75rem 4rem; }
+  .sheet { grid-row: 4; grid-column: 2; overflow: auto; padding: 1rem .75rem 4rem; }
   .cells { max-width: 62rem; margin: 0 auto; display: flex; flex-direction: column; gap: .5rem; }
 
   .cell {
@@ -692,6 +850,11 @@
     }
     .tool-rail button { width: 44px; height: 44px; }
     .outline-entry { min-height: 40px; }
+    .menu-top, .menu-item, .home-button, .readonly-toggle, .masthead-toggle,
+    .start-here, [data-hamburger], .tool-panel-head button {
+      min-height: 44px;
+    }
+    .round-slot, .identity-slot { width: 44px; height: 44px; }
     /* iOS zooms the page in when a focused field is under 16px, and does
        not zoom back out. The overlay must match or the highlight drifts
        off the glyphs -- both boxes, always. */
@@ -820,35 +983,66 @@
 </head>
 <body>
 
-<header class="toolbar">
-  <span class="title">Diluvium Lab</span>
+<!-- Row 1: identity. Whose notebook, what it is called, whether it is
+     saved -- and, on the right, three slots for the future that are
+     deliberately here already: history, read-only, and a user identity
+     circle. Prime real estate is reserved now rather than crowded later;
+     the two that do nothing yet say so. -->
+<header class="masthead" data-masthead>
+  <button type="button" class="home-button" data-home
+          title="Home — new, open, recent, and the example notebooks">⌂<span class="home-label"> Diluvium Lab</span></button>
+  <div class="nb-identity">
+    <!-- The notebook's name, which is not its filename. A button rather than
+         a contenteditable: contenteditable accepts pasted *markup*, and
+         nothing in this page reaches the DOM as markup. It swaps to an input
+         on click and back on commit. -->
+    <button type="button" class="nb-title" data-nb-title
+            title="Rename this notebook (this is its name, not its filename)"></button>
+    <input class="nb-title-input" data-nb-title-input hidden
+           maxlength="120" aria-label="Notebook name" autocomplete="off" spellcheck="false">
+    <span data-filename></span>
+  </div>
+  <span class="save-status" data-save-status role="status"></span>
+  <span class="spacer"></span>
   <!-- Printed by the inline script below, from the constant in this file
        rather than from a module. A version that lives only behind a button
        is no use when the thing that broke is what binds the button. -->
   <span class="build" data-build-version title="Lab version"></span>
-  <!-- The notebook's name, which is not its filename. A button rather than
-       a contenteditable: contenteditable accepts pasted *markup*, and
-       nothing in this page reaches the DOM as markup. It swaps to an input
-       on click and back on commit. -->
-  <button type="button" class="nb-title" data-nb-title
-          title="Rename this notebook (this is its name, not its filename)"></button>
-  <input class="nb-title-input" data-nb-title-input hidden
-         maxlength="120" aria-label="Notebook name" autocomplete="off" spellcheck="false">
-  <span class="sep"></span>
+  <button type="button" class="round-slot" data-history disabled
+          title="Version history — planned, not built yet" aria-label="Version history (not built yet)">◷</button>
+  <button type="button" class="readonly-toggle" data-readonly aria-pressed="false"
+          title="Toggle read-only. Read-only blocks edits to this notebook; duplicate it to work on a copy.">Editable</button>
+  <!-- Reserved: the you-circle. Live collaboration (arbitrated by the
+       discofetch pattern) puts an identity here; until then it is an
+       honest placeholder, not a control. -->
+  <span class="identity-slot" data-identity
+        title="You. Identity and live collaboration land here eventually."></span>
+</header>
+
+<!-- Row 2: the menus, built by src/notebook/menu.js from one definition
+     that also feeds the narrow-screen drawer. -->
+<nav class="menubar" data-menubar aria-label="notebook menus">
+  <div class="menu-set" data-menu-set></div>
+  <span class="spacer"></span>
   <button type="button" class="start-here" data-toolbar="examples"
           title="Example notebooks — the language, secure functions, queues, plots">Start here</button>
-  <button type="button" data-toolbar="add-code">+ Code</button>
-  <button type="button" data-toolbar="add-markdown">+ Markdown</button>
-  <span class="sep"></span>
-  <button type="button" data-toolbar="run-all">Run all</button>
-  <button type="button" data-toolbar="clear-outputs">Clear outputs</button>
-  <span class="sep"></span>
-  <button type="button" data-toolbar="open">Open…</button>
-  <button type="button" data-toolbar="open-url" title="Open a notebook from a URL">From URL…</button>
-  <button type="button" data-toolbar="recent" title="Notebooks opened before, kept in this browser">Recent</button>
-  <button type="button" data-toolbar="save">Save .ipynb</button>
-  <input type="file" data-file-input accept=".ipynb,application/json" hidden>
-  <span data-filename></span>
+  <button type="button" class="masthead-toggle" data-masthead-toggle aria-expanded="true"
+          title="Hide the header row above">˄</button>
+</nav>
+
+<!-- Row 3: the action toolbar. Keeps the .toolbar class the old single
+     row had, because these are the controls that stayed out of the menus
+     and the styles and tests that knew them still hold. -->
+<div class="toolbar actionbar" data-actionbar>
+  <button type="button" data-hamburger aria-label="Menu" title="Menu">☰</button>
+  <div class="split">
+    <button type="button" data-toolbar="add-cell" title="Add a cell (the kind you last added)">+ Cell</button>
+    <button type="button" class="split-arrow" data-split="add" aria-label="Add cell options">▾</button>
+  </div>
+  <div class="split">
+    <button type="button" data-toolbar="run-all">Run all</button>
+    <button type="button" class="split-arrow" data-split="run" aria-label="Run options">▾</button>
+  </div>
   <span class="spacer"></span>
   <label class="version">
     <span class="version-label">Runtime</span>
@@ -859,13 +1053,16 @@
   <!-- Says "Stop", not "Interrupt", on purpose. Jupyter's interrupt
        unwinds and leaves your variables alone; this terminates the worker,
        which is the only way to stop a synchronous WASM call, and takes the
-       Lua state with it. The title says so and so does the console note. -->
-  <button type="button" data-toolbar="stop" disabled
-          title="Stop the running cell. This restarts the kernel, so every variable is lost.">Stop</button>
-  <button type="button" data-toolbar="restart" title="Discard every variable and start the kernel again">Restart kernel</button>
-  <button type="button" data-toolbar="about" title="Versions, and what to paste into a bug report">About</button>
+       Lua state with it. The title says so and so does the console note.
+       Restart lives behind the arrow. -->
+  <div class="split">
+    <button type="button" data-toolbar="stop" disabled
+            title="Stop the running cell. This restarts the kernel, so every variable is lost.">Stop</button>
+    <button type="button" class="split-arrow" data-split="kernel" aria-label="Kernel options">▾</button>
+  </div>
   <span class="status" data-kernel-status role="status" aria-live="polite">starting</span>
-</header>
+  <input type="file" data-file-input accept=".ipynb,application/json" hidden>
+</div>
 
 <!-- A <dialog> rather than a div: modal focus containment, Escape to
      close and the top layer all come from the element, and none of them
@@ -923,6 +1120,74 @@
   </div>
 </dialog>
 
+<!-- The launcher: what Home opens, and what a first visit with nothing
+     loaded sees. Not a page -- navigating away would take the kernel's
+     state with it -- but the same New / Open / Recent / Start here
+     surface a launcher page would hold. -->
+<dialog data-launcher aria-labelledby="launcher-title">
+  <h2 id="launcher-title">Diluvium Lab</h2>
+  <p class="dialog-note">
+    Lua 5.5 with messaging, budgets and instances — running in this page,
+    nothing installed. Pick a notebook or start typing in a blank one.
+  </p>
+  <div class="launcher-actions">
+    <button type="button" data-launcher-new>New notebook</button>
+    <button type="button" data-launcher-open>Open a file…</button>
+    <button type="button" data-launcher-url>From a URL…</button>
+  </div>
+  <div class="launcher-cols">
+    <div>
+      <div class="launcher-head">Start here</div>
+      <div data-launcher-examples></div>
+    </div>
+    <div>
+      <div class="launcher-head">Recent</div>
+      <div data-launcher-recent></div>
+    </div>
+  </div>
+  <div class="about-actions">
+    <button type="button" data-launcher-close>Close</button>
+  </div>
+</dialog>
+
+<!-- The notebook, as the bytes a save would write. Read-only text: this
+     is a viewer, and the editor for the document is the page around it. -->
+<dialog data-source aria-labelledby="source-title">
+  <h2 id="source-title">Notebook source</h2>
+  <p class="dialog-note">
+    The exact .ipynb JSON <b>Save</b> writes, including outputs and
+    metadata.
+  </p>
+  <textarea data-source-text readonly spellcheck="false" aria-label="notebook source"></textarea>
+  <div class="about-actions">
+    <button type="button" data-source-copy>Copy</button>
+    <button type="button" data-source-download>Download .ipynb</button>
+    <button type="button" data-source-close>Close</button>
+  </div>
+</dialog>
+
+<!-- Renaming, as a dialog: the masthead's inline editor is hidden on
+     narrow screens, and a rename must not depend on a row being shown. -->
+<dialog data-rename aria-labelledby="rename-title">
+  <h2 id="rename-title">Rename notebook</h2>
+  <form method="dialog" data-rename-form>
+    <input data-rename-input maxlength="120" autocomplete="off" spellcheck="false"
+           aria-label="Notebook name" placeholder="Untitled notebook">
+    <div class="about-actions">
+      <button type="submit" data-rename-save>Rename</button>
+      <button type="button" data-rename-cancel>Cancel</button>
+    </div>
+  </form>
+</dialog>
+
+<!-- The menus as a drawer, for screens too narrow for the rows above. -->
+<dialog data-drawer aria-label="menu">
+  <div data-drawer-body role="menu"></div>
+  <div class="about-actions">
+    <button type="button" data-drawer-close>Close</button>
+  </div>
+</dialog>
+
 <aside class="workbench" data-workbench>
   <nav class="tool-rail" data-tool-rail aria-label="tools"></nav>
   <section class="tool-panel" data-tool-panel hidden>
@@ -961,43 +1226,44 @@
 <script type="importmap">
 {
   "imports": {
-    "./src/analysis/disasm.js": "./src/analysis/disasm.js?v=0.8.0",
-    "./src/analysis/luac.js": "./src/analysis/luac.js?v=0.8.0",
-    "./src/analysis/opcodes.js": "./src/analysis/opcodes.js?v=0.8.0",
-    "./src/app.js": "./src/app.js?v=0.8.0",
-    "./src/kernel/digest.js": "./src/kernel/digest.js?v=0.8.0",
-    "./src/kernel/instance.js": "./src/kernel/instance.js?v=0.8.0",
-    "./src/kernel/kernel.js": "./src/kernel/kernel.js?v=0.8.0",
-    "./src/kernel/lua-harness.js": "./src/kernel/lua-harness.js?v=0.8.0",
-    "./src/kernel/protocol.js": "./src/kernel/protocol.js?v=0.8.0",
-    "./src/kernel/releases.js": "./src/kernel/releases.js?v=0.8.0",
-    "./src/kernel/runtimes.js": "./src/kernel/runtimes.js?v=0.8.0",
-    "./src/kernel/wasi.js": "./src/kernel/wasi.js?v=0.8.0",
-    "./src/kernel/wasm-kernel.js": "./src/kernel/wasm-kernel.js?v=0.8.0",
-    "./src/kernel/worker-kernel.js": "./src/kernel/worker-kernel.js?v=0.8.0",
-    "./src/notebook/bytecode-view.js": "./src/notebook/bytecode-view.js?v=0.8.0",
-    "./src/notebook/completion.js": "./src/notebook/completion.js?v=0.8.0",
-    "./src/notebook/console.js": "./src/notebook/console.js?v=0.8.0",
-    "./src/notebook/display.js": "./src/notebook/display.js?v=0.8.0",
-    "./src/notebook/dom.js": "./src/notebook/dom.js?v=0.8.0",
-    "./src/notebook/editing.js": "./src/notebook/editing.js?v=0.8.0",
-    "./src/notebook/editor.js": "./src/notebook/editor.js?v=0.8.0",
-    "./src/notebook/escape.js": "./src/notebook/escape.js?v=0.8.0",
-    "./src/notebook/examples.js": "./src/notebook/examples.js?v=0.8.0",
-    "./src/notebook/highlight.js": "./src/notebook/highlight.js?v=0.8.0",
-    "./src/notebook/hints.js": "./src/notebook/hints.js?v=0.8.0",
-    "./src/notebook/ipynb.js": "./src/notebook/ipynb.js?v=0.8.0",
-    "./src/notebook/markdown.js": "./src/notebook/markdown.js?v=0.8.0",
-    "./src/notebook/model.js": "./src/notebook/model.js?v=0.8.0",
-    "./src/notebook/outline.js": "./src/notebook/outline.js?v=0.8.0",
-    "./src/notebook/panel.js": "./src/notebook/panel.js?v=0.8.0",
-    "./src/notebook/plot.js": "./src/notebook/plot.js?v=0.8.0",
-    "./src/notebook/remote.js": "./src/notebook/remote.js?v=0.8.0",
-    "./src/notebook/sandbox-view.js": "./src/notebook/sandbox-view.js?v=0.8.0",
-    "./src/notebook/storage.js": "./src/notebook/storage.js?v=0.8.0",
-    "./src/notebook/ui.js": "./src/notebook/ui.js?v=0.8.0",
-    "./src/version.js": "./src/version.js?v=0.8.0",
-    "./vendor/pinned.js": "./vendor/pinned.js?v=0.8.0"
+    "./src/analysis/disasm.js": "./src/analysis/disasm.js?v=0.9.0",
+    "./src/analysis/luac.js": "./src/analysis/luac.js?v=0.9.0",
+    "./src/analysis/opcodes.js": "./src/analysis/opcodes.js?v=0.9.0",
+    "./src/app.js": "./src/app.js?v=0.9.0",
+    "./src/kernel/digest.js": "./src/kernel/digest.js?v=0.9.0",
+    "./src/kernel/instance.js": "./src/kernel/instance.js?v=0.9.0",
+    "./src/kernel/kernel.js": "./src/kernel/kernel.js?v=0.9.0",
+    "./src/kernel/lua-harness.js": "./src/kernel/lua-harness.js?v=0.9.0",
+    "./src/kernel/protocol.js": "./src/kernel/protocol.js?v=0.9.0",
+    "./src/kernel/releases.js": "./src/kernel/releases.js?v=0.9.0",
+    "./src/kernel/runtimes.js": "./src/kernel/runtimes.js?v=0.9.0",
+    "./src/kernel/wasi.js": "./src/kernel/wasi.js?v=0.9.0",
+    "./src/kernel/wasm-kernel.js": "./src/kernel/wasm-kernel.js?v=0.9.0",
+    "./src/kernel/worker-kernel.js": "./src/kernel/worker-kernel.js?v=0.9.0",
+    "./src/notebook/bytecode-view.js": "./src/notebook/bytecode-view.js?v=0.9.0",
+    "./src/notebook/completion.js": "./src/notebook/completion.js?v=0.9.0",
+    "./src/notebook/console.js": "./src/notebook/console.js?v=0.9.0",
+    "./src/notebook/display.js": "./src/notebook/display.js?v=0.9.0",
+    "./src/notebook/dom.js": "./src/notebook/dom.js?v=0.9.0",
+    "./src/notebook/editing.js": "./src/notebook/editing.js?v=0.9.0",
+    "./src/notebook/editor.js": "./src/notebook/editor.js?v=0.9.0",
+    "./src/notebook/escape.js": "./src/notebook/escape.js?v=0.9.0",
+    "./src/notebook/examples.js": "./src/notebook/examples.js?v=0.9.0",
+    "./src/notebook/highlight.js": "./src/notebook/highlight.js?v=0.9.0",
+    "./src/notebook/hints.js": "./src/notebook/hints.js?v=0.9.0",
+    "./src/notebook/ipynb.js": "./src/notebook/ipynb.js?v=0.9.0",
+    "./src/notebook/markdown.js": "./src/notebook/markdown.js?v=0.9.0",
+    "./src/notebook/menu.js": "./src/notebook/menu.js?v=0.9.0",
+    "./src/notebook/model.js": "./src/notebook/model.js?v=0.9.0",
+    "./src/notebook/outline.js": "./src/notebook/outline.js?v=0.9.0",
+    "./src/notebook/panel.js": "./src/notebook/panel.js?v=0.9.0",
+    "./src/notebook/plot.js": "./src/notebook/plot.js?v=0.9.0",
+    "./src/notebook/remote.js": "./src/notebook/remote.js?v=0.9.0",
+    "./src/notebook/sandbox-view.js": "./src/notebook/sandbox-view.js?v=0.9.0",
+    "./src/notebook/storage.js": "./src/notebook/storage.js?v=0.9.0",
+    "./src/notebook/ui.js": "./src/notebook/ui.js?v=0.9.0",
+    "./src/version.js": "./src/version.js?v=0.9.0",
+    "./vendor/pinned.js": "./vendor/pinned.js?v=0.9.0"
   }
 }
 </script>

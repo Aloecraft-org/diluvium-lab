@@ -17,6 +17,12 @@ export const INDENT = '  ';
  * stack. The fallback works and loses undo, which is the right way round.
  */
 export function insertText(textarea, text) {
+  // The one place synthetic edits happen, so it is the one place
+  // read-only is enforced for them. The textarea's own readOnly blocks
+  // typing, but not Tab/Enter/comment-toggle/completion -- those arrive
+  // here, as programmatic writes, and readOnly does not stop a value
+  // assignment.
+  if (textarea.readOnly) return;
   textarea.focus();
   try {
     if (document.execCommand('insertText', false, text)) return;

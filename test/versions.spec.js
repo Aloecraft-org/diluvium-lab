@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import { viaControl, dismissLauncher } from './chrome.js';
 import { readFile } from 'node:fs/promises';
 import { readFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
@@ -150,6 +151,7 @@ async function openLab(page) {
   await page.addInitScript(() => indexedDB.deleteDatabase('diluvium-lab'));
   await page.goto('/');
   await page.waitForSelector('body[data-ready="true"]', { timeout: 30_000 });
+  await dismissLauncher(page);
   return problems;
 }
 
@@ -702,7 +704,7 @@ test.describe('a prerelease says so', () => {
 
     // And the About panel states it in words, because "prerelease" here
     // does not mean "unfinished" and a bug report needs to carry which.
-    await page.locator('[data-toolbar="about"]').click();
+    await viaControl(page, 'about');
     await expect(page.locator('[data-about]')).toContainText(
       stable === false ? 'prerelease' : /release|not stated/);
   });
