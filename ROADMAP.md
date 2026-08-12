@@ -2313,3 +2313,23 @@ to the C host should not have to discover the field exists.
   is the budget hook, which fires every 1000 instructions, so a program
   doing less than that between parks reports nothing. That is the
   counter's resolution rather than a bug, and the panel says so.
+
+#### The notebook as the composer
+
+`doc/Lab.md` names a "notebook-to-agents composer" as lab tooling, and the
+instances panel now has its smallest honest form: **From the selected
+cell** takes the selected code cell as the swarm's root program. A
+notebook can then hold a swarm the way it holds anything else, with
+markdown around it explaining each part, and nothing is pasted anywhere.
+
+The rule that shapes what such a notebook can say is the runtime's rather
+than the Lab's, and it is worth repeating wherever this is documented: **a
+spawn ships source or bytecode, never a closure.** An agent function
+cannot capture; it takes its state as a parameter or has it written into
+its source. That is why a child appears inside its parent as a string with
+`%q` around anything interpolated, and why "the agent is a template" is
+the shape rather than a workaround.
+
+Selecting a markdown cell, or an empty one, is refused with a sentence.
+`dvs_root` would accept an empty program perfectly happily, and one
+instance that did nothing reads as the Lab being broken.

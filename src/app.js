@@ -17,7 +17,7 @@ import { saveAutosave, loadAutosave, debounceSave, rememberRecent, listRecent, c
 import { ToolPanel } from './notebook/panel.js';
 import { renderOutline } from './notebook/outline.js';
 import { renderSwarm } from './notebook/swarm-view.js';
-import { SWARM_PROGRAMS, programById } from './notebook/swarm-programs.js';
+import { SWARM_PROGRAMS, ALL_PROGRAMS, programById } from './notebook/swarm-programs.js';
 import { renderMenuBar, renderDrawer, attachDropdown } from './notebook/menu.js';
 import { fetchNotebook, hostOf, describeOpenError, normaliseNotebookUrl } from './notebook/remote.js';
 import { EXAMPLES, exampleById } from './notebook/examples.js';
@@ -190,7 +190,7 @@ export class App {
         busy: this.swarm.busy,
         source: this.swarm.source,
         draft: this.swarm.draft,
-        programs: SWARM_PROGRAMS,
+        programs: ALL_PROGRAMS,
         onChange: (patch) => { Object.assign(this.swarm, patch); this.panel.refresh(); },
         // Kept apart from `onChange` on purpose: a draft field must not
         // repaint the panel, or the input is rebuilt under the caret.
@@ -562,7 +562,10 @@ export class App {
       switch (action) {
         case 'start': {
           const program = programById(this.swarm.source);
-          this.swarm.report = await this.kernel.swarmStart(program.source, program.config);
+          // "From the selected cell" has no source of its own: the
+          // notebook is the composer, so the cell is the program.
+          const source = program.source ?? this._selectedCellSource();
+          this.swarm.report = await this.kernel.swarmStart(source, program.config);
           break;
         }
         case 'step':
@@ -596,6 +599,23 @@ export class App {
       this.swarm.busy = false;
       this.panel.refresh();
     }
+  }
+
+  /**
+   * The selected code cell's source, for the swarm composer.
+   *
+   * Refuses rather than starting an empty swarm: `dvs_root` would accept
+   * an empty program perfectly happily and the panel would show one
+   * instance that did nothing, which reads as the Lab being broken.
+   */
+  _selectedCellSource() {
+    const cell = this.model.cells.find((c) => c.id === this.view.selectedId);
+    if (!cell || cell.cell_type !== 'code') {
+      throw new Error('select a code cell first — that cell becomes the swarm\u2019s root program');
+    }
+    const source = String(cell.source ?? '').trim();
+    if (!source) throw new Error('the selected cell is empty, so there is no root program to run');
+    return source;
   }
 
   _bindModel() {

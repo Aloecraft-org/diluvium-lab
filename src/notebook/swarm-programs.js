@@ -232,4 +232,43 @@ export const SWARM_PROGRAMS = [
   },
 ];
 
-export const programById = (id) => SWARM_PROGRAMS.find((p) => p.id === id) ?? SWARM_PROGRAMS[0];
+/**
+ * The notebook as the composer.
+ *
+ * `doc/Lab.md` calls this "the notebook-to-agents composer", and this is
+ * its smallest honest form: the selected code cell *is* the root program.
+ * A notebook can then hold a swarm the way it holds anything else — with
+ * markdown around it explaining what each part does — and the panel runs
+ * it without anything being pasted anywhere.
+ *
+ * The one runtime-imposed rule, which the notebook has to say out loud:
+ * **a spawn ships source or bytecode, never a closure.** An agent function
+ * cannot capture; it takes its state as a parameter. That is why a child's
+ * source appears as a string inside its parent rather than as a function.
+ *
+ * Its deployment wires everything, because a cell being written now cannot
+ * declare what it will need next. The capability list is the root's
+ * ceiling and every descendant attenuates from it, so a generous ceiling
+ * here is still a real one below.
+ */
+export const FROM_CELL = {
+  id: 'cell',
+  label: 'From the selected cell',
+  config: {
+    maxInstances: 32,
+    spawnsPerStep: 4,
+    caps: ['lifecycle', 'queue:*', 'host:time', 'host:rng/int', 'host:rng/bytes',
+      'host:sql/query', 'host:sql/exec'],
+    budget: { instructions: 500_000_000, memoryKb: 16384 },
+    connectors: {
+      time: true,
+      rng: true,
+      sql: { path: 'lab.db', mode: 'readwrite', max_rows: 1024 },
+      listen: { port: 8080, queue: 'http_in', reply_queue: 'http_out' },
+    },
+  },
+};
+
+export const ALL_PROGRAMS = [...SWARM_PROGRAMS, FROM_CELL];
+
+export const programById = (id) => ALL_PROGRAMS.find((p) => p.id === id) ?? SWARM_PROGRAMS[0];
