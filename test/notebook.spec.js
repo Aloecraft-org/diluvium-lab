@@ -174,8 +174,20 @@ test.describe('editing structure', () => {
   test('deleting the last cell leaves a usable notebook', async ({ page }) => {
     await openLab(page);
     const count = await cells(page).count();
-    for (let i = 0; i < count; i++) {
-      await cell(page, 0).locator('[data-action="delete"]').click();
+    // Wait for each delete to land before aiming the next one. The list
+    // re-renders after every removal, so firing the clicks back to back
+    // races the rebuild and detaches the element mid-click -- reproducible
+    // about one run in twelve under parallel load, and seen in CI.
+    for (let i = count; i > 0; i--) {
+      // Hover first: the cell toolbar is revealed on hover, and after each
+      // delete the list re-renders under a pointer that is no longer over
+      // anything -- so the next delete button resolves but is invisible,
+      // and the click waits out the timeout. A user moves the mouse to the
+      // next cell; so does this.
+      const target = cell(page, 0);
+      await target.hover();
+      await target.locator('[data-action="delete"]').click();
+      await expect(cells(page)).toHaveCount(Math.max(i - 1, 1));
     }
     await expect(cells(page)).toHaveCount(1);
     await expect(cell(page, 0)).toHaveAttribute('data-cell-type', 'code');

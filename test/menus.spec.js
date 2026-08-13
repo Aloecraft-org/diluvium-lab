@@ -399,11 +399,15 @@ test.describe('the launcher', () => {
     await page.locator('[data-about-action="copy"]').click();
     // Copy succeeds or fails by clipboard permission; either way the
     // feedback is a toast, and it used to paint under the backdrop.
-    const onTop = await page.evaluate(() => {
+    //
+    // Polled rather than read once: writing to the clipboard is async and
+    // the toast follows it, so a single read straight after the click is a
+    // race the test loses on a loaded runner -- which is what it did in
+    // CI, on main, while passing everywhere else.
+    await expect.poll(() => page.evaluate(() => {
       const toast = document.querySelector('[data-toast]');
-      return !toast.hidden && toast.matches(':popover-open');
-    });
-    expect(onTop).toBe(true);
+      return !!toast && !toast.hidden && toast.matches(':popover-open');
+    })).toBe(true);
   });
 
   test('a true first visit gets the launcher unprompted', async ({ page }) => {
