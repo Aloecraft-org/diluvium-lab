@@ -107,6 +107,20 @@ test.describe('on a phone', () => {
   });
 });
 
+test.describe('the rows on a small screen', () => {
+  test('the console stays below the notebook when the header rows fold', async ({ page }) => {
+    await openLab(page);
+    // Under 40rem the masthead and menubar are display:none; an unpinned
+    // console was auto-placed into the freed row -- ABOVE the sheet, so
+    // a phone's first screenful was console chrome, not the notebook.
+    const order = await page.evaluate(() => ({
+      sheetTop: document.querySelector('.sheet').getBoundingClientRect().top,
+      consoleTop: document.querySelector('.console').getBoundingClientRect().top,
+    }));
+    expect(order.consoleTop).toBeGreaterThan(order.sheetTop);
+  });
+});
+
 test.describe('the toolbar on a small screen', () => {
   test('takes one row, not half the screen', async ({ page }) => {
     await openLab(page);

@@ -89,6 +89,42 @@ test.describe('the quiet cell toolbar', () => {
   });
 });
 
+test.describe('the editor sizes to what it shows', () => {
+  test('a wrapping line does not clip the first line of code', async ({ page }) => {
+    await openLab(page);
+    const editor = codeCell(page).locator('[data-editor]');
+    // One logical line, far wider than the sheet: rows-as-line-count
+    // under-measured this and the textarea scrolled internally, slicing
+    // the first line off above its own fold.
+    await editor.fill(`-- ${'wrap '.repeat(80)}\nprint(1)`);
+    const metrics = await editor.evaluate((node) => ({
+      scrollTop: node.scrollTop,
+      gap: node.scrollHeight - node.clientHeight,
+    }));
+    expect(metrics.scrollTop).toBe(0);
+    expect(metrics.gap).toBeLessThanOrEqual(2);
+  });
+});
+
+test.describe('run all and deliberate errors', () => {
+  test('a cell that errors on purpose does not strand the cells after it', async ({ page }) => {
+    await openLab(page);
+    await viaControl(page, 'new');
+    const first = page.locator('.cell').first();
+    await first.locator('[data-editor]').fill('error("the lesson")');
+    // The badge's metadata, the way the notebooks carry it.
+    await page.evaluate(() => {
+      window.lab.model.cells[0].metadata.diluvium_lab = { expect: 'error' };
+    });
+    await viaControl(page, 'add-code');
+    await page.locator('.cell').nth(1).locator('[data-editor]').fill('print("still ran")');
+
+    await viaControl(page, 'run-all');
+    await expect(page.locator('.cell').nth(1).locator('.output-stream pre'))
+      .toContainText('still ran', { timeout: 15_000 });
+  });
+});
+
 test.describe('running the selected cell from anywhere', () => {
   test('Ctrl+Enter works with focus outside the editor', async ({ page }) => {
     await openLab(page);

@@ -872,13 +872,20 @@ export class App {
     this.document.body.dataset.running = 'true';
     let skipped = 0;
     try {
-      for (const cell of [...this.model.cells]) {
+      for (const [index, cell] of [...this.model.cells].entries()) {
         if (cell.cell_type !== 'code') continue;
         if (cell.source.trim() === '') continue;
         if (expectationOf(cell) === EXPECT.NEVER_RETURNS) { skipped += 1; continue; }
         const reply = await this.runCell(cell.id);
         if (reply?.content.status === 'error') {
-          this._toast('Run all stopped at the first error.', 'error');
+          // A cell that declares its error is the lesson does not end the
+          // run -- the badge on it says so, and the intro notebook's own
+          // teaching error stranded everything after it here.
+          if (expectationOf(cell) === EXPECT.ERROR) continue;
+          // Name where, and show where: the failing cell was usually off
+          // screen, leaving a toast pointing at nothing.
+          this.view.cellNode(cell.id)?.scrollIntoView({ block: 'center' });
+          this._toast(`Run all stopped at cell ${index + 1} — the first error.`, 'error');
           break;
         }
         if (this.kernel.status === STATUS.DEAD) break;
@@ -1599,6 +1606,14 @@ export class App {
     // The launcher's own controls.
     const launcher = doc.querySelector('[data-launcher]');
     doc.querySelector('[data-launcher-close]')?.addEventListener('click', () => launcher?.close());
+    // On a first visit nothing focused before the launcher opened, so the
+    // dialog's focus-restore lands on <body> -- from where forward-Tab
+    // reaches the tool rail and cells but never the menus. Landing in the
+    // first editor makes the keyboard's first press already useful.
+    launcher?.addEventListener('close', () => {
+      const active = doc.activeElement;
+      if (!active || active === doc.body) this.view.focusEditor();
+    });
     doc.querySelector('[data-launcher-new]')?.addEventListener('click', () => { launcher?.close(); this.newNotebook(); });
     doc.querySelector('[data-launcher-open]')?.addEventListener('click', () => {
       launcher?.close();
@@ -1786,7 +1801,8 @@ export class App {
         if (cell.cell_type !== 'code' || cell.source.trim() === '') continue;
         if (expectationOf(cell) === EXPECT.NEVER_RETURNS) continue;
         const reply = await this.runCell(cell.id);
-        if (reply?.content.status === 'error') break;
+        if (reply?.content.status === 'error'
+          && expectationOf(cell) !== EXPECT.ERROR) break;   // declared errors do not end the run
         if (this.kernel.status === STATUS.DEAD) break;
       }
     } finally {

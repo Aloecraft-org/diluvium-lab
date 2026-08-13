@@ -3061,3 +3061,45 @@ the toolbar's. En route the same rebuild-repopulation fix landed for
 per-cell panels: an open bytecode or sandbox panel used to come back
 from any structural re-render as a visible empty box with a desynced
 toggle; render() now reopens what was open, populated.
+
+### What the live drives found: layout truths at every width ✅ done
+
+Two audit agents drove the real page — first-run flows, then 1920px down
+to a Pixel 7, then keyboard-only — and what they measured landed here.
+
+**The console sat above the notebook on phones.** Under 40rem the
+masthead and menubar are `display: none`, and the console, never pinned
+to a grid row, was auto-placed into the freed row — so the phone pitch's
+first screenful was console chrome with the notebook below the fold.
+`grid-row: 5`, one line, plus a spec that actually checks the order.
+
+**Editors clipped their own first line.** Height came from `rows =
+newline count`, which under-measures any line long enough to wrap; the
+textarea then scrolled internally and the first line of code was sliced
+off above its own fold. Height now comes from scrollHeight, which sees
+wrapping.
+
+**Run all stranded the intro notebook.** hello.ipynb's deliberate
+teaching error carries `expect: "error"` and a badge saying the error
+is the lesson — and Run all stopped at it anyway, leaving the f-string
+and completion cells unrun on the single most likely newcomer path.
+Declared errors no longer end the run; an *unexpected* one still does,
+and now scrolls the failing cell into view and names its position
+instead of toasting at a viewport that shows nothing wrong.
+
+**The revealed toolbar learned its limits.** The quiet toolbar's full
+set now wraps inside the cell instead of clipping past its edge when a
+panel narrows the sheet, and the reveal is gated on width as well as
+pointer — a narrow window with a mouse has no more room for ten buttons
+than a phone, so it uses the ⋯ menu the same way. Quiet buttons left
+the tab order (`tabindex=-1`): eight stops per cell made the notebook
+~25 presses away, and the ⋯ menu already reaches every action with
+roving arrows. Closing the launcher on a first visit now lands focus in
+the first editor rather than on `<body>`, from which forward-Tab could
+never reach the menus.
+
+And the small hard-won pixels: the launcher caps at the viewport with
+its Close row sticky (it was 1300px tall on a phone with the exits at
+the very bottom), the fold toggle and split arrows meet 44px on touch,
+and `In [1]:` and the elapsed clock stopped wrapping mid-unit in a
+crowded head.

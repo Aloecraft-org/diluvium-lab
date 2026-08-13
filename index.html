@@ -419,7 +419,11 @@
   body[data-console-hidden="true"] .console { display: none; }
 
   /* --- launcher --- */
-  dialog[data-launcher] { max-width: min(52rem, 94vw); }
+  dialog[data-launcher] { max-width: min(52rem, 94vw); max-height: calc(100dvh - 3rem); }
+  dialog[data-launcher] .about-actions {
+    position: sticky; bottom: 0; margin-top: .4rem;
+    padding: .5rem 0 .1rem; background: Canvas;
+  }
   .launcher-actions { display: flex; gap: .5rem; flex-wrap: wrap; margin: .6rem 0 1rem; }
   .launcher-actions button {
     font: inherit; font-size: .88rem; padding: .35rem .8rem; cursor: pointer;
@@ -551,11 +555,11 @@
   .cell-head { display: flex; align-items: center; gap: .5rem; min-height: 1.6rem; }
   .prompt {
     font-family: var(--mono); font-size: .78rem; color: var(--quiet);
-    min-width: 5.5rem; user-select: none;
+    min-width: 5.5rem; user-select: none; white-space: nowrap;
   }
   .timing {
     font-family: var(--mono); font-size: .7rem; color: var(--quiet);
-    font-variant-numeric: tabular-nums;
+    font-variant-numeric: tabular-nums; white-space: nowrap;
   }
 
   /* Cells that misbehave on purpose say so where the surprise happens. */
@@ -592,11 +596,16 @@
      words, is the whole surface. The keyboard is never locked out:
      focus-within reveals the buttons, and ⋯ itself is tabbable. */
   .cell { position: relative; }   /* anchors the ⋯ menu to the cell */
-  .cell-tools { display: flex; gap: .25rem; margin-left: auto; opacity: .3; transition: opacity .12s; }
+  .cell-tools {
+    display: flex; flex-wrap: wrap; justify-content: flex-end;
+    gap: .25rem; margin-left: auto; opacity: .3; transition: opacity .12s;
+  }
   .cell:hover .cell-tools, .cell:focus-within .cell-tools,
   .cell[data-selected="true"] .cell-tools { opacity: 1; }
   .cell-tools [data-quiet] { display: none; }
-  @media (pointer: fine) {
+  /* Width as well as pointer: a narrow window with a mouse has no more
+     room for ten buttons than a phone does. */
+  @media (pointer: fine) and (min-width: 40rem) {
     .cell:hover .cell-tools [data-quiet],
     .cell:focus-within .cell-tools [data-quiet],
     .cell[data-selected="true"] .cell-tools [data-quiet] { display: revert; }
@@ -1009,6 +1018,11 @@
 
   /* --- console --- */
   .console {
+    /* Pinned to the last row by name. Under 40rem the masthead and
+       menubar are display:none, and auto-placement pulled an unpinned
+       console up into the freed row -- above the notebook, on exactly
+       the screens the phone pitch cares about. */
+    grid-row: 5;
     border-top: 1px solid var(--edge); display: grid; grid-template-rows: auto 1fr auto;
     max-height: 38vh; min-height: 8.5rem;
   }
@@ -1050,6 +1064,8 @@
       padding-inline: .7rem;
     }
     .tool-rail button { width: 44px; height: 44px; }
+    .fold-toggle { width: 44px; height: 44px; }
+    .split > .split-arrow { padding-inline: .55rem; min-width: 44px; }
     .outline-entry { min-height: 40px; }
     .menu-top, .menu-item, .home-button, .readonly-toggle, .masthead-toggle,
     .start-here, [data-hamburger], .tool-panel-head button {

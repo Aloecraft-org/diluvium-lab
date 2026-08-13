@@ -258,10 +258,29 @@ export class NotebookView {
 
   cellNode(cellId) { return this.root.querySelector(`[data-cell-id="${cellId}"]`); }
 
-  /** Put the caret in a cell's editor -- the first cell's by default. */
-  focusEditor(cellId = this.model.cells[0]?.id) {
+  /** Put the caret in a cell's editor -- the first visible one by default
+      (the first cell is often rendered markdown, whose editor is hidden). */
+  focusEditor(cellId = null) {
     const editor = cellId ? this.cellNode(cellId)?.querySelector('[data-editor]') : null;
-    if (editor && !editor.hidden) editor.focus();
+    if (editor && !editor.hidden) { editor.focus(); return; }
+    if (!cellId) {
+      for (const candidate of this.root.querySelectorAll('[data-editor]')) {
+        if (!candidate.hidden) { candidate.focus(); return; }
+      }
+    }
+  }
+
+  /**
+   * Height from rendered content, not from a line count. `rows =
+   * newline count` under-measures any line long enough to wrap, and the
+   * textarea then scrolls internally -- the first line of a cell sliced
+   * off above its own fold. scrollHeight sees wrapping; the +2 is the
+   * border the border-box height must include.
+   */
+  _autosize(editor) {
+    if (editor.hidden) return;
+    editor.style.height = 'auto';
+    editor.style.height = `${editor.scrollHeight + 2}px`;
   }
 
   /** Repaint every editor -- after a kernel swap changes the keyword set. */
@@ -294,6 +313,7 @@ export class NotebookView {
       if (this.model.get(cellId)) { this._openSandbox(cellId); this._applyToggleState(cellId); }
       else this.showingSandbox.delete(cellId);
     }
+    for (const editor of this.root.querySelectorAll('textarea[data-editor]')) this._autosize(editor);
 
     if (focusedCell) {
       const editor = this.cellNode(focusedCell)?.querySelector('[data-editor]');
@@ -404,7 +424,13 @@ export class NotebookView {
     // for every action) is the whole surface. Ten always-on buttons per
     // cell were most of the page's noise, and on a phone they were wider
     // than the cell itself.
-    const quiet = (node) => { if (node) node.dataset.quiet = 'true'; return node; };
+    // tabindex -1: with ten buttons a cell, Tab took ~8 stops per cell
+    // and the notebook was ~25 presses away. Run and ⋯ stay stops, and
+    // the ⋯ menu already reaches every action with roving arrows.
+    const quiet = (node) => {
+      if (node) { node.dataset.quiet = 'true'; node.tabIndex = -1; }
+      return node;
+    };
     const more = el('button', {
       type: 'button', class: 'cell-more',
       title: 'More cell actions', 'aria-label': 'More cell actions',
@@ -696,7 +722,7 @@ export class NotebookView {
     if (!editor) return;
     const cellId = this._cellIdFor(editor);
     if (!cellId) return;
-    editor.rows = Math.max(1, editor.value.split('\n').length);
+    this._autosize(editor);
     this.model.setSource(cellId, editor.value);
   }
 
