@@ -89,6 +89,11 @@ function unavailable() {
       + 'only from v5.5.1_build5. Older builds can still run a single sandboxed instance '
       + '— that is the Sandbox panel — but nothing in them can spawn.',
     ]),
+    el('p', { class: 'muted' }, [
+      'The single-file build is also in this case on purpose: it carries the kernel and '
+      + 'nothing else, because a file:// page cannot fetch the megabyte the swarm needs. '
+      + 'Serve the Lab to use one.',
+    ]),
   ]);
 }
 
@@ -260,9 +265,13 @@ function listenerSection(listener, { onAction, draft, onDraft }) {
   for (const [node, key] of [[method, 'method'], [path, 'path'], [body, 'body']]) {
     node.addEventListener('input', () => onDraft({ [key]: node.value }));
   }
-  const send = actionButton('Send', 'listener-send', () => onAction('request', {
-    method: method.value, path: path.value, body: body.value,
-  }), false);
+  // Sent from the *draft*, not by reading these three nodes back. They are
+  // the same value right up until a repaint lands between the keystroke
+  // and Send -- at which point the nodes here are a fresh pair built from
+  // whatever the draft held, and the ones the typing went into are
+  // detached and hold the truth. Reading the DOM back made the composer
+  // race the panel's own refresh and send the previous contents.
+  const send = actionButton('Send', 'listener-send', () => onAction('request', { ...draft }), false);
   section.append(el('div', { class: 'swarm-request' }, [method, path, body, send]));
 
   if (listener.exchanges?.length) {
@@ -289,8 +298,12 @@ function databaseSection(database) {
   section.append(el('p', { class: 'muted' }, [
     `${database.path}, ${database.readwrite ? 'readwrite' : 'read-only'}, `
     + `max_rows ${database.maxRows}, ${database.statements} statement(s) run. `
-    + 'This is the Lab’s own small engine, not SQLite: it answers the same two calls over the '
-    + 'same shapes and refuses, by name, everything it does not implement.',
+    + 'Real SQLite, vendored — but in memory: the path is the one your configuration '
+    + 'names, and there is no filesystem here to put a file on, so it is gone when the '
+    + 'kernel restarts. The contract is the C host’s exactly; the confinement is '
+    + 'weaker, because no JavaScript driver exposes SQLite’s authorizer — transactions, '
+    + 'ATTACH and PRAGMA are gated by keyword rather than refused by the engine. Fine for '
+    + 'prototyping a schema; not for a database that matters.',
   ]));
   const list = el('ul', { class: 'swarm-tables' });
   for (const table of database.tables ?? []) {

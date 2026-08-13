@@ -44,8 +44,18 @@ if (!version) {
   process.exit(1);
 }
 
-/** Every relative specifier in a source file, static and dynamic alike. */
-const SPECIFIERS = /(?:import|export)\s[^;]*?from\s*['"]([^'"]+)['"]|import\(\s*['"]([^'"]+)['"]|new URL\(\s*['"`]\.([^'"`?]+)/g;
+/**
+ * Every relative specifier in a source file, static and dynamic alike.
+ *
+ * The `new URL` branch captures the leading dots rather than eating one of
+ * them. It used to match `['"`]\.` and capture what followed, which handed
+ * the walk `/kernel-worker.js` for `'./kernel-worker.js'` — a specifier
+ * that does not start with a dot and was therefore dropped by the guard
+ * below. So that branch had never contributed anything, quietly, and the
+ * first `new URL('../../…')` in the tree turned the same off-by-one into a
+ * wrong path instead of no path, which is how it was noticed.
+ */
+const SPECIFIERS = /(?:import|export)\s[^;]*?from\s*['"]([^'"]+)['"]|import\(\s*['"]([^'"]+)['"]|new URL\(\s*['"`](\.[^'"`?]*)/g;
 
 /**
  * Walk the graph the way the browser does, from index.html outwards.
@@ -63,6 +73,20 @@ const SPECIFIERS = /(?:import|export)\s[^;]*?from\s*['"]([^'"]+)['"]|import\(\s*
  * this is a smaller window than it was, and a kernel that misbehaves
  * falls back to running in the page -- but it is not nothing, and the
  * real fix remains the host not caching unversioned scripts.
+ *
+ * Two kinds of thing are reached and then **not walked into**, both for
+ * the same reason -- what is inside them is not this page's module graph:
+ *
+ *   `vendor/`  verbatim third-party bundles. Emscripten's loader builds a
+ *              `new URL(".", …)` at *runtime* to find its own directory,
+ *              which is not a build-time reference to anything and which
+ *              this walk would otherwise chase to a directory.
+ *   non-`.js`  the wasm binary beside the vendored SQLite. An import map
+ *              governs module resolution and nothing else, so an entry
+ *              for it would be an instruction with no reader.
+ *
+ * Both are still checked for existence, because catching a reference to a
+ * file nobody vendored is half of why this walk exists.
  */
 async function graph() {
   const found = new Set();
@@ -72,7 +96,16 @@ async function graph() {
     if (!spec.startsWith('.')) continue;
     const path = resolve(dirname(from), spec);
     if (found.has(path)) continue;
-    if (path !== '/index.html') found.add(path);
+
+    const isModule = path.endsWith('.js');
+    if (isModule) found.add(path);
+    if (path !== '/index.html' && (!isModule || path.startsWith('/vendor/'))) {
+      await readFile(new URL(`.${path}`, ROOT)).catch(() => {
+        console.error(`stamp-imports: ${path} is referenced but missing`);
+        process.exit(1);
+      });
+      continue;
+    }
 
     let source;
     try {

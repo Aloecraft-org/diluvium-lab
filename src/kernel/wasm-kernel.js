@@ -10,6 +10,7 @@ import { instanceCapable, runInstance } from './instance.js';
 import { createWasi, unshimmedImports, HARD_MAX_BYTES } from './wasi.js';
 import { SwarmHost, swarmImports, swarmProblems, swarmCapable, ensureStack } from './swarm.js';
 import { buildConnectors } from './connectors.js';
+import { loadSqlite } from './sqlite.js';
 import {
   RECORD, KEYWORD_CANDIDATES, makeNonce, executeChunk, isCompleteChunk,
   completeChunk, languageInfoChunk, dumpChunk, widgetChunk, luaLiteral,
@@ -572,11 +573,12 @@ export class WasmKernel extends Kernel {
    */
   async swarmStart(source, config = {}) {
     const exports = await this._swarmExports();
+    const sqlite = config.connectors?.sql ? await loadSqlite() : null;
     if (this._host) this._host.free();
     const host = new SwarmHost(exports, this._swarmRef, {
       drain: () => this._swarmWasi.drain(),
     });
-    const { connectors, listener, database } = buildConnectors(config.connectors ?? {});
+    const { connectors, listener, database } = buildConnectors(config.connectors ?? {}, { sqlite });
     for (const [name, fn] of connectors) host.connect(name, fn);
     this._listener = listener;
     this._database = database;
@@ -663,6 +665,9 @@ export class WasmKernel extends Kernel {
   async _preloadSwarm() {
     try {
       await this._swarmExports();
+      // SQLite too, and for the same reason: a cell's `swarm.start` may
+      // wire the `sql` connector, and by then nothing can be awaited.
+      this._sqlite = await loadSqlite().catch(() => null);
     } catch {
       // Left absent. `executeChunk` will not install the global.
     }
@@ -707,7 +712,8 @@ export class WasmKernel extends Kernel {
       const host = new SwarmHost(this._swarmInstance.exports, this._swarmRef, {
         drain: () => this._swarmWasi.drain(),
       });
-      const { connectors, listener, database } = buildConnectors(config.connectors ?? {});
+      const { connectors, listener, database } = buildConnectors(
+        config.connectors ?? {}, { sqlite: this._sqlite });
       for (const [name, fn] of connectors) host.connect(name, fn);
       this._listener = listener;
       this._database = database;
@@ -804,9 +810,7 @@ export class WasmKernel extends Kernel {
         readwrite: this._database.readwrite,
         maxRows: this._database.maxRows,
         statements: this._database.statements,
-        tables: [...this._database.tables.entries()].map(([name, t]) => ({
-          name, rows: t.rows.length, columns: t.columns.map((c) => c.name),
-        })),
+        tables: this._database.tables,
       };
     }
     return report;

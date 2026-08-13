@@ -420,7 +420,7 @@ which:
 | connector | here | in production |
 | :--- | :--- | :--- |
 | `time` | wall clock | wall clock — identical |
-| `sql/query`, `sql/exec` | a small engine in `src/kernel/mock-sql.js` | the system SQLite |
+| `sql/query`, `sql/exec` | real SQLite, compiled to WASM (`vendor/sql-wasm.js`) | the system SQLite |
 | `listen` | a request composer in the panel | a bound socket |
 | `crypto/*` | a vendored synchronous SHA-256/HMAC | the same, over the runtime's SHA-256 |
 | `rng`, `js/invoke` | `crypto`, a registered function | host's choice |
@@ -443,15 +443,27 @@ mint a token that never expires. The primitive underneath is vendored and
 synchronous, and checked against FIPS 180-4 and RFC 4231 vectors rather
 than against itself.
 
-**The SQL engine is not SQLite, and its whole design is refusing rather
-than approximating.** It answers the same two calls over the same shapes,
-splits read-only from readwrite the same way, and refuses rather than
-truncates at `max_rows`. It implements SELECT (with WHERE, ORDER BY,
-GROUP BY, LIMIT/OFFSET and the five aggregates), INSERT, UPDATE, DELETE,
-CREATE TABLE and DROP TABLE, over one table per statement. A JOIN, a
-subquery, `BEGIN`, `PRAGMA`, an unknown function or a composite primary
-key each produce an error naming the limitation. Test your schema here;
-test your SQL against the real thing before you ship it.
+**The SQL engine is SQLite — really it, compiled to WebAssembly and
+vendored.** So the dialect is not a subset of anything: joins, subqueries,
+CTEs, window functions, its own constraint and NULL semantics. A query
+that runs here runs on the C host, and a constraint that fires here fires
+there.
+
+What is weaker here is the **confinement**, not the contract, and the
+difference is worth knowing before you trust it with anything. The C
+connector earns its confinement from three SQLite primitives no JavaScript
+driver exposes — the authorizer, `SQLITE_LIMIT_ATTACHED` and
+`sqlite3_stmt_readonly` — so in their place this one reads the statement's
+text: `ATTACH`, `BEGIN`, `PRAGMA`, `VACUUM` and their neighbours are
+refused by first keyword, the read/write split is by first keyword, and
+the `?` parameters are counted from the text and must match exactly. Two
+further rules are not standing in for anything: one statement per call, so
+a second cannot ride in silently unrun, and the row cap is checked while
+stepping a cursor rather than after materialising the result.
+
+A text gate is a floor rather than a target. Build to the contract so your
+guest cannot tell the two hosts apart, and do not point this at a database
+that matters — production is the C host.
 
 ## Naming a notebook
 
@@ -799,11 +811,12 @@ src/kernel/         the kernel interface and the one implementation behind it
 src/notebook/       the document: model, .ipynb, markdown, highlighting, rendering
 src/notebook/display.js  rich output by mime type; plot.js draws the charts
 src/kernel/swarm.js      the swarm host: doc/Host.md's seven duties, in JS
-src/kernel/connectors.js the hostcall connectors; mock-sql.js is the sql one
+src/kernel/connectors.js the hostcall connectors; sqlite.js is the sql one
 notebooks/          the Start here gallery, bundled into the page by
                     scripts/bundle-examples.mjs -> src/notebook/examples.js
 vendor/             the pinned Diluvium runtime, both modules, plus the
-                    msgpack codec (a verbatim copy — see msgpack.SOURCE.txt)
+                    msgpack codec and SQLite (verbatim copies — see the
+                    matching *.SOURCE.txt beside each)
 ```
 
 Everything reaches the kernel through `src/kernel/kernel.js`. That is the

@@ -129,9 +129,14 @@ test('the listener composer drives a request through the program and back', asyn
   await expect(page.locator('[data-listener-exchanges]'))
     .toContainText('2 time(s)', { timeout: 15_000 });
 
-  // And the database section says what it is, rather than implying SQLite.
-  await expect(page.locator('[data-swarm-database]')).toContainText('not SQLite');
-  await expect(page.locator('[data-swarm-database]')).toContainText('visit');
+  // And the database section says what it is. It is real SQLite now, so
+  // the thing that would overclaim is no longer the engine but its
+  // confinement and its persistence -- both of which it has to say.
+  const db = page.locator('[data-swarm-database]');
+  await expect(db).toContainText('Real SQLite');
+  await expect(db).toContainText('in memory');
+  await expect(db).toContainText('authorizer');
+  await expect(db).toContainText('visit');
 });
 
 test('stopping a swarm leaves the roster as the last thing the host saw', async ({ page }) => {

@@ -2242,16 +2242,22 @@ connector name is refused **by name** at configuration time, the way the
 C host refuses an unknown config key — an unknown key is a typo about to
 become a silent default.
 
-`time` is identical on both hosts. `sql` is `src/kernel/mock-sql.js`, and
-the honest description of it is the one the panel shows: same wire
+`time` is identical on both hosts. `sql` was `src/kernel/mock-sql.js`, and
+the honest description of it was the one the panel showed: same wire
 contract, same two calls, same read-only/readwrite split, same
 refuse-rather-than-truncate row cap; different engine, smaller dialect,
-no persistence, no transactions, no joins, no subqueries. **What makes
-that defensible is that it refuses rather than approximates.** A JOIN, a
+no persistence, no transactions, no joins, no subqueries. **What made
+that defensible is that it refused rather than approximated.** A JOIN, a
 subquery, `BEGIN`, `PRAGMA`, an unknown function and a composite primary
-key each produce an error naming the limitation. A mock that silently
+key each produced an error naming the limitation. A mock that silently
 misexecutes a query is worse than no mock, because the program written
 against it looks like it works.
+
+*Superseded by "Real SQLite behind the `sql` connector" below, which is
+where that file went.* The refusals were the right thing to ship while
+there was no SQLite in the page, and the wrong thing to keep once there
+was — the ceiling they described is exactly the ceiling a schema of any
+weight hits on its first afternoon.
 
 `listen` is the mocked port binding, and the mock is thinner than it
 sounds. `doc/Host.md` fixes the message shapes — `{conn, method, path,
@@ -2546,3 +2552,133 @@ Two process notes, recorded because both were avoidable: a green local run
 was trusted over a cold one, and the work was landed on main before CI had
 spoken. The suite passing on the machine that wrote it is the weakest form
 of green there is.
+
+### Real SQLite behind the `sql` connector ✅ done
+
+`src/kernel/mock-sql.js` is gone. In its place is `vendor/sql-wasm.*` —
+SQLite compiled to WebAssembly, MIT-licensed sql.js 1.14.1, ~660 KB of
+`.wasm` and 46 KB of loader — and `src/kernel/sqlite.js`, which is the
+gate in front of it.
+
+**Why the mock had to go, given that it was defensible.** It was: it
+refused rather than approximated, and every refusal named its own
+limitation. But the refusals were *no joins, no subqueries, no
+transactions, no composite keys*, and that is not a list you meet on a
+hard day — it is the list you meet on the first afternoon of prototyping
+any schema with two tables in it. A connector whose ceiling is that low
+stops being a prototyping surface and becomes a thing you route around.
+
+**What is now identical to the C host, and what is not.** The contract
+is: same two calls, same `{sql, params}` in, same `{cols, rows}` /
+`{changes, rowid}` out, same read/write split, same row cap that refuses
+rather than truncates — and now, additionally, the same *engine*, so a
+query that runs here runs there and a constraint that fires here fires
+there. That last part is new and is most of the point.
+
+The confinement is weaker, and `doc/Lab.md` §1a named the reason before
+any of this was written: `host/dhost_sql.c` earns its confinement from
+three SQLite primitives no JavaScript driver exposes.
+
+| the C host uses | there is none, so instead |
+| :--- | :--- |
+| `sqlite3_set_authorizer` | a first-keyword deny list: `ATTACH`, `DETACH`, `BEGIN`/`COMMIT`/`ROLLBACK`/`SAVEPOINT`/`RELEASE`, `PRAGMA`, `VACUUM`, `ANALYZE`, `REINDEX` |
+| `sqlite3_stmt_readonly` | a first-keyword read/write split — it classifies the statement someone wrote, not the one SQLite compiled |
+| `sqlite3_bind_parameter_count` | `?` counted from the text, and the count must match *exactly* |
+
+Each of those is a floor rather than a target, and each is commented in
+`sqlite.js` with what it cannot promise. The text gates run over
+`stripLiterals()`, which blanks string literals, quoted identifiers and
+both comment forms while preserving length — so a `;` or a `?` inside a
+literal is not read as a statement separator or a parameter.
+
+Two gates are not standing in for anything and are there on their own
+merits. **One statement per call**: the drivers prepare the first and
+silently ignore the rest, which is the worst of the three options, so a
+second statement is refused. **The row cap is checked while stepping a
+cursor, never after `.all()`**: materialising a hostile result set and
+*then* counting it is a memory DoS the C host does not have.
+
+The practical rule is the one the panel shows: build to the contract so
+the guest cannot tell, and do not point this at a database that matters.
+Production is the C host.
+
+**Vendoring cost exactly two mechanical lines**, recorded in
+`scripts/vendor-sqlite.sh` and in `vendor/sql-wasm.SOURCE.txt` with
+upstream's checksums beside them: `var module, exports;` prepended,
+because the UMD's unconditional `module = undefined` throws in an ES
+module, and `export default initSqlJs;` appended. The `.wasm` is
+byte-identical. Nothing fetches: the loader is handed `wasmBinary`
+directly, because a module that reached for the network would work in
+development and fail in the file someone was emailed.
+
+The baked single-file build has no SQL connector, for the same reason it
+has no swarm panel — `index.html` passes `swarmUrl: null` there, and both
+callers go through `_swarmExports()` first. The dynamic `import()` that
+`bake.mjs` cannot flatten is therefore never reached rather than being a
+404 waiting to happen.
+
+`test/sqlite.spec.js` replaced the mock's spec and inverts its shape: what
+used to be asserted as a refusal is now asserted to work, and what remains
+under test is the confinement. `test/connectors.spec.js` kept only the
+connectors that are not `sql`.
+
+**A bug this turned up in `scripts/stamp-imports.mjs`, which had nothing
+to do with SQLite.** Its specifier regex matched the opening quote and one dot,
+then captured what came *after* that dot, so `'./kernel-worker.js'`
+reached the walk as `/kernel-worker.js` — which fails the
+`startsWith('.')` guard on the next line and was silently dropped. That branch had therefore never
+contributed anything, in contradiction of the comment above it saying the
+worker is pulled into the graph. It stayed invisible because dropping a
+file is a quiet failure; the first `new URL('../../…')` in the tree turned
+the same off-by-one into a *wrong* path instead of no path, and that is
+loud. Fixed by capturing the leading dots, which puts `kernel-worker.js`
+in the map for the first time.
+
+Two things are now reached and deliberately not walked into, because what
+is inside them is not this page's module graph: anything under `vendor/`
+(emscripten's loader computes `new URL(".", …)` at runtime to find its own
+directory, and the walk would chase it to a directory) and anything that
+is not a `.js` (an import map governs module resolution and nothing else,
+so an entry for a `.wasm` would be an instruction with no reader). Both
+are still existence-checked.
+
+### Three flaky panel tests, and the thing they were actually telling us ✅ fixed
+
+The SQLite swap made `swarm-panel.spec.js` fail on a full run — one test,
+then two more when the specs were re-run with the CPU deliberately loaded.
+The obvious reading was "the new code is racy". It was worth checking
+rather than assuming, so the whole change set was stashed and the same
+loaded run was repeated **on main**: it failed the same way. Adding SQLite
+widened the window rather than opening it.
+
+What all three had in common was one press of **Run**. `runSlice` stops on
+whichever of two bounds arrives first, a step ceiling or a wall-clock
+budget, and the panel asked for 200 steps or 50 ms. On the machine this
+was written on the clock never binds and the two are the same thing; on a
+loaded runner the clock binds first, one press buys a dozen steps instead
+of two hundred, and a program that ran to completion here does not there.
+**What a button does had come to depend on what else the machine was
+doing** — which is the same defect as the IndexedDB race recorded above,
+in a different costume: an assertion racing an unstated deadline.
+
+The fix makes the step count the contract and the clock a yield point.
+`App._swarmDrive` takes as many slices as the step allowance needs; a fast
+machine still takes one and stops, unchanged. `request` uses the same
+helper with a stop condition of its own — a request is waiting for a
+*reply*, not for a step count, so it stops as soon as nobody is pending
+instead of spending the rest of the allowance. That one had its own bug
+underneath: a single fixed slice left the connection at "waiting…"
+permanently on a slow machine, because nothing was scheduled to drive it
+again.
+
+The listener composer had a second, unrelated race that the same run
+surfaced: **Send read its three values back out of the DOM.** The panel
+repaints from scratch after every action, and a repaint landing between
+the keystroke and the press left the nodes Send was reading freshly built
+from the *previous* draft — so the request went out with the old path.
+The draft already existed for exactly this reason; Send reading the DOM
+was the leftover. It now sends the draft.
+
+Verified the way the earlier lesson says to: reproduced under load first,
+then fixed, then 174 runs of the panel and cell specs at four workers with
+the CPU saturated.

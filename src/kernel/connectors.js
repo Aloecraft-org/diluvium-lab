@@ -18,10 +18,10 @@
 // difference is stated rather than hidden:
 //
 //   `time`    identical. Wall-clock milliseconds, both sides.
-//   `sql`     a small in-memory engine, not SQLite. It answers the same two
-//             calls over the same shapes and refuses -- loudly, by name --
-//             everything it does not implement. See mock-sql.js for why
-//             refusing beats approximating.
+//   `sql`     real SQLite, compiled to wasm and vendored. The *contract*
+//             is the C host's exactly; the *confinement* is weaker, because
+//             no JavaScript driver exposes SQLite's authorizer. See
+//             sqlite.js for what that costs and what is gated instead.
 //   `listen`  there is no socket in a browser tab, so the port is a number
 //             this connector records and never binds. Requests arrive
 //             because something in the page pushed one, which is exactly
@@ -32,7 +32,7 @@
 // Connectors are **all off by default**. A deployment names the ones it
 // wires, and a call to an unwired one is `denied` with a sentence saying so.
 
-import { MockDatabase } from './mock-sql.js';
+import { SqliteDatabase } from './sqlite.js';
 import {
   sha256, hmacSha256, utf8Bytes, bytesToHex, base64url, fromBase64url, equalBytes,
 } from './sha256.js';
@@ -51,7 +51,7 @@ const failed = (detail) => ({ status: 'error', detail });
  *
  * @param {object} description the `connectors` table, `host/example.host.lua`'s shape
  * @param {object} [services] host-side objects the connectors talk to
- * @returns {{connectors: Map<string, Function>, listener: Listener|null, database: MockDatabase|null}}
+ * @returns {{connectors: Map<string, Function>, listener: Listener|null, database: SqliteDatabase|null}}
  */
 export function buildConnectors(description = {}, services = {}) {
   const connectors = new Map();
@@ -67,10 +67,18 @@ export function buildConnectors(description = {}, services = {}) {
       case 'rng':
         connectors.set('rng', rngConnector(spec));
         break;
-      case 'sql':
-        database = new MockDatabase(spec === true ? {} : spec);
+      case 'sql': {
+        // The factory is loaded by whoever can await -- the kernel, before
+        // a swarm starts. A configuration that wires `sql` without one is
+        // a deployment asking for a database the page could not load, and
+        // says so rather than answering every query with an error.
+        if (!services.sqlite) {
+          throw new Error('the sql connector needs SQLite, which this page could not load');
+        }
+        database = new SqliteDatabase(services.sqlite, spec === true ? {} : spec);
         connectors.set('sql', sqlConnector(database));
         break;
+      }
       case 'listen':
         listener = new Listener(spec === true ? {} : spec);
         break;

@@ -1,0 +1,16 @@
+# Where vendor/sql-wasm.* came from, and how to re-vendor them.
+#
+# SQLite compiled to WebAssembly, behind the `sql` hostcall connector.
+# Not byte-identical to upstream, unavoidably: see scripts/vendor-sqlite.sh
+# for the two lines added and why an ES module needs them.
+
+package  sql.js@1.14.1  (MIT; SQLite itself is public domain)
+npm      https://www.npmjs.com/package/sql.js
+source   https://github.com/sql-js/sql.js
+
+vendor/sql-wasm.js    <- dist/sql-wasm.js  + 3 prepended lines, 1 appended
+upstream sha256  77d6435bac506af0e3c59636dce9d22b1b14156348bc327f41a1577f3212360f
+
+vendor/sql-wasm.wasm  <- dist/sql-wasm.wasm  (byte-identical)
+upstream sha256  438c88f666dc054ce4e9395f80fe9db4218b1a3c379960454880f048a7898aed
+sha256           438c88f666dc054ce4e9395f80fe9db4218b1a3c379960454880f048a7898aed

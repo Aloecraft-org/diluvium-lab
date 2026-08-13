@@ -126,9 +126,10 @@ return 0
 
 const SERVICE = `
 -- A request handler, against two connectors the host wired: a listener
--- that binds no port, and a database that is not SQLite. Neither fact is
--- visible from in here, which is the point -- doc/Host.md's acceptance
--- test is that a guest cannot tell two hosts apart.
+-- that binds no port, and a SQLite whose confinement is thinner than the
+-- C host's. Neither fact is visible from in here, which is the point --
+-- doc/Host.md's acceptance test is that a guest cannot tell two hosts
+-- apart.
 local inq  = queue.declare('http_in',  {capacity = 16})
 local outq = queue.declare('http_out', {capacity = 16, exported = true})
 local calls   = queue.declare('host/calls',   {capacity = 8, exported = true, on_full = 'reject'})

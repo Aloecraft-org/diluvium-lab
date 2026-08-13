@@ -595,7 +595,7 @@ export class App {
           this.swarm.report = await this.kernel.swarmStep();
           break;
         case 'run':
-          this.swarm.report = await this.kernel.swarmRun({ maxSteps: 200, budgetMs: 50 });
+          await this._swarmDrive({ steps: 200, budgetMs: 50 });
           break;
         case 'stop':
           this.swarm.report = await this.kernel.swarmStop();
@@ -603,9 +603,16 @@ export class App {
         case 'request':
           await this.kernel.swarmRequest(arg);
           // A request is only inbound: the program has to be driven before
-          // it can answer, so the panel steps once rather than leaving a
-          // connection that looks stuck.
-          this.swarm.report = await this.kernel.swarmRun({ maxSteps: 20, budgetMs: 30 });
+          // it can answer, so the panel drives it rather than leaving a
+          // connection that looks stuck. Driven until nobody is waiting,
+          // because a reply is the thing being waited for -- and then it
+          // stops, rather than spending the rest of the allowance on a
+          // program that has already answered.
+          await this._swarmDrive({
+            steps: 200,
+            budgetMs: 30,
+            done: (report) => !report.listener?.pending?.length,
+          });
           break;
         case 'kill': case 'hibernate': case 'wake': {
           const result = await this.kernel.swarmControl(action, arg);
@@ -621,6 +628,49 @@ export class App {
     } finally {
       this.swarm.busy = false;
       this.panel.refresh();
+    }
+  }
+
+  /**
+   * Advance the swarm by a *step* allowance, taking as many slices as that
+   * needs.
+   *
+   * `SwarmHost.runSlice` stops on whichever of two bounds arrives first: a
+   * step ceiling or a wall-clock budget. The step ceiling is the contract
+   * — "one press of Run advances the swarm up to 200 steps" — and the
+   * clock is only there so one call cannot sit inside `dvs_step` for an
+   * unbounded stretch. On an idle machine the clock never binds and the
+   * two bounds are the same thing. On a loaded one it binds first, and a
+   * press that ran a program to completion here bought a dozen steps
+   * there — so what a button does came to depend on what else the machine
+   * was doing.
+   *
+   * Which is not a hypothetical: three panel tests flaked on exactly this,
+   * on main, before any of the SQLite work, and reproduce on a checkout of
+   * main with the CPU loaded. Adding SQLite widened the window rather than
+   * opening it.
+   *
+   * So the clock becomes a *yield* point rather than a bound, and the step
+   * count is what is actually spent. A fast machine still does one slice
+   * and stops, unchanged.
+   *
+   * @param {object} options
+   * @param {number} options.steps total steps this press is worth
+   * @param {number} options.budgetMs how long any one slice may sit in wasm
+   * @param {(report: object) => boolean} [options.done] stop early — for a
+   *   request, whose point is the reply rather than the step count
+   */
+  async _swarmDrive({ steps, budgetMs, done }) {
+    let spent = 0;
+    while (spent < steps) {
+      const report = await this.kernel.swarmRun({ maxSteps: steps - spent, budgetMs });
+      this.swarm.report = report;
+      // `alive` at zero means the swarm is over; no steps taken means the
+      // slice found nothing it could advance, and another one would find
+      // the same. Either way a further slice is spending time to learn
+      // what this one already said.
+      if (!report.alive || !report.steps || done?.(report)) break;
+      spent += report.steps;
     }
   }
 

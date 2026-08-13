@@ -18,7 +18,7 @@
 import { WasmKernel, splitCompletionToken } from '../src/kernel/wasm-kernel.js';
 import { executeCollected } from '../src/kernel/kernel.js';
 import { luaLongString, parseRecord, makeNonce } from '../src/kernel/lua-harness.js';
-import { MockDatabase, parseSql } from '../src/kernel/mock-sql.js';
+import { loadSqlite, SqliteDatabase, stripLiterals } from '../src/kernel/sqlite.js';
 import { buildConnectors } from '../src/kernel/connectors.js';
 import { encode, decode } from '../vendor/msgpack.js';
 import { sha256, hmacSha256, utf8Bytes, bytesToHex } from '../src/kernel/sha256.js';
@@ -41,8 +41,9 @@ window.lab = {
   // The swarm's own surfaces, so a spec can assert the host and the
   // connectors directly rather than through six layers of DOM. The
   // notebook's tests drive the real panel and the real buttons.
-  MockDatabase,
-  parseSql,
+  loadSqlite,
+  SqliteDatabase,
+  stripLiterals,
   buildConnectors,
   msgpack: { encode, decode },
   crypto: { sha256, hmacSha256, utf8: utf8Bytes, toHex: bytesToHex },

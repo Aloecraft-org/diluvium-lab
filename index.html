@@ -1319,13 +1319,14 @@
     "./src/kernel/connectors.js": "./src/kernel/connectors.js?v=0.11.0",
     "./src/kernel/digest.js": "./src/kernel/digest.js?v=0.11.0",
     "./src/kernel/instance.js": "./src/kernel/instance.js?v=0.11.0",
+    "./src/kernel/kernel-worker.js": "./src/kernel/kernel-worker.js?v=0.11.0",
     "./src/kernel/kernel.js": "./src/kernel/kernel.js?v=0.11.0",
     "./src/kernel/lua-harness.js": "./src/kernel/lua-harness.js?v=0.11.0",
-    "./src/kernel/mock-sql.js": "./src/kernel/mock-sql.js?v=0.11.0",
     "./src/kernel/protocol.js": "./src/kernel/protocol.js?v=0.11.0",
     "./src/kernel/releases.js": "./src/kernel/releases.js?v=0.11.0",
     "./src/kernel/runtimes.js": "./src/kernel/runtimes.js?v=0.11.0",
     "./src/kernel/sha256.js": "./src/kernel/sha256.js?v=0.11.0",
+    "./src/kernel/sqlite.js": "./src/kernel/sqlite.js?v=0.11.0",
     "./src/kernel/swarm.js": "./src/kernel/swarm.js?v=0.11.0",
     "./src/kernel/wasi.js": "./src/kernel/wasi.js?v=0.11.0",
     "./src/kernel/wasm-kernel.js": "./src/kernel/wasm-kernel.js?v=0.11.0",
@@ -1356,7 +1357,8 @@
     "./src/notebook/ui.js": "./src/notebook/ui.js?v=0.11.0",
     "./src/version.js": "./src/version.js?v=0.11.0",
     "./vendor/msgpack.js": "./vendor/msgpack.js?v=0.11.0",
-    "./vendor/pinned.js": "./vendor/pinned.js?v=0.11.0"
+    "./vendor/pinned.js": "./vendor/pinned.js?v=0.11.0",
+    "./vendor/sql-wasm.js": "./vendor/sql-wasm.js?v=0.11.0"
   }
 }
 </script>
@@ -1369,7 +1371,12 @@ import { App } from './src/app.js';
 // file://. Served normally it is undefined and the kernel is fetched.
 const inlined = window.DILUVIUM_KERNEL_BASE64;
 const app = new App(document, {
-  ...(inlined ? { moduleBytes: base64ToBytes(inlined) } : {}),
+  // The baked file carries the kernel and nothing else. The swarm module
+  // and SQLite are megabytes apiece and a `file://` page cannot fetch
+  // either, so rather than offer controls that fail on click, the single
+  // file says it has no swarm -- the same trade it already makes for
+  // downloading runtimes, and for the same reason.
+  ...(inlined ? { moduleBytes: base64ToBytes(inlined), swarmUrl: null } : {}),
   ...(devMirrorOverride() ?? {}),
 });
 
