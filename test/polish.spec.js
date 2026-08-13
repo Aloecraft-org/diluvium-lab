@@ -31,6 +31,64 @@ const firstCodeIndex = (page) => page.evaluate(() =>
 
 const codeCell = (page) => page.locator('.cell[data-cell-type="code"]').first();
 
+test.describe('the quiet cell toolbar', () => {
+  test('rests as Run and ⋯; the current cell shows the full set', async ({ page }) => {
+    await openLab(page);
+    // The seed's first cell is markdown, so its code cells start
+    // unselected -- the resting state under test.
+    const resting = page.locator('.cell[data-cell-type="code"]').last();
+    await expect(resting.locator('[data-action="run"]')).toBeVisible();
+    await expect(resting.locator('.cell-more')).toBeVisible();
+    await expect(resting.locator('[data-action="delete"]')).toBeHidden();
+
+    // Pointing at the cell reveals everything; leaving quiets it again.
+    await resting.hover();
+    await expect(resting.locator('[data-action="delete"]')).toBeVisible();
+    await expect(resting.locator('[data-action="move-up"]')).toBeVisible();
+
+    // Selecting (click) keeps the set shown without the pointer.
+    await resting.locator('[data-editor]').click();
+    await page.mouse.move(0, 0);
+    await expect(resting).toHaveAttribute('data-selected', 'true');
+    await expect(resting.locator('[data-action="delete"]')).toBeVisible();
+  });
+
+  test('the ⋯ menu drives the same actions, in words', async ({ page }) => {
+    await openLab(page);
+    const before = await page.locator('.cell').count();
+    const cell = page.locator('.cell[data-cell-type="code"]').first();
+    await cell.locator('.cell-more').click();
+    const pop = page.locator('.cell .menu-pop:not([hidden])');
+    await expect(pop.locator('.menu-item', { hasText: 'Move up' })).toBeVisible();
+    await pop.locator('.menu-item', { hasText: 'Insert a cell below' }).click();
+    await expect(page.locator('.cell')).toHaveCount(before + 1);
+
+    // Toggles in the menu carry their state: open the bytecode panel,
+    // and the menu shows it checked while the button shows pressed.
+    await cell.locator('.cell-more').click();
+    await page.locator('.cell .menu-pop:not([hidden]) .menu-item', { hasText: 'Bytecode' }).click();
+    await expect(cell.locator('[data-bytecode]')).toBeVisible();
+    await expect(cell.locator('[data-action="bytecode"]')).toHaveAttribute('aria-pressed', 'true');
+    await cell.locator('.cell-more').click();
+    await expect(page.locator('.cell .menu-pop:not([hidden]) .menu-item', { hasText: 'Bytecode' }))
+      .toHaveAttribute('aria-checked', 'true');
+  });
+
+  test('an open bytecode panel survives a structural rebuild, populated', async ({ page }) => {
+    await openLab(page);
+    const cell = codeCell(page);
+    await cell.locator('[data-editor]').fill('return 1 + 1');
+    await cell.locator('[data-action="bytecode"]').click();
+    await expect(cell.locator('[data-bytecode]')).toHaveAttribute('data-state', 'ready');
+
+    // Any structural change rebuilds the cell list; the panel used to
+    // come back visible but empty, with its toggle desynced.
+    await viaControl(page, 'add-code');
+    await expect(codeCell(page).locator('[data-bytecode]')).toHaveAttribute('data-state', 'ready');
+    await expect(codeCell(page).locator('[data-bytecode] .bc-table')).toBeVisible();
+  });
+});
+
 test.describe('running the selected cell from anywhere', () => {
   test('Ctrl+Enter works with focus outside the editor', async ({ page }) => {
     await openLab(page);

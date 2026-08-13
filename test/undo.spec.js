@@ -67,6 +67,8 @@ test.describe('structural undo', () => {
     await viaControl(page, 'add-code');
     await page.locator('.cell').nth(1).locator('[data-editor]').fill('-- second');
 
+    // The quiet toolbar shows its full set on the cell under the pointer.
+    await page.locator('.cell').nth(0).hover();
     await page.locator('.cell').nth(0).locator('[data-action="move-down"]').click();
     await expect(page.locator('.cell').nth(0).locator('[data-editor]')).toHaveValue('-- second');
 

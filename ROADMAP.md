@@ -3029,3 +3029,35 @@ The mirror-refresh ⟳ and the masthead toggle have accessible names,
 three dialogs have their `aria-labelledby`, the drawer stopped claiming
 `role="menu"` it never honoured, and the diagram renderer's 3.4 MB is
 on its label rather than only in a tooltip touch screens never see.
+
+### The cell toolbar went quiet ✅ done
+
+Ten always-drawn buttons per cell were most of the page's visual noise,
+and on a phone they were measurably wider than the cell that held them —
+reachable only by panning the sheet sideways past the code. The resting
+toolbar is now **Run and ⋯**, dimmed as before. The full set appears for
+the cell you are on — current, hovered, or holding focus — so one cell
+always demonstrates what exists, and the keyboard is never locked out:
+focus reveals the buttons, and ⋯ itself is tabbable.
+
+The ⋯ menu rides the same dropdown machinery as the menubar and the
+split buttons, and it is not a duplicate of the buttons but the readable
+form of them: the buttons say ↑, it says "Move up"; it names only the
+type-switch direction that exists; Bytecode and Sandbox appear in it as
+checked toggles, and their buttons now wear `aria-pressed` to match. On
+a touch screen the quiet buttons never appear at all — hover does not
+exist there — and the ⋯ menu is the whole surface, at 44px a row.
+Read-only drops the structural entries the way it already dropped the
+buttons, with one extra `.cell` of specificity so the reveal rule
+cannot out-rank the hiding one and resurrect Delete.
+
+Two things this forced out of the shared machinery, both improvements
+on their own. `.menu-pop` is `position: fixed` now: a cell's menu lives
+inside the scrolling sheet, and an absolute menu was clipped at the
+sheet's edge — the part past it painted nothing and clicked the console
+underneath. And a menu that would run off the bottom of the viewport
+opens upward instead, because cell menus live at every height, unlike
+the toolbar's. En route the same rebuild-repopulation fix landed for
+per-cell panels: an open bytecode or sandbox panel used to come back
+from any structural re-render as a visible empty box with a desynced
+toggle; render() now reopens what was open, populated.

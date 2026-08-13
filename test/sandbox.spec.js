@@ -49,6 +49,8 @@ test.describe('the sandbox', () => {
     // built: cells render before the kernel has answered, and in the
     // worker path before the handshake has even happened.
     await expect(page.locator('body')).toHaveAttribute('data-instances', 'true');
+    // Quiet toolbar: the full set shows on the cell you are pointing at.
+    await codeCell(page).hover();
     await expect(codeCell(page).locator('[data-action="sandbox"]')).toBeVisible();
   });
 

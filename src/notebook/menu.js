@@ -91,14 +91,20 @@ export function attachDropdown(button, itemsFn, { onClose } = {}) {
     button.setAttribute('aria-expanded', 'true');
     // Under the button, left-aligned -- unless that runs off the right of
     // the viewport (the kernel split lives at the far edge), in which case
-    // right-aligned to the button instead.
+    // right-aligned to the button instead. The menu is position: fixed,
+    // so these are viewport coordinates with no offset-parent arithmetic.
     const anchor = button.getBoundingClientRect();
-    const host = menu.offsetParent?.getBoundingClientRect() ?? { left: 0, top: 0, right: 0 };
-    menu.style.left = `${anchor.left - host.left}px`;
-    menu.style.top = `${anchor.bottom - host.top + 2}px`;
-    const width = menu.getBoundingClientRect().width;
-    if (anchor.left + width > document_.defaultView.innerWidth - 8) {
-      menu.style.left = `${Math.max(0, anchor.right - host.left - width)}px`;
+    menu.style.left = `${anchor.left}px`;
+    menu.style.top = `${anchor.bottom + 2}px`;
+    const { width, height } = menu.getBoundingClientRect();
+    const view = document_.defaultView;
+    if (anchor.left + width > view.innerWidth - 8) {
+      menu.style.left = `${Math.max(0, anchor.right - width)}px`;
+    }
+    // A menu that would run off the bottom opens upward instead -- the
+    // cell ⋯ menus live at every height, unlike the toolbar's.
+    if (anchor.bottom + height > view.innerHeight - 8 && anchor.top - height > 8) {
+      menu.style.top = `${anchor.top - height - 2}px`;
     }
     outside = (event) => {
       if (!menu.contains(event.target) && event.target !== button) close();

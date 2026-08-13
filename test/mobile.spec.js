@@ -94,7 +94,10 @@ test.describe('on a phone', () => {
     await openLab(page);
     const cell = codeCell(page);
     await cell.locator('[data-editor]').fill('print("hello")');
-    await cell.locator('[data-action="bytecode"]').tap();
+    // On touch the per-cell buttons stay quiet; every action rides the
+    // ⋯ menu, with a word for a label instead of a glyph.
+    await cell.locator('.cell-more').tap();
+    await page.locator('.menu-pop:not([hidden]) .menu-item', { hasText: 'Bytecode' }).tap();
     await expect(cell.locator('[data-bytecode]')).toBeVisible();
     // Wide by nature -- a disassembly table and a hex dump. Whatever it
     // does, it must not push the document sideways.

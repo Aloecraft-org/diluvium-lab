@@ -336,7 +336,11 @@
   }
   .menu-top:hover, .menu-top[aria-expanded="true"] { background: var(--sunk); }
   .menu-pop {
-    position: absolute; z-index: 30; min-width: 13rem;
+    /* Fixed, not absolute: cell ⋯ menus live inside the scrolling sheet,
+       and an absolute menu is clipped at the sheet's edge -- the part
+       past it painted nothing and clicked the console. Viewport
+       coordinates escape every overflow. */
+    position: fixed; z-index: 30; min-width: 13rem;
     padding: .3rem; border: 1px solid var(--edge); border-radius: 8px;
     /* The same shadow recipe as the completion popup: keyed off
        CanvasText so it exists in dark mode too, where a black shadow on
@@ -384,12 +388,15 @@
   /* --- read-only: the document cannot change, so the affordances that
          would change it go away. Running is still allowed -- read-only is
          about the file, and Colab reads the same way. --- */
-  body[data-read-only="true"] .cell-tools [data-action="to-code"],
-  body[data-read-only="true"] .cell-tools [data-action="to-markdown"],
-  body[data-read-only="true"] .cell-tools [data-action="move-up"],
-  body[data-read-only="true"] .cell-tools [data-action="move-down"],
-  body[data-read-only="true"] .cell-tools [data-action="insert-below"],
-  body[data-read-only="true"] .cell-tools [data-action="delete"],
+  /* One extra .cell of specificity: the quiet-toolbar reveal
+     (.cell[data-selected] .cell-tools [data-quiet]) must not out-rank
+     read-only and resurrect the editing buttons. */
+  body[data-read-only="true"] .cell .cell-tools [data-action="to-code"],
+  body[data-read-only="true"] .cell .cell-tools [data-action="to-markdown"],
+  body[data-read-only="true"] .cell .cell-tools [data-action="move-up"],
+  body[data-read-only="true"] .cell .cell-tools [data-action="move-down"],
+  body[data-read-only="true"] .cell .cell-tools [data-action="insert-below"],
+  body[data-read-only="true"] .cell .cell-tools [data-action="delete"],
   body[data-read-only="true"] [data-toolbar="add-cell"],
   body[data-read-only="true"] [data-split="add"] { display: none; }
   /* Folding writes metadata.jupyter.source_hidden -- an edit, so it rests
@@ -466,16 +473,16 @@
   }
   .toolbar .title { font-weight: 650; margin-right: .5rem; }
   .toolbar .spacer { flex: 1; }
-  .toolbar button, .cell-tools button, .show-all {
+  .toolbar button, .cell-tools > button, .show-all {
     font: inherit; font-size: .85rem; padding: .25rem .55rem;
     border: 1px solid var(--edge); border-radius: 6px;
     background: transparent; color: inherit; cursor: pointer;
   }
-  .toolbar button:hover, .cell-tools button:hover, .show-all:hover { background: var(--sunk); }
+  .toolbar button:hover, .cell-tools > button:hover, .show-all:hover { background: var(--sunk); }
   /* A control that cannot be pressed says so -- and does not light up
      under the pointer as if it could. */
-  .toolbar button:disabled, .cell-tools button:disabled { opacity: .45; cursor: default; }
-  .toolbar button:disabled:hover, .cell-tools button:disabled:hover { background: transparent; }
+  .toolbar button:disabled, .cell-tools > button:disabled { opacity: .45; cursor: default; }
+  .toolbar button:disabled:hover, .cell-tools > button:disabled:hover { background: transparent; }
   .sep { width: 1px; height: 1.4rem; background: var(--edge); margin: 0 .25rem; }
   [data-filename] { font-family: var(--mono); font-size: .82rem; color: var(--quiet); }
 
@@ -577,11 +584,27 @@
   }
   .fold-preview:hover { color: inherit; border-style: solid; }
 
-  /* Dimmed rather than hidden: a hover-only toolbar does not exist on a
-     touch screen, and cannot be reached by keyboard at all. */
+  /* The resting toolbar is Run and ⋯, dimmed. The rest is data-quiet:
+     shown when the cell is current, hovered, or holds focus -- so the
+     current cell always demonstrates the full set -- and never shown on
+     a touch screen, where hover does not exist and ten 44px buttons are
+     wider than the cell; there the ⋯ menu, which names every action in
+     words, is the whole surface. The keyboard is never locked out:
+     focus-within reveals the buttons, and ⋯ itself is tabbable. */
+  .cell { position: relative; }   /* anchors the ⋯ menu to the cell */
   .cell-tools { display: flex; gap: .25rem; margin-left: auto; opacity: .3; transition: opacity .12s; }
   .cell:hover .cell-tools, .cell:focus-within .cell-tools,
   .cell[data-selected="true"] .cell-tools { opacity: 1; }
+  .cell-tools [data-quiet] { display: none; }
+  @media (pointer: fine) {
+    .cell:hover .cell-tools [data-quiet],
+    .cell:focus-within .cell-tools [data-quiet],
+    .cell[data-selected="true"] .cell-tools [data-quiet] { display: revert; }
+  }
+  /* An open panel's toggle points the way it is: pressed. */
+  .cell-tools [aria-pressed="true"] { border-color: var(--accent); background: var(--sunk); }
+  /* Read-only leaves a markdown cell's ⋯ with nothing to hold. */
+  body[data-read-only="true"] .cell[data-cell-type="markdown"] .cell-more { display: none; }
 
   /* Every property here affects where a glyph lands, and the highlight
      overlay must land on exactly the same pixels as the textarea. Change

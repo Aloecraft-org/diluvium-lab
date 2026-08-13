@@ -7,6 +7,7 @@
 // keystroke would throw away the caret.
 
 import { el } from './dom.js';
+import { attachDropdown } from './menu.js';
 import { renderMarkdown } from './markdown.js';
 import { outputText, bundleOf } from './ipynb.js';
 import { renderBundle } from './display.js';
@@ -280,6 +281,20 @@ export class NotebookView {
     this._busyTimers.clear();
     this.root.replaceChildren(...this.model.cells.map((cell, i) => this._renderCell(cell, i)));
 
+    // Open panels come back *populated*, not merely unhidden: a
+    // structural rebuild used to leave an open bytecode or sandbox panel
+    // as an empty box whose toggle then needed two clicks to recover.
+    // A set entry whose cell was deleted is dropped rather than kept as
+    // a phantom.
+    for (const cellId of [...this.showingBytecode]) {
+      if (this.model.get(cellId)) { this._openBytecode(cellId); this._applyToggleState(cellId); }
+      else this.showingBytecode.delete(cellId);
+    }
+    for (const cellId of [...this.showingSandbox]) {
+      if (this.model.get(cellId)) { this._openSandbox(cellId); this._applyToggleState(cellId); }
+      else this.showingSandbox.delete(cellId);
+    }
+
     if (focusedCell) {
       const editor = this.cellNode(focusedCell)?.querySelector('[data-editor]');
       if (editor && !editor.hidden) {
@@ -383,24 +398,43 @@ export class NotebookView {
     // completion), and _onInput drops anything that still slips through.
     editor.readOnly = this.handlers.readOnly?.() === true;
 
+    // Run and ⋯ are the resting toolbar; everything between them is
+    // `data-quiet` -- shown when the cell is current, hovered, or holds
+    // focus, and never on a touch screen, where the ⋯ menu (with a word
+    // for every action) is the whole surface. Ten always-on buttons per
+    // cell were most of the page's noise, and on a phone they were wider
+    // than the cell itself.
+    const quiet = (node) => { if (node) node.dataset.quiet = 'true'; return node; };
+    const more = el('button', {
+      type: 'button', class: 'cell-more',
+      title: 'More cell actions', 'aria-label': 'More cell actions',
+    }, ['⋯']);
     const tools = el('div', { class: 'cell-tools' }, [
       isCode ? button('run', 'Run', 'Run this cell (Ctrl+Enter)') : button('run', 'Render', 'Render (Ctrl+Enter)'),
-      isCode ? button('bytecode', 'Bytecode', 'Compile this cell and read the bytecode — nothing runs') : null,
+      quiet(isCode ? button('bytecode', 'Bytecode', 'Compile this cell and read the bytecode — nothing runs') : null),
       // Always built, hidden by CSS when the running build has no `dv_`
       // ABI. Deciding here instead looked right and was not: cells render
       // before the kernel has answered what it can do -- and in the worker
       // path before the handshake has even happened -- so the button was
       // absent on every first paint. Hiding it from a body attribute also
       // means switching runtimes updates it without a re-render.
-      isCode ? button('sandbox', 'Sandbox', 'Run this cell as an isolated instance with an instruction budget') : null,
-      isCode ? button('fullscreen', '⛶', 'Show this cell\'s output full screen') : null,
-      button('to-code', 'Code', 'Turn into a code cell'),
-      button('to-markdown', 'Markdown', 'Turn into a markdown cell'),
-      button('move-up', '↑', 'Move up'),
-      button('move-down', '↓', 'Move down'),
-      button('insert-below', '+', 'Insert a cell below'),
-      button('delete', '✕', 'Delete this cell'),
+      quiet(isCode ? button('sandbox', 'Sandbox', 'Run this cell as an isolated instance with an instruction budget') : null),
+      quiet(isCode ? button('fullscreen', '⛶', 'Show this cell\'s output full screen') : null),
+      quiet(button('to-code', 'Code', 'Turn into a code cell')),
+      quiet(button('to-markdown', 'Markdown', 'Turn into a markdown cell')),
+      quiet(button('move-up', '↑', 'Move up')),
+      quiet(button('move-down', '↓', 'Move down')),
+      quiet(button('insert-below', '+', 'Insert a cell below')),
+      quiet(button('delete', '✕', 'Delete this cell')),
+      more,
     ]);
+    attachDropdown(more, () => this._moreItems(cell));
+    if (isCode) {
+      tools.querySelector('[data-action="bytecode"]')
+        ?.setAttribute('aria-pressed', String(this.showingBytecode.has(cell.id)));
+      tools.querySelector('[data-action="sandbox"]')
+        ?.setAttribute('aria-pressed', String(this.showingSandbox.has(cell.id)));
+    }
 
     // A fold toggle in the gutter, next to the prompt where the eye already
     // is. Only code cells fold -- a markdown cell folds by rendering.
@@ -491,7 +525,11 @@ export class NotebookView {
       return;
     }
     if (!cellId) return;
+    this._act(action, cellId);
+  }
 
+  /** One vocabulary of cell actions, shared by the buttons and the ⋯ menu. */
+  _act(action, cellId) {
     switch (action) {
       case 'run': this.handlers.onRun?.(cellId); break;
       case 'fold': this.model.setFolded(cellId, !this.model.isFolded(cellId)); break;
@@ -506,6 +544,50 @@ export class NotebookView {
       case 'to-markdown': this._toType(cellId, 'markdown'); break;
       default: break;
     }
+  }
+
+  /**
+   * The ⋯ menu: every cell action with a word for a label, built fresh
+   * at open like every other menu. On a touch screen this is the only
+   * route to the quiet actions; everywhere it is the readable one --
+   * the buttons say ↑, this says "Move up". Read-only drops the
+   * structural entries the same way the buttons vanish, and the type
+   * switch names only the direction that exists.
+   */
+  _moreItems(cell) {
+    const readOnly = this.handlers.readOnly?.() === true;
+    const isCode = cell.cell_type === 'code';
+    const instances = this.root.ownerDocument.body.dataset.instances === 'true';
+    const items = [];
+    if (isCode) {
+      items.push({
+        label: 'Bytecode', title: 'Compile this cell and read the bytecode — nothing runs',
+        checked: () => this.showingBytecode.has(cell.id),
+        run: () => this._act('bytecode', cell.id),
+      });
+      if (instances) {
+        items.push({
+          label: 'Sandbox', title: 'Run this cell as an isolated instance with a budget',
+          checked: () => this.showingSandbox.has(cell.id),
+          run: () => this._act('sandbox', cell.id),
+        });
+      }
+      items.push({ label: 'Output full screen', run: () => this._act('fullscreen', cell.id) });
+    }
+    if (!readOnly) {
+      if (items.length) items.push({ sep: true });
+      items.push(
+        { label: isCode ? 'Turn into markdown' : 'Turn into code',
+          run: () => this._act(isCode ? 'to-markdown' : 'to-code', cell.id) },
+        { sep: true },
+        { label: 'Move up', run: () => this._act('move-up', cell.id) },
+        { label: 'Move down', run: () => this._act('move-down', cell.id) },
+        { label: 'Insert a cell below', run: () => this._act('insert-below', cell.id) },
+        { sep: true },
+        { label: 'Delete cell', run: () => this._act('delete', cell.id) },
+      );
+    }
+    return items;
   }
 
   /**
@@ -525,6 +607,17 @@ export class NotebookView {
     outputs.requestFullscreen?.().catch(() => {});
   }
 
+  /** The Bytecode/Sandbox buttons are toggles, so they say which way they
+      currently point -- both here and when a re-render rebuilds them. */
+  _applyToggleState(cellId) {
+    const node = this.cellNode(cellId);
+    if (!node) return;
+    node.querySelector('[data-action="bytecode"]')
+      ?.setAttribute('aria-pressed', String(this.showingBytecode.has(cellId)));
+    node.querySelector('[data-action="sandbox"]')
+      ?.setAttribute('aria-pressed', String(this.showingSandbox.has(cellId)));
+  }
+
   /** Show or hide the bytecode panel, compiling the first time it opens. */
   toggleBytecode(cellId) {
     const panel = this.cellNode(cellId)?.querySelector('[data-bytecode]');
@@ -534,10 +627,18 @@ export class NotebookView {
       this.bytecodeViews.delete(cellId);
       panel.hidden = true;
       panel.replaceChildren();
+      this._applyToggleState(cellId);
       return;
     }
     this.showingBytecode.add(cellId);
     panel.hidden = false;
+    this._applyToggleState(cellId);
+    this._openBytecode(cellId);
+  }
+
+  _openBytecode(cellId) {
+    const panel = this.cellNode(cellId)?.querySelector('[data-bytecode]');
+    if (!panel) return;
     const view = new BytecodeView(panel, () => this.handlers.compile(this.model.get(cellId)?.source ?? ''));
     this.bytecodeViews.set(cellId, view);
     view.refreshFromCell();
@@ -559,10 +660,18 @@ export class NotebookView {
       this.sandboxViews.delete(cellId);
       panel.hidden = true;
       panel.replaceChildren();
+      this._applyToggleState(cellId);
       return;
     }
     this.showingSandbox.add(cellId);
     panel.hidden = false;
+    this._applyToggleState(cellId);
+    this._openSandbox(cellId);
+  }
+
+  _openSandbox(cellId) {
+    const panel = this.cellNode(cellId)?.querySelector('[data-sandbox]');
+    if (!panel) return;
     this.sandboxViews.set(cellId, new SandboxView(
       panel,
       (code, options) => this.handlers.runInstance(code, options),
