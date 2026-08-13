@@ -342,8 +342,17 @@ from one instance to another would assert a route the runtime does not
 have. A → host → B is two edges, and is what actually happened.
 
 The same graph is offered as Mermaid text under the picture, for a PR or a
-design doc. It is text and not a rendering because rendering it would mean
-vendoring about a megabyte, and everything this page uses is vendored.
+design doc — and, if you ask for it, drawn.
+
+**View → Diagram renderer…** downloads Mermaid once (3.4 MB), checks it
+against a checksum pinned in `src/notebook/mermaid.js`, keeps it in
+IndexedDB and draws the topology with it from then on. It is the only
+thing this page fetches that is not a Diluvium release, which is why it is
+a menu item rather than something that happens on its own — see the
+amended constraint in `CLAUDE.md`. Nothing else changes if you never click
+it: the Lab draws its own SVG and emits the text either way, and the
+rendered diagram appears *beside* the hand-drawn one rather than replacing
+it, because the one that needs no download is the one that always works.
 
 The roster below fills in as instances come to exist:
 

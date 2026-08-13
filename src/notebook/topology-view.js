@@ -14,6 +14,7 @@
 
 import { el } from './dom.js';
 import { HOST_NODE, mermaidOf, layoutOf } from '../kernel/topology.js';
+import { mermaidLoaded, renderMermaid } from './mermaid.js';
 
 const SVG = 'http://www.w3.org/2000/svg';
 
@@ -66,10 +67,31 @@ export function topologySection(graph) {
   section.append(diagram(graph));
 
   const text = mermaidOf(graph);
-  section.append(el('details', { class: 'swarm-mermaid' }, [
-    el('summary', {}, ['As Mermaid, for somewhere that renders it']),
+  const details = el('details', { class: 'swarm-mermaid' }, [
+    el('summary', {}, [mermaidLoaded()
+      ? 'The same graph, drawn by Mermaid'
+      : 'As Mermaid, for somewhere that renders it']),
     el('pre', { 'data-swarm-mermaid': '' }, [text]),
-  ]));
+  ]);
+  section.append(details);
+
+  // Drawn by Mermaid *as well as* the SVG above, not instead of it. The
+  // hand-drawn one always works and costs nothing; this one is here
+  // because Mermaid lays out a graph better than eighty lines of
+  // arithmetic can, and because seeing the text rendered is how you find
+  // out the text is right.
+  //
+  // Asynchronous, and the panel's render is not, so the node is appended
+  // when it arrives. A failure leaves the text, which is the thing that
+  // was here before a renderer existed.
+  if (mermaidLoaded()) {
+    const slot = el('div', { class: 'swarm-mermaid-drawn', 'data-swarm-mermaid-drawn': '' });
+    details.append(slot);
+    renderMermaid(text).then(
+      (svg) => { slot.replaceChildren(svg); },
+      (err) => { slot.replaceChildren(el('p', { class: 'muted' }, [`Mermaid could not draw this: ${err.message}`])); },
+    );
+  }
   return section;
 }
 

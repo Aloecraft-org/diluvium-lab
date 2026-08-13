@@ -2806,3 +2806,70 @@ among this build's exported functions.** `doc/Lab.md` §1a predicted the
 second; the first is the same class of gap. So the parameter count is
 still counted out of blanked text and the read/write split is still by
 first keyword, and both say so where they are written.
+
+### Mermaid, fetched once and kept ✅ done
+
+**This amends a hard constraint, and that is why it is written down twice.**
+`CLAUDE.md` said the only network calls are the ones that fetch Diluvium
+releases. There is now a second: **View → Diagram renderer…** downloads
+Mermaid. The constraint file carries the amendment beside the rule, because
+a rule with an exception recorded somewhere else is a rule people stop
+believing.
+
+Everything the constraint was protecting survives. Nothing happens at load;
+there is exactly one path to it and it is a menu item; the bytes are
+checked against a pinned sha256 before they are run; IndexedDB means it
+happens once. A Lab with no network still runs cells, still draws its own
+topology SVG, and still emits Mermaid *text*. The renderer only turns that
+text into a picture inside the page.
+
+**Two things were measured before any of it was written**, and both decided
+the design:
+
+- `dist/mermaid.min.js` is an esbuild **IIFE with no dynamic imports and no
+  chunk references**, so it runs from a Blob URL. The ESM build splits into
+  44 chunks loaded by relative path, which resolve against the blob and
+  fail. Picking the wrong one would have looked fine until the first
+  diagram type that lazy-loads.
+- It renders our topology text. Not "mermaid renders flowcharts" — the
+  actual string `mermaidOf` produces, through the actual loader, into an
+  SVG with the right nodes in it.
+
+**Why not vendored:** 3.4 MB, three times the kernel, in every clone and
+nearly tripling `dist/diluvium-lab.html` — a file whose whole purpose is
+being small enough to email — to carry a renderer most sessions never open.
+
+**The checksum is honest about what it is.** It was computed from the npm
+tarball, which is the artifact jsDelivr serves, on a network that could not
+reach jsDelivr to confirm it. If they disagree the download is refused with
+both digests in the message and the pin is a one-line fix. That is the safe
+direction to be wrong in, and the tests say so rather than implying the
+pin was verified end to end.
+
+The tests intercept the CDN the way `versions.spec.js` intercepts the
+runtime mirror, and serve a stand-in bundle shaped like mermaid's — same
+global, same two methods. The digest is a *parameter* of `loadMermaid`
+rather than a constant it reads, so a test can say what to expect without
+the verification having any way to be switched off. One further test runs
+only when `scratch/mermaid.min.js` exists: it asserts the pinned digest is
+that file's and that real Mermaid draws our graph. It skips on CI, and
+says so, rather than being quietly absent.
+
+**Markup never becomes HTML.** Mermaid returns SVG as a string, and this
+page has a standing rule that nothing reaches the DOM that way. So it is
+parsed as `image/svg+xml` — a document, not an `innerHTML` assignment —
+then scrubbed of `script`, `foreignObject`, `use`, `on*` handlers and any
+link that leaves the document, and adopted. `htmlLabels: false` keeps
+labels as SVG `<text>` rather than HTML in a `foreignObject`, which is a
+much smaller thing to have to trust. The input today is the Lab's own
+generated text, so this is defence in depth; it is written as though it
+were not, because rendering fences out of a downloaded notebook is the
+obvious next step and a notebook is untrusted input.
+
+Drawn *beside* the hand-drawn SVG rather than replacing it. The one that
+needs no download is the one that always works.
+
+And one bug the rendered picture caught that the drawing had already had
+fixed: `mermaidOf` still labelled the root "1 root · root", because `start`
+pre-aliases the root to `root` and the role was appended anyway. Same fix,
+in the second place it was needed.

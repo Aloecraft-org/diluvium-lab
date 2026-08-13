@@ -27,6 +27,18 @@ a commit.
 - **No CDN, no external requests at load.** Everything vendored. The only
   network calls are the ones that fetch Diluvium releases, and those are
   explicit and user-initiated.
+
+  *Amended for the diagram renderer, deliberately.* There is now a second
+  kind of call: **View → Diagram renderer…** fetches Mermaid once. It keeps
+  every property the constraint was protecting — nothing at load, nothing
+  automatic, one menu item and no other path to it, a checksum pinned in
+  `src/notebook/mermaid.js` and verified before the bytes are run, and
+  IndexedDB so it happens once. What it does not keep is "vendored", and
+  that is the trade: `mermaid.min.js` is 3.4 MB, three times the kernel, in
+  every clone and nearly tripling the single-file build to carry a renderer
+  most sessions never open. A Lab with no network still runs cells, draws
+  its own topology SVG and emits Mermaid *text*; the renderer only makes
+  that text into a picture in the page. See ROADMAP.
 - **`.ipynb` is the storage format.** Not a bespoke one.
 - **Kernel messages are Jupyter-shaped**: `execute_request` /
   `execute_reply`, `stream`, `error`, `status`, `complete_request`,

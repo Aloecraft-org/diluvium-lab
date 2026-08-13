@@ -113,7 +113,10 @@ test.describe('the Mermaid it emits', () => {
     const text = await page.evaluate((r) => window.lab.mermaidOf(window.lab.topologyOf(r)), REPORT);
     expect(text.split('\n')[0]).toBe('flowchart TD');
     for (const id of ['i1', 'i2', 'i3', 'i4', 'host']) expect(text).toContain(id);
-    expect(text).toContain('1 root · root · parked');
+    // Named once, not twice: the root's alias *is* `root`, so the role
+    // adds nothing and is left off.
+    expect(text).toContain('1 root · parked');
+    expect(text).not.toContain('root · root');
     expect(text).toContain('2 · gone: exited');
     expect(text).toContain('|"log ×2"|');
     // A declared route with no traffic is dotted, and the legend says so

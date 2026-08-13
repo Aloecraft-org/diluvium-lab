@@ -116,8 +116,27 @@ export async function getRuntime(key) {
   return (await withDb((db) => transact(db, RUNTIME_STORE, 'readonly', (s) => s.get(key)))) ?? null;
 }
 
+/**
+ * A cached third-party asset, keyed by name and version.
+ *
+ * Same store as the runtimes because it is the same kind of thing -- large
+ * verified bytes fetched once and kept -- and a second store would be a
+ * schema migration for no gain. Prefixed so the two never collide, and so
+ * `listRuntimeKeys` still means what it says.
+ */
+export function putAsset(key, record) {
+  return withDb((db) => transact(db, RUNTIME_STORE, 'readwrite',
+    (s) => (record === null ? s.delete(`asset:${key}`) : s.put(record, `asset:${key}`))));
+}
+
+export async function getAsset(key) {
+  return (await withDb((db) => transact(db, RUNTIME_STORE, 'readonly',
+    (s) => s.get(`asset:${key}`)))) ?? null;
+}
+
 export async function listRuntimeKeys() {
-  return (await withDb((db) => transact(db, RUNTIME_STORE, 'readonly', (s) => s.getAllKeys()))) ?? [];
+  const keys = (await withDb((db) => transact(db, RUNTIME_STORE, 'readonly', (s) => s.getAllKeys()))) ?? [];
+  return keys.filter((k) => !String(k).startsWith('asset:'));
 }
 
 /**

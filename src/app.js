@@ -18,6 +18,9 @@ import { ToolPanel } from './notebook/panel.js';
 import { renderOutline } from './notebook/outline.js';
 import { renderSwarm } from './notebook/swarm-view.js';
 import { looksLikeSqlite } from './kernel/sqlite.js';
+import {
+  loadMermaid, mermaidLoaded, mermaidCached, MERMAID_VERSION, MERMAID_MB,
+} from './notebook/mermaid.js';
 import { SWARM_PROGRAMS, ALL_PROGRAMS, programById } from './notebook/swarm-programs.js';
 import { renderMenuBar, renderDrawer, attachDropdown } from './notebook/menu.js';
 import { fetchNotebook, hostOf, describeOpenError, normaliseNotebookUrl } from './notebook/remote.js';
@@ -699,7 +702,30 @@ export class App {
   }
 
   /**
-   * A program's configuration, with an uploaded database folded in.
+   * Fetch, verify and start the Mermaid renderer.
+   *
+   * User-initiated by construction: it is reached from a menu item and
+   * from nowhere else, which is what keeps "no external requests at load"
+   * true after the amendment that allowed this one.
+   */
+  async loadDiagramRenderer(options = {}) {
+    if (mermaidLoaded()) return;
+    const cached = await mermaidCached().catch(() => false);
+    this._toast(cached ? 'Starting the diagram renderer\u2026'
+      : `Downloading Mermaid ${MERMAID_VERSION} (~${MERMAID_MB} MB)\u2026`);
+    try {
+      await loadMermaid({ ...options, onProgress: (stage) => this._toast(stage) });
+      this._toast(`Mermaid ${MERMAID_VERSION} is ready`, 'good');
+      // The panel decides per render whether a renderer exists, so this is
+      // all it takes for the diagram to become a Mermaid one.
+      this.panel.refresh();
+    } catch (err) {
+      this._toast(err.message, 'error');
+    }
+  }
+
+  /**
+   * A program\u2019s configuration, with an uploaded database folded in.
    *
    * Kept out of `swarm-programs.js` because a sample program's config is a
    * *description* -- structured-cloneable data that crosses to the worker
@@ -1371,6 +1397,19 @@ export class App {
           checked: () => this.panel.active === tool.id,
           run: () => this.panel.toggle(tool.id),
         })),
+        { sep: true },
+        // The one thing in this page that fetches something which is not a
+        // Diluvium release, so it is a menu item rather than something
+        // that happens on its own. Checked when loaded, and the label says
+        // what a click costs the first time.
+        { label: mermaidLoaded() ? `Diagram renderer ${MERMAID_VERSION}` : 'Diagram renderer\u2026',
+          toolbar: 'load-mermaid',
+          title: mermaidLoaded()
+            ? 'Loaded. Diagrams in the Instances panel are drawn by Mermaid.'
+            : `Downloads Mermaid ${MERMAID_VERSION} (~${MERMAID_MB} MB) once, verifies it and keeps it`,
+          checked: () => mermaidLoaded(),
+          enabled: () => !mermaidLoaded(),
+          run: () => this.loadDiagramRenderer() },
       ] },
       { label: 'Help', items: () => [
         { label: 'Diluvium documentation', toolbar: 'docs',
