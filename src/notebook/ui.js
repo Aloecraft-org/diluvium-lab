@@ -257,6 +257,12 @@ export class NotebookView {
 
   cellNode(cellId) { return this.root.querySelector(`[data-cell-id="${cellId}"]`); }
 
+  /** Put the caret in a cell's editor -- the first cell's by default. */
+  focusEditor(cellId = this.model.cells[0]?.id) {
+    const editor = cellId ? this.cellNode(cellId)?.querySelector('[data-editor]') : null;
+    if (editor && !editor.hidden) editor.focus();
+  }
+
   /** Repaint every editor -- after a kernel swap changes the keyword set. */
   repaintHighlights() {
     for (const editor of this.editors.values()) editor.paint();

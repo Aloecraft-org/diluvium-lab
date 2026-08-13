@@ -180,6 +180,10 @@ async function run(bytes) {
 }
 
 function prefersDark() {
+  // A theme forced from the View menu outranks the OS -- Mermaid asking
+  // only matchMedia drew light diagrams onto a page pinned dark.
+  const forced = globalThis.document?.documentElement?.dataset?.theme;
+  if (forced === 'dark' || forced === 'light') return forced === 'dark';
   try {
     return !!globalThis.matchMedia?.('(prefers-color-scheme: dark)')?.matches;
   } catch {

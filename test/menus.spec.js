@@ -313,6 +313,46 @@ test.describe('the launcher', () => {
     await expect(about).toBeHidden();
   });
 
+  test('Start here wears the accent, not the browser default', async ({ page }) => {
+    await openLab(page);
+    const style = await page.locator('.start-here').evaluate((node) => {
+      const s = getComputedStyle(node);
+      return { radius: s.borderRadius, cursor: s.cursor };
+    });
+    // The old selector (.toolbar .start-here) never matched -- the button
+    // lives in the menubar -- so it rendered as a raw UA button.
+    expect(style.radius).toBe('6px');
+    expect(style.cursor).toBe('pointer');
+  });
+
+  test('New notebook puts the caret in the blank cell', async ({ page }) => {
+    await openLab(page);
+    await page.locator('[data-home]').click();
+    await page.locator('[data-launcher-new]').click();
+    // The launcher says "start typing in a blank one" -- so typing must
+    // land somewhere, not on the Home button the dialog refocuses.
+    await page.keyboard.type('print("typed straight in")');
+    await expect(page.locator('.cell [data-editor]').first())
+      .toHaveValue('print("typed straight in")');
+  });
+
+  test('opening over unsaved work stashes it in recents first', async ({ page }) => {
+    await openLab(page);
+    const editor = page.locator('.cell[data-cell-type="code"] [data-editor]').first();
+    await editor.fill('rescue_me = 42');
+    await page.locator('[data-home]').click();
+    await page.locator('[data-launcher-examples] .example-entry').first().click();
+    await expect(page.locator('[data-nb-title]')).toHaveText('Hello, Diluvium');
+    // The replaced notebook's only copy was the autosave slot the example
+    // just took over; the stash is what keeps it reachable.
+    const stashed = await page.evaluate(async () => {
+      const { listRecent } = await import('./src/notebook/storage.js');
+      return (await listRecent()).some((entry) =>
+        entry.origin === 'replaced' && (entry.ipynb ?? '').includes('rescue_me'));
+    });
+    expect(stashed).toBe(true);
+  });
+
   test('a true first visit gets the launcher unprompted', async ({ page }) => {
     // No openLab: a fresh context with an empty database IS the first
     // visit, and nothing here dismisses anything.

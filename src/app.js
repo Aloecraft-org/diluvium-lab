@@ -1037,7 +1037,8 @@ export class App {
    * the reason a notebook does not open.
    */
   async _open(text, { name, origin, url = null }) {
-    const model = fromIpynb(text);
+    const model = fromIpynb(text);   // parse first: a bad file replaces nothing
+    await this._stashReplaced();     // serialised, so the two writes cannot race
     this.filename = name || 'notebook.ipynb';
     this._setModel(model);
     this._scheduleAutosave();
@@ -1049,6 +1050,43 @@ export class App {
       });
     } catch { /* a full or blocked database is not a failure to open */ }
     return model;
+  }
+
+  /**
+   * Opening over a notebook must never be how work disappears.
+   *
+   * The autosave slot is one key, so adopting a new model overwrites the
+   * old one's only copy -- and a notebook made with New was in no other
+   * store at all. Anything about to be replaced that is not already
+   * recoverable goes into recents first: a snapshot, not a nag, and
+   * every replacement is one File → Recent click from recovery.
+   *
+   * "Not already recoverable" is judged on content, not on a dirty flag:
+   * a flag misses the restored autosave nobody touched *this* session,
+   * which is still the only copy of yesterday's typing. Skipped when the
+   * text matches the pristine seed notebook, and when an identical copy
+   * is already in recents -- otherwise every hop between examples would
+   * mint a phantom entry. The snapshot is captured synchronously; only
+   * the writes wait.
+   */
+  _stashReplaced() {
+    const outgoing = this.model;
+    if (!outgoing?.cells?.some((cell) => cell.source.trim() !== '')) return Promise.resolve();
+    const sources = JSON.stringify(outgoing.cells.map((cell) => cell.source));
+    if (sources === JSON.stringify(fromIpynb(DEFAULT_NOTEBOOK).cells.map((cell) => cell.source))) {
+      return Promise.resolve();
+    }
+    const snapshot = {
+      name: this.filename, title: outgoing.title,
+      origin: 'replaced', url: null, ipynb: toIpynb(outgoing),
+    };
+    const json = JSON.stringify(snapshot.ipynb);
+    return listRecent()
+      .then((entries) => {
+        if (entries.some((entry) => entry.ipynb === json)) return null;
+        return rememberRecent(snapshot);
+      })
+      .catch(() => { /* recents are a convenience */ });
   }
 
   /**
@@ -1311,7 +1349,23 @@ export class App {
 
     this.document.querySelector('[data-recent-close]')
       ?.addEventListener('click', () => this.document.querySelector('[data-recent]')?.close());
-    this.document.querySelector('[data-recent-clear]')?.addEventListener('click', async () => {
+    // Armed on the first click, fires on the second. Forgetting every
+    // remembered notebook -- including any replacement stashes -- is the
+    // one click in this dialog that cannot be taken back, and it sits
+    // beside Close; a misclick should cost a second click, not the list.
+    const recentClear = this.document.querySelector('[data-recent-clear]');
+    recentClear?.addEventListener('click', async () => {
+      if (recentClear.dataset.armed !== 'true') {
+        recentClear.dataset.armed = 'true';
+        recentClear.textContent = 'Forget all — sure?';
+        setTimeout(() => {
+          recentClear.dataset.armed = '';
+          recentClear.textContent = 'Forget all';
+        }, 4000);
+        return;
+      }
+      recentClear.dataset.armed = '';
+      recentClear.textContent = 'Forget all';
       try { await clearRecent(); } catch { /* nothing to forget */ }
       this.document.querySelector('[data-recent]')?.close();
       this._toast('Recent notebooks forgotten.');
@@ -1325,7 +1379,15 @@ export class App {
     // which is how a pasted URL is actually submitted.
     this.document.querySelector('[data-open-url-form]')?.addEventListener('submit', () => {
       const value = urlInput?.value ?? '';
-      if (value.trim()) this.openUrl(value);
+      if (!value.trim()) return;
+      this.openUrl(value).then((opened) => {
+        // A failed fetch must not eat the URL. The dialog reopens with
+        // the attempt still in it, so a typo is a fix, not a retype --
+        // the toast above it says what went wrong.
+        if (opened || !urlDialog) return;
+        if (urlInput) urlInput.value = value;
+        urlDialog.showModal();
+      });
     });
 
     const fileInput = this.document.querySelector('[data-file-input]');
@@ -1416,7 +1478,12 @@ export class App {
         // Diluvium release, so it is a menu item rather than something
         // that happens on its own. Checked when loaded, and the label says
         // what a click costs the first time.
-        { label: mermaidLoaded() ? `Diagram renderer ${MERMAID_VERSION}` : 'Diagram renderer\u2026',
+        // The price on the label, not only in a hover tooltip -- touch
+        // screens and the drawer never see a tooltip, and 3.4 MB should
+        // not be a surprise.
+        { label: mermaidLoaded()
+            ? `Diagram renderer ${MERMAID_VERSION}`
+            : `Diagram renderer\u2026 (${MERMAID_MB} MB, once)`,
           toolbar: 'load-mermaid',
           title: mermaidLoaded()
             ? 'Loaded. Diagrams in the Instances panel are drawn by Mermaid.'
@@ -1492,6 +1559,7 @@ export class App {
       mastToggle.setAttribute('aria-expanded', String(!hidden));
       mastToggle.textContent = hidden ? '˅' : '˄';
       mastToggle.title = hidden ? 'Show the header row above' : 'Hide the header row above';
+      mastToggle.setAttribute('aria-label', mastToggle.title);
       savePref('masthead-hidden', hidden).catch(() => {});
     });
 
@@ -1519,6 +1587,7 @@ export class App {
     // the bounding box tells them apart.
     for (const dialog of doc.querySelectorAll('dialog')) {
       dialog.addEventListener('pointerdown', (event) => {
+        if (event.button !== 0) return;   // right-click is not a dismissal
         if (event.target !== dialog) return;
         const box = dialog.getBoundingClientRect();
         const inside = event.clientX >= box.left && event.clientX <= box.right
@@ -1571,6 +1640,20 @@ export class App {
     // from a notebook page.
     doc.addEventListener('keydown', (event) => {
       const mod = event.ctrlKey || event.metaKey;
+      // Run-the-selected-cell, for when the shortcut lands outside any
+      // editor. The view keeps a current cell precisely for the moment
+      // focus is elsewhere -- clicking a cell's margin selects without
+      // focusing -- yet the run keys only worked from inside the
+      // textarea, which made the hello notebook's own first instruction
+      // ("run a cell with Ctrl+Enter") silently do nothing.
+      if (event.key === 'Enter' && (mod || event.shiftKey)
+          && !/^(textarea|input|select)$/i.test(event.target?.tagName ?? '')
+          && !event.target?.closest?.('dialog')   // a modal owns its keys
+          && this.view.selectedId !== null) {
+        event.preventDefault();
+        this.runCell(this.view.selectedId, { advance: event.shiftKey && !mod });
+        return;
+      }
       if (!mod) return;
       const key = event.key.toLowerCase();
       if (key === 's' && !event.shiftKey && !event.altKey) {
@@ -1591,6 +1674,13 @@ export class App {
   addCell(cellType) {
     if (this.readOnly) { this._readOnlyNudge(); return; }
     this._lastCellType = cellType;
+    // The button repeats the last kind added, so its face has to say
+    // which kind that now is -- "+ Cell" kept the change a secret.
+    const add = this.document.querySelector('[data-toolbar="add-cell"]');
+    if (add) {
+      add.textContent = cellType === 'markdown' ? '+ Markdown' : '+ Code';
+      add.title = `Add a ${cellType} cell below the current one`;
+    }
     const cell = this.model.addCell(cellType, this.view.selectedId);
     this.view.select(cell.id);
   }
@@ -1629,10 +1719,14 @@ export class App {
   }
 
   newNotebook() {
+    this._stashReplaced();
     this.filename = 'untitled.ipynb';
     this.setReadOnly(false);
     this._setModel(new NotebookModel());
     this._scheduleAutosave();
+    // The launcher's own words are "start typing in a blank one" -- so
+    // the caret has to actually be in the blank one.
+    this.view.focusEditor();
   }
 
   /**
@@ -1789,7 +1883,11 @@ export class App {
    */
   async showLauncher() {
     const dialog = this.document.querySelector('[data-launcher]');
-    if (!dialog) return;
+    if (!dialog || dialog.open) return;
+    // Open first, fill after: waiting on IndexedDB before showModal left a
+    // beat in which a second Home click reached showModal() on an already
+    // open dialog and threw. The lists land within the same paint.
+    dialog.showModal();
 
     const examplesList = this.document.querySelector('[data-launcher-examples]');
     examplesList?.replaceChildren(...EXAMPLES.map((example) => {
@@ -1833,8 +1931,6 @@ export class App {
         }));
       }
     }
-
-    dialog.showModal();
   }
 
   /**
@@ -2017,8 +2113,15 @@ export class App {
     this.toastNode.textContent = text;
     this.toastNode.dataset.kind = kind;
     this.toastNode.hidden = false;
+    // Into the top layer, above any open modal's backdrop. A toast fired
+    // from inside a dialog -- About's Copy, a failed URL open -- used to
+    // paint *under* the backdrop, which is feedback nobody sees.
+    try { this.toastNode.showPopover?.(); } catch { /* already open */ }
     clearTimeout(this._toastTimer);
-    this._toastTimer = setTimeout(() => { this.toastNode.hidden = true; }, 6000);
+    this._toastTimer = setTimeout(() => {
+      this.toastNode.hidden = true;
+      try { this.toastNode.hidePopover?.(); } catch { /* already closed */ }
+    }, 6000);
   }
 }
 

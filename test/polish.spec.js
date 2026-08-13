@@ -30,6 +30,21 @@ const firstCodeIndex = (page) => page.evaluate(() =>
   window.lab.model.cells.findIndex((c) => c.cell_type === 'code'));
 
 const codeCell = (page) => page.locator('.cell[data-cell-type="code"]').first();
+
+test.describe('running the selected cell from anywhere', () => {
+  test('Ctrl+Enter works with focus outside the editor', async ({ page }) => {
+    await openLab(page);
+    const cell = codeCell(page);
+    await cell.locator('[data-editor]').fill('answered = "yes"\nprint(answered)');
+    // Selection without focus: clicking the prompt margin makes the cell
+    // current but leaves no editor focused -- exactly the state the
+    // page-level fallback exists for.
+    await cell.locator('.prompt').click();
+    await page.evaluate(() => document.activeElement?.blur?.());
+    await page.keyboard.press('Control+Enter');
+    await expect(cell.locator('.output-stream pre')).toContainText('yes');
+  });
+});
 const runFirst = async (page, source) => {
   const cell = codeCell(page);
   await cell.locator('[data-editor]').fill(source);

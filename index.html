@@ -83,8 +83,12 @@
        unset means the OS decides. */
     --sunk: color-mix(in srgb, currentColor 5%, transparent);
     --quiet: color-mix(in srgb, currentColor 60%, transparent);
-    --ok: #1a7f37;
-    --bad: #b91c1c;
+    /* Status colours, stepped per surface: the light values sat unread
+       on a dark background. The amber gets a name because it was pasted
+       raw in nine places, which is how a palette drifts. */
+    --ok: light-dark(#1a7f37, #3fb950);
+    --bad: light-dark(#b91c1c, #f85149);
+    --warn: light-dark(#b45309, #d29922);
     /* The page's real text colour, named so it can be used where
        `currentColor` has been deliberately set to transparent. */
     --ink: CanvasText;
@@ -94,6 +98,15 @@
   :root[data-theme="light"] { color-scheme: light; }
   :root[data-theme="dark"] { color-scheme: dark; }
   * { box-sizing: border-box; }
+  /* One focus treatment for every control that is not a text field --
+     three surfaces had their own and everything else wore whichever ring
+     the UA felt like. Text fields keep their native behaviour: for them
+     :focus-visible matches on every click, and an accent box around an
+     editor you just clicked into is noise, not help. */
+  :is(button, select, a, summary, [tabindex]):focus-visible {
+    outline: 2px solid color-mix(in srgb, var(--accent) 80%, CanvasText);
+    outline-offset: 1px;
+  }
   /* Several rules below set `display`, which would otherwise beat the UA
      stylesheet's [hidden] rule and leave "hidden" elements on screen. */
   [hidden] { display: none !important; }
@@ -207,7 +220,7 @@
      the first thing to look at when a program is not moving. */
   .swarm-queue-full {
     color: var(--ink);
-    border-color: color-mix(in srgb, #b45309 60%, transparent);
+    border-color: color-mix(in srgb, var(--warn) 60%, transparent);
   }
   .swarm-state { padding: .05rem .35rem; border-radius: 999px; border: 1px solid var(--edge); }
   .swarm-state-running { border-color: color-mix(in srgb, var(--accent) 50%, transparent); }
@@ -271,7 +284,7 @@
   .swarm-event-kind { font-family: var(--mono); }
   .swarm-event-detail { word-break: break-word; }
   .swarm-good { border-left-color: color-mix(in srgb, var(--ok) 55%, transparent); }
-  .swarm-warn { border-left-color: color-mix(in srgb, #b45309 55%, transparent); }
+  .swarm-warn { border-left-color: color-mix(in srgb, var(--warn) 55%, transparent); }
   .swarm-bad  { border-left-color: color-mix(in srgb, var(--bad) 60%, transparent); }
   .swarm-bad .swarm-event-kind { color: var(--bad); }
 
@@ -325,7 +338,10 @@
   .menu-pop {
     position: absolute; z-index: 30; min-width: 13rem;
     padding: .3rem; border: 1px solid var(--edge); border-radius: 8px;
-    background: Canvas; box-shadow: 0 6px 24px rgb(0 0 0 / .18);
+    /* The same shadow recipe as the completion popup: keyed off
+       CanvasText so it exists in dark mode too, where a black shadow on
+       a black page is no shadow at all. */
+    background: Canvas; box-shadow: 0 6px 24px color-mix(in srgb, CanvasText 18%, transparent);
   }
   .menu-item {
     display: flex; align-items: center; gap: 1.2rem; width: 100%;
@@ -340,7 +356,12 @@
   }
   .menu-item[aria-disabled="true"] { opacity: .45; cursor: default; }
   .menu-item[aria-disabled="true"]:hover { background: transparent; }
-  .menu-item[aria-checked="true"] .menu-label::before { content: "✓ "; }
+  /* Every toggle row reserves the check's column, so labels stay aligned
+     and an unchecked toggle still reads as a toggle, not an action. */
+  .menu-item[role="menuitemcheckbox"] .menu-label::before {
+    content: ""; display: inline-block; width: 1.15em;
+  }
+  .menu-item[aria-checked="true"] .menu-label::before { content: "✓"; }
   .menu-item .menu-label { flex: 1; white-space: nowrap; }
   .menu-item .menu-accel { color: var(--quiet); font-size: .74rem; font-family: var(--mono); }
   .menu-sep { height: 1px; background: var(--edge); margin: .3rem .4rem; }
@@ -412,6 +433,12 @@
     background: var(--sunk); color: inherit; white-space: pre;
   }
 
+  /* One chrome for every dialog. About carried these alone, so the
+     launcher and the rest wore the browser's default box beside it. */
+  dialog {
+    border: 1px solid var(--edge); border-radius: 10px;
+    padding: 1rem 1.1rem; background: Canvas; color: CanvasText;
+  }
   dialog::backdrop { background: rgb(0 0 0 / .4); }
 
   [data-rename-input] {
@@ -445,6 +472,10 @@
     background: transparent; color: inherit; cursor: pointer;
   }
   .toolbar button:hover, .cell-tools button:hover, .show-all:hover { background: var(--sunk); }
+  /* A control that cannot be pressed says so -- and does not light up
+     under the pointer as if it could. */
+  .toolbar button:disabled, .cell-tools button:disabled { opacity: .45; cursor: default; }
+  .toolbar button:disabled:hover, .cell-tools button:disabled:hover { background: transparent; }
   .sep { width: 1px; height: 1.4rem; background: var(--edge); margin: 0 .25rem; }
   [data-filename] { font-family: var(--mono); font-size: .82rem; color: var(--quiet); }
 
@@ -462,7 +493,7 @@
     padding: .15rem .5rem; border-radius: 999px; border: 1px solid var(--edge);
   }
   .status[data-status="idle"] { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 40%, transparent); }
-  .status[data-status="busy"] { color: #b45309; }
+  .status[data-status="busy"] { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 40%, transparent); }
   .status[data-status="dead"] { color: var(--bad); border-color: color-mix(in srgb, var(--bad) 40%, transparent); }
 
   /* --- cells --- */
@@ -487,14 +518,14 @@
      green tick's worth), error and stale are not. */
   .cell[data-run-state="ok"]    { border-left-color: color-mix(in srgb, var(--ok) 55%, transparent); }
   .cell[data-run-state="error"] { border-left-color: color-mix(in srgb, var(--bad) 70%, transparent); }
-  .cell[data-run-state="stale"] { border-left-color: color-mix(in srgb, #b45309 60%, transparent); }
+  .cell[data-run-state="stale"] { border-left-color: color-mix(in srgb, var(--warn) 60%, transparent); }
   .cell[data-busy="true"] {
-    border-left-color: #b45309;
+    border-left-color: var(--warn);
     /* A slow breathing rail while a cell runs -- movement says "working",
        colour says "this one". Honours reduced-motion via the block below. */
     animation: cell-pulse 1.4s ease-in-out infinite;
   }
-  @keyframes cell-pulse { 50% { border-left-color: color-mix(in srgb, #b45309 35%, transparent); } }
+  @keyframes cell-pulse { 50% { border-left-color: color-mix(in srgb, var(--warn) 35%, transparent); } }
 
   /* A stale cell's whole prompt is dimmed and struck, because the number
      it shows describes a Lua state that no longer exists. */
@@ -506,7 +537,7 @@
   .cell[data-run-state="stale"] .cell-head::after {
     content: "stale"; font-size: .62rem; font-family: var(--mono);
     text-transform: uppercase; letter-spacing: .04em;
-    color: #b45309; border: 1px solid color-mix(in srgb, #b45309 45%, transparent);
+    color: var(--warn); border: 1px solid color-mix(in srgb, var(--warn) 45%, transparent);
     border-radius: 4px; padding: 0 .3rem; margin-left: .1rem;
   }
 
@@ -635,7 +666,7 @@
     margin: 0; font-family: var(--mono); font-size: .84rem;
     white-space: pre-wrap; word-break: break-word;
   }
-  .output-stream[data-stream="stderr"] pre { color: #b45309; }
+  .output-stream[data-stream="stderr"] pre { color: var(--warn); }
   .output-execute_result { display: flex; gap: .5rem; align-items: baseline; }
   .result-prompt { font-family: var(--mono); font-size: .78rem; color: var(--quiet); }
   .output-error {
@@ -779,8 +810,16 @@
   .dialog-note code { font-family: var(--mono); font-size: .95em; }
 
   /* The one button that should catch a first-time eye, and the only one
-     given any weight. */
-  .toolbar .start-here { border-color: var(--accent); font-weight: 600; }
+     given any weight. It lives in the menubar, not the toolbar, so it
+     carries the shared button shape itself -- scoping this under
+     `.toolbar` left it wearing the UA default. */
+  .start-here {
+    font: inherit; font-size: .85rem; font-weight: 600;
+    padding: .25rem .55rem; cursor: pointer;
+    border: 1px solid var(--accent); border-radius: 6px;
+    background: transparent; color: inherit;
+  }
+  .start-here:hover { background: var(--sunk); }
 
   /* --- keyboard shortcuts reference --- */
   dialog[data-shortcuts] { max-width: min(40rem, 92vw); }
@@ -964,10 +1003,14 @@
   .console-note { color: var(--quiet); font-style: italic; }
   .console-input-row { padding: .4rem .75rem .6rem; }
 
+  /* A manual popover, so it rides the top layer and stays visible over a
+     modal's backdrop. The UA popover styles centre it; every inset is
+     therefore pinned back to the bottom-centre banner it always was. */
   [data-toast] {
-    position: fixed; left: 50%; bottom: 1rem; transform: translateX(-50%);
-    padding: .5rem .9rem; border-radius: 8px; border: 1px solid var(--edge);
-    background: Canvas; font-size: .86rem; z-index: 10;
+    position: fixed; left: 50%; bottom: 1rem; top: auto; right: auto;
+    transform: translateX(-50%); width: max-content; max-width: min(46rem, 92vw);
+    margin: 0; padding: .5rem .9rem; border-radius: 8px; border: 1px solid var(--edge);
+    background: Canvas; color: CanvasText; font-size: .86rem; z-index: 10;
   }
   [data-toast][data-kind="error"] { border-color: var(--bad); color: var(--bad); }
   /* --- touch and small screens ---
@@ -1042,16 +1085,11 @@
     }
     /* A busy cell keeps a steady rail rather than a stopped-mid-pulse
        colour, which is what the global reset would leave. */
-    .cell[data-busy="true"] { border-left-color: #b45309 !important; animation: none !important; }
+    .cell[data-busy="true"] { border-left-color: var(--warn) !important; animation: none !important; }
   }
 
   /* --- about --- */
-  dialog[data-about] {
-    max-width: min(46rem, calc(100vw - 2rem));
-    border: 1px solid var(--edge); border-radius: 10px;
-    padding: 1rem 1.1rem; background: Canvas; color: CanvasText;
-  }
-  dialog[data-about]::backdrop { background: rgb(0 0 0 / .4); }
+  dialog[data-about] { max-width: min(46rem, calc(100vw - 2rem)); }
   dialog[data-about] h2 { margin: 0 0 .6rem; font-size: 1.1rem; }
   dialog[data-about] dl {
     display: grid; grid-template-columns: auto 1fr; gap: .2rem .8rem;
@@ -1094,6 +1132,8 @@
     border: 1px solid var(--edge); border-radius: 6px;
     background: transparent; color: inherit; cursor: pointer;
   }
+  .about-actions button:hover, .bc-action:hover, .link-banner button:hover,
+  .swarm-request button:hover:not(:disabled) { background: var(--sunk); }
   @media (max-width: 34rem) {
     dialog[data-about] dl { grid-template-columns: 1fr; gap: 0 0; }
     dialog[data-about] dt { margin-top: .45rem; }
@@ -1162,7 +1202,7 @@
   <button type="button" class="start-here" data-toolbar="examples"
           title="Example notebooks — the language, secure functions, queues, plots">Start here</button>
   <button type="button" class="masthead-toggle" data-masthead-toggle aria-expanded="true"
-          title="Hide the header row above">˄</button>
+          aria-label="Hide the header row above" title="Hide the header row above">˄</button>
 </nav>
 
 <!-- Row 3: the action toolbar. Keeps the .toolbar class the old single
@@ -1171,7 +1211,7 @@
 <div class="toolbar actionbar" data-actionbar>
   <button type="button" data-hamburger aria-label="Menu" title="Menu">☰</button>
   <div class="split">
-    <button type="button" data-toolbar="add-cell" title="Add a cell (the kind you last added)">+ Cell</button>
+    <button type="button" data-toolbar="add-cell" title="Add a code cell below the current one">+ Code</button>
     <button type="button" class="split-arrow" data-split="add" aria-label="Add cell options">▾</button>
   </div>
   <div class="split">
@@ -1183,7 +1223,8 @@
     <span class="version-label">Runtime</span>
     <select data-version-select aria-label="Diluvium runtime"></select>
   </label>
-  <button type="button" data-toolbar="check-versions" title="Look for other Diluvium builds on the mirror">⟳</button>
+  <button type="button" data-toolbar="check-versions" aria-label="Check for newer Diluvium runtimes"
+          title="Check the mirror for other Diluvium builds">⟳</button>
   <span class="sep"></span>
   <!-- Says "Stop", not "Interrupt", on purpose. Jupyter's interrupt
        unwinds and leaves your variables alone; this terminates the worker,
@@ -1216,8 +1257,8 @@
   </div>
 </dialog>
 
-<dialog data-open-url>
-  <h2>Open a notebook from a URL</h2>
+<dialog data-open-url aria-labelledby="open-url-title">
+  <h2 id="open-url-title">Open a notebook from a URL</h2>
   <form method="dialog" data-open-url-form>
     <input type="url" data-open-url-input required
            placeholder="https://raw.githubusercontent.com/owner/repo/main/notebooks/hello.ipynb"
@@ -1268,8 +1309,8 @@
   </div>
 </dialog>
 
-<dialog data-recent>
-  <h2>Recently opened</h2>
+<dialog data-recent aria-labelledby="recent-title">
+  <h2 id="recent-title">Recently opened</h2>
   <div data-recent-list></div>
   <div class="about-actions">
     <button type="button" data-recent-clear>Forget all</button>
@@ -1277,8 +1318,8 @@
   </div>
 </dialog>
 
-<dialog data-examples>
-  <h2>Start here</h2>
+<dialog data-examples aria-labelledby="examples-title">
+  <h2 id="examples-title">Start here</h2>
   <p class="dialog-note">
     Bundled with this page — no network needed. Opening one replaces what is
     on screen, so save first if you have unsaved work.
@@ -1302,7 +1343,7 @@
     <a href="https://diluvium.aloecraft.org" target="_blank" rel="noopener">diluvium.aloecraft.org</a>.
   </p>
   <div class="launcher-actions">
-    <button type="button" data-launcher-new>New notebook</button>
+    <button type="button" data-launcher-new autofocus>New notebook</button>
     <button type="button" data-launcher-open>Open a file…</button>
     <button type="button" data-launcher-url>From a URL…</button>
   </div>
@@ -1353,7 +1394,7 @@
 
 <!-- The menus as a drawer, for screens too narrow for the rows above. -->
 <dialog data-drawer aria-label="menu">
-  <div data-drawer-body role="menu"></div>
+  <div data-drawer-body></div>
   <div class="about-actions">
     <button type="button" data-drawer-close>Close</button>
   </div>
@@ -1391,7 +1432,7 @@
 
 <div data-link-banner hidden class="banner link-banner"></div>
 <div data-stale-banner hidden role="alert"></div>
-<div data-toast hidden role="status" aria-live="polite"></div>
+<div data-toast hidden popover="manual" role="status" aria-live="polite"></div>
 
 <!-- BEGIN import map: generated by scripts/stamp-imports.mjs -->
 <script type="importmap">

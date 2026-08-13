@@ -2985,3 +2985,47 @@ defined as invisible.
 Help also gained **Diluvium website**, and the launcher's opening line
 links `diluvium.aloecraft.org` — the Lab kept explaining the language
 while pointing nowhere that teaches it.
+
+### An audit's small fixes: the chrome answers what it promised ✅ done
+
+A UX audit pass (ten parallel reviews: chrome, launcher, cells, panels,
+dialogs, CSS, console, help surfaces, and two live first-run drives)
+produced a list; these are the small-but-real ones, landed together.
+
+**Found broken outright.** `.toolbar .start-here` never matched — the
+button lives in the menubar — so the one control meant to catch a
+first-time eye wore the browser's raw default. Dialogs other than About
+did the same, because only About carried the dialog chrome; it is a bare
+`dialog` rule now. Toasts fired while a modal was open painted *under*
+the backdrop — About's own Copy confirmation was invisible — so the
+toast is a manual popover and rides the top layer. And Ctrl+Enter did
+nothing unless focus sat inside a textarea, which made the hello
+notebook's first instruction a lie whenever someone clicked a cell's
+margin; a page-level fallback now runs the selected cell.
+
+**Work no longer disappears silently.** Opening anything over an
+edited notebook overwrote the single autosave slot — for a notebook
+made with New, the only copy anywhere. Replacement now stashes the
+outgoing notebook into recents first, judged on content rather than a
+dirty flag (a flag misses the restored autosave nobody touched *this*
+session), and skipped when the text is the pristine seed or already in
+recents byte-for-byte, so example-hopping mints no phantom entries.
+Beside it: New notebook actually focuses the blank cell the launcher
+promised, a failed URL open reopens the dialog with the typed URL still
+in it, and Forget all arms on the first click instead of firing.
+
+**Colour and state.** `--ok`/`--bad` and a nine-times-pasted raw amber
+(now `--warn`) got light-dark() pairs — the light values sat unread on
+a dark surface. Disabled toolbar buttons dim and stop lighting up under
+the pointer. Menu checkmarks sit in a reserved gutter so toggle labels
+align. Dialog action buttons hover like everything else; the menu
+shadow uses the completion popup's CanvasText recipe so it exists in
+dark mode; every non-text control shares one focus-visible ring; the
+busy status pill got the tinted border idle and dead already had; and
+Mermaid asks the forced theme before it asks the OS.
+
+**Names.** + Cell says which kind it will add now that it changes.
+The mirror-refresh ⟳ and the masthead toggle have accessible names,
+three dialogs have their `aria-labelledby`, the drawer stopped claiming
+`role="menu"` it never honoured, and the diagram renderer's 3.4 MB is
+on its label rather than only in a tooltip touch screens never see.
