@@ -3136,3 +3136,13 @@ diluvium.aloecraft.org; the seed notebook points at Start here and
 Help, notes ⌘, and its comment stopped claiming a 5.4.7 pin two
 runtimes gone; the shortcuts reference admits Ctrl+Y and the
 double-click that edits rendered markdown.
+
+### Recents can be tended, not only wiped ✅ done
+
+Each remembered notebook now carries its own quiet ✕ — a sibling of the
+open button, because a button cannot hold one — so one entry can be
+forgotten without forgetting them all. It deletes from the store, not
+just the list, and the empty state appears when the last row goes.
+Beside it, Forget all arms on the first click and fires on the second
+(landed with the audit batch), since the one irreversible click in that
+dialog sat next to Close.

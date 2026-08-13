@@ -213,6 +213,24 @@ test.describe('recently opened', () => {
     await expect(page.locator('[data-recent-empty]')).toBeVisible();
   });
 
+  test('one entry can be forgotten without forgetting them all', async ({ page }) => {
+    await openLab(page);
+    await stubRemote(page, JSON.stringify(NOTEBOOK));
+    await openFromUrl(page, RAW);
+    await expect(page.locator('[data-filename]')).toHaveText('hello.ipynb');
+
+    await viaControl(page, 'recent');
+    await expect(page.locator('.recent-row')).toHaveCount(1);
+    await page.locator('.recent-forget').click();
+    await expect(page.locator('.recent-row')).toHaveCount(0);
+    await expect(page.locator('[data-recent-empty]')).toBeVisible();
+
+    // Gone from the store, not just the list.
+    await page.locator('[data-recent-close]').click();
+    await viaControl(page, 'recent');
+    await expect(page.locator('[data-recent-empty]')).toBeVisible();
+  });
+
   test('forgetting empties it', async ({ page }) => {
     await openLab(page);
     await stubRemote(page, JSON.stringify(NOTEBOOK));
@@ -220,6 +238,12 @@ test.describe('recently opened', () => {
     await expect(page.locator('[data-filename]')).toHaveText('hello.ipynb');
 
     await viaControl(page, 'recent');
+    // Armed on the first click, fired on the second: wiping the whole
+    // list sits beside Close, and a misclick should cost a click, not
+    // every remembered notebook.
+    await page.locator('[data-recent-clear]').click();
+    await expect(page.locator('[data-recent-clear]')).toContainText('sure');
+    await expect(page.locator('.recent-row')).toHaveCount(1);
     await page.locator('[data-recent-clear]').click();
     await viaControl(page, 'recent');
     await expect(page.locator('[data-recent-empty]')).toBeVisible();

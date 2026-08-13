@@ -13,7 +13,7 @@ import { NotebookModel, EXPECT, expectationOf } from './notebook/model.js';
 import { toIpynb, fromIpynb, messageToOutput, IpynbError } from './notebook/ipynb.js';
 import { NotebookView, renderOutputs } from './notebook/ui.js';
 import { ConsoleView } from './notebook/console.js';
-import { saveAutosave, loadAutosave, debounceSave, rememberRecent, listRecent, clearRecent, savePanelState, loadPanelState, savePref, loadPref } from './notebook/storage.js';
+import { saveAutosave, loadAutosave, debounceSave, rememberRecent, listRecent, clearRecent, forgetRecent, savePanelState, loadPanelState, savePref, loadPref } from './notebook/storage.js';
 import { ToolPanel } from './notebook/panel.js';
 import { renderOutline } from './notebook/outline.js';
 import { renderSwarm } from './notebook/swarm-view.js';
@@ -1262,7 +1262,27 @@ export class App {
 
       button.append(name, where, when);
       button.addEventListener('click', () => { dialog.close(); this.openRecent(entry); });
-      return button;
+
+      // One entry can be forgotten without forgetting them all -- a
+      // sibling of the open button, because a button cannot hold one.
+      const forget = this.document.createElement('button');
+      forget.type = 'button';
+      forget.className = 'recent-forget';
+      forget.dataset.recentForget = String(entry.openedAt);
+      forget.textContent = '✕';
+      forget.title = `Forget ${entry.title || entry.name}`;
+      forget.setAttribute('aria-label', forget.title);
+      forget.addEventListener('click', async () => {
+        try { await forgetRecent(entry.openedAt); } catch { /* still shown, still true */ return; }
+        const row = forget.closest('.recent-row');
+        row?.remove();
+        if (!list.querySelector('.recent-row')) list.replaceChildren(emptyRecent(this.document));
+      });
+
+      const row = this.document.createElement('div');
+      row.className = 'recent-row';
+      row.append(button, forget);
+      return row;
     }) : [emptyRecent(this.document)]));
 
     dialog.showModal();

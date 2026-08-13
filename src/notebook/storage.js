@@ -189,6 +189,11 @@ export function clearRecent() {
   return withDb((db) => transact(db, RECENT_STORE, 'readwrite', (s2) => s2.clear()));
 }
 
+/** Forget one remembered notebook, by its key. */
+export function forgetRecent(openedAt) {
+  return withDb((db) => transact(db, RECENT_STORE, 'readwrite', (s2) => s2.delete(openedAt)));
+}
+
 export function clearRuntimes() {
   return withDb((db) => transact(db, RUNTIME_STORE, 'readwrite', (s) => s.clear()));
 }
