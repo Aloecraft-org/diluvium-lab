@@ -343,7 +343,16 @@ export class App {
     // Always. The dropdown carries the bundled runtime unconditionally, so
     // an empty one means this line never ran -- which is a fact worth being
     // unable to hide.
+    // Which runtimes are already downloaded. Local, so it costs nothing
+    // and happens before the dropdown is drawn -- a build fetched once
+    // stays selectable without asking the mirror what exists.
+    await phase('reading the runtime cache', () => this.registry.loadCached());
     await phase('listing runtimes', () => this._renderVersions());
+
+    // After the dropdown exists, because restoring re-renders it -- and
+    // guarded like every other phase, so a runtime that will not come back
+    // costs a console line rather than the page.
+    await phase('restoring the chosen runtime', () => this._restoreRuntime());
 
     if (this.startupProblems.length) {
       const first = this.startupProblems[0];
@@ -524,8 +533,35 @@ export class App {
     this.console.note(
       `Switched to ${this.registry.entries().find((e) => e.id === id)?.label ?? id}` +
       `${loaded.fromCache ? ' (from cache)' : ''}. Every variable is gone.`);
+    // Remembered, so a reload does not silently drop you back onto the
+    // bundled build. The Lab already remembers the theme and whether the
+    // masthead is folded; which *runtime* you chose is a larger thing to
+    // forget than either.
+    savePref('runtime', id).catch(() => {});
     this.document.body.dataset.switching = 'false';
     this._setSwitchControls(false);
+  }
+
+  /**
+   * Put back the runtime this browser last chose.
+   *
+   * **Only from the cache.** `versions.spec.js` asserts the page fetches
+   * nothing from the mirror until asked, and that is a property worth
+   * more than the convenience: a remembered runtime whose megabyte had
+   * been evicted would turn every reload into a download. So a choice
+   * that is no longer cached falls back to the bundled build and says so
+   * in the console rather than reaching for the network or pretending.
+   */
+  async _restoreRuntime() {
+    const id = await loadPref('runtime').catch(() => null);
+    if (!id || id === this.runtimeId) return;
+    if (!(await this.registry.isCached(id).catch(() => false))) {
+      this.console.note(`This browser last used ${id}, but its bytes are no longer cached. `
+        + 'Staying on the bundled runtime rather than downloading one at startup — '
+        + 'pick it in the dropdown to fetch it again.');
+      return;
+    }
+    await this.selectRuntime(id);
   }
 
   /**

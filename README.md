@@ -7,7 +7,7 @@ page. No framework, no bundler, no CDN — plain modules and the DOM.
 Cells and the console share one kernel, so state carries between them. The
 kernel is `libdiluvium_wasi.wasm` running in the tab: a real Lua state
 with the full standard library, reached through a WASI shim the page
-supplies itself. The bundled build is **Diluvium 5.5.1_build6**; the
+supplies itself. The bundled build is **Diluvium 5.5.1_build7**; the
 Runtime dropdown swaps it for any other the mirror carries, including
 5.4.x.
 
@@ -75,7 +75,7 @@ npm run bake         # emit dist/diluvium-lab.html, a single double-click file
 Other scripts:
 
 ```sh
-scripts/fetch-runtime.sh v5.5.1_build6    # re-pin the bundled runtime
+scripts/fetch-runtime.sh v5.5.1_build7    # re-pin the bundled runtime
 scripts/build-mirror.sh mirror            # build the runtime mirror (see below)
 scripts/check-bake.mjs                    # assert the baked file is self-contained
 ```
@@ -153,7 +153,7 @@ From **5.5.1_build6** onward it also ships `json`, `bytes` and `time`,
 which is what lets a program encode a response, base64url a token segment
 and stamp a record without reaching for `os`.
 
-**The Lab bundles `build6`, and says so.** It is marked stable upstream.
+**The Lab bundles `build7`, and says so.** It is marked stable upstream.
 The About panel states the release status and the sha256 of the exact
 bytes; every other build the mirror carries is one click away in the
 dropdown, and the Lab says which of those are prereleases rather than

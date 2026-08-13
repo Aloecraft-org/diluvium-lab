@@ -15,7 +15,7 @@ import {
 import { DEFAULT_WASM_URL, checkModuleBytes } from './wasm-kernel.js';
 import { WorkerKernel } from './worker-kernel.js';
 import { canVerify } from './digest.js';
-import { getRuntime, putRuntime } from '../notebook/storage.js';
+import { getRuntime, putRuntime, listRuntimeKeys } from '../notebook/storage.js';
 
 /** The runtime that ships with the Lab. Always present, never fetched. */
 export const PINNED = 'pinned';
@@ -71,7 +71,18 @@ export class RuntimeRegistry {
       remote: false,
       prerelease: this.pinnedIsPrerelease,
     };
-    if (!this.remote) return [pinned];
+    // Runtimes already in IndexedDB, listed even when the mirror has not
+    // been asked. A megabyte that was fetched and verified once should not
+    // become unreachable because the page has not been told what else
+    // exists -- and without this, a *remembered* runtime could not be put
+    // back after a reload, since nothing at load lists anything remote.
+    const cached = (this.cachedTags ?? [])
+      .filter((tag) => tag !== PINNED)
+      .map((tag) => ({
+        id: tag, label: `${String(tag).replace(/^v/, '')} (cached)`, tag,
+        remote: false, prerelease: false,
+      }));
+    if (!this.remote) return [pinned, ...cached];
     return [pinned, ...this.remote
       // The mirror carries the pinned build too. Listing it twice invites
       // "why are there two 5.4.7s"; the bundled copy wins because it is
@@ -108,6 +119,32 @@ export class RuntimeRegistry {
     this.remote = await this.source.list();
     this.lastError = null;
     return this.entries();
+  }
+
+  /**
+   * Learn which runtimes are already downloaded. Cheap, local, and the
+   * reason a reload can put back what was chosen without a request.
+   */
+  async loadCached() {
+    const keys = await listRuntimeKeys().catch(() => []);
+    this.cachedTags = [...new Set(keys
+      .map((k) => String(k).split('/')[0])
+      .filter(Boolean))];
+    return this.cachedTags;
+  }
+
+  /**
+   * Is this runtime already in IndexedDB, so loading it costs no network?
+   *
+   * Asked before restoring a remembered choice at boot. "No request at
+   * load" is a property this page is tested for, and a remembered runtime
+   * whose bytes had been evicted would otherwise turn a reload into a
+   * download nobody asked for.
+   */
+  async isCached(id) {
+    if (id === PINNED) return true;
+    const cached = await getRuntime(`${id}/${KERNEL_ARTIFACT}`).catch(() => null);
+    return !!cached?.bytes;
   }
 
   /** Bytes for an id, from the cache when possible. */

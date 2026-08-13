@@ -3229,3 +3229,42 @@ it, and the difference between the two harnesses has not been isolated.
 Left as a named finding rather than a guess, because the obvious
 candidates (contention, the added cells, notebook size) are all ruled out
 by the numbers above.
+### Pinned to 5.5.1_build7, and a choice that would not stick ✅ done
+
+The re-pin is routine — `scripts/fetch-runtime.sh v5.5.1_build7`, both
+artifacts, both checksummed, `stable: true` from the same changelog the
+mirror reads. The bug it surfaced is not.
+
+**A runtime you picked lasted exactly one page view.** The Lab remembered
+your theme, whether the masthead was folded and whether the console was
+hidden, and forgot the one choice that changes what your code runs on.
+`selectRuntime` never wrote a preference and boot always started at
+`PINNED`, so every reload silently dropped you back onto the bundled
+build. Reported from use, not from a test, which is its own small lesson:
+nothing asserted that a switch outlived a reload.
+
+Two halves to the fix, and the second is the interesting one.
+
+`savePref('runtime', id)` on a successful switch, and `_restoreRuntime()`
+at boot. But restoring has to respect a property this page is tested for —
+**"the page fetches nothing from the mirror until asked"** — and a naive
+restore breaks it twice over: the bytes might need downloading, and the
+*dropdown* could not even list a remote tag, because `entries()` returns
+only the bundled build until someone presses Check.
+
+So the registry now knows what it has downloaded. `loadCached()` reads the
+runtime store's keys — local, free — and `entries()` lists those tags as
+`(cached)` even with no mirror index. That is worth having on its own:
+**a runtime fetched once stays selectable offline**, which is what a cache
+is for and was previously not true. Restore then asks `isCached(id)` and
+puts the runtime back only when the bytes are already here; a preference
+whose megabyte has been evicted falls back to the bundled build and says
+so in the console, rather than reaching for the network at startup or
+pretending nothing was remembered.
+
+The test for it opens a **second page in the same context** rather than
+calling `page.reload()`, because `versions.spec.js`'s own `openLab`
+installs an init script that deletes the database on every navigation — a
+reload there wipes the very preference under test. A new page shares the
+origin's storage and carries no init script, which is also a truer model
+of what a reader's next visit is.

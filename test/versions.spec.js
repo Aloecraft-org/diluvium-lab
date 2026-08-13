@@ -769,3 +769,60 @@ test.describe('a prerelease says so', () => {
       stable === false ? 'prerelease' : /release|not stated/);
   });
 });
+
+test.describe('the chosen runtime is remembered', () => {
+  // A second page rather than `page.reload()`: `openLab` installs an init
+  // script that deletes the database on every navigation, so a reload in
+  // this file wipes the very preference under test. A new page in the same
+  // context shares the origin's storage and carries no init script, which
+  // is what a reader's second visit actually looks like.
+  const secondVisit = async (page) => {
+    const next = await page.context().newPage();
+    await next.goto('/');
+    await next.waitForSelector('body[data-ready="true"]', { timeout: 30_000 });
+    await dismissLauncher(next);
+    return next;
+  };
+
+  test('a switch survives the next visit instead of snapping back to the bundled build', async ({ page }) => {
+    await stubMirror(page);
+    await openLab(page);
+    await checkVersions(page);
+    await select(page).selectOption('v5.5.0');
+    await expect(page.locator('body')).toHaveAttribute('data-switching', 'false');
+
+    // The reported bug: every fresh load went back to the bundled build,
+    // so a chosen runtime lasted exactly one page view.
+    const next = await secondVisit(page);
+    await expect(next.locator('body')).toHaveAttribute('data-runtime', 'v5.5.0');
+    await expect(select(next)).toHaveValue('v5.5.0');
+    // Listed without asking the mirror: nothing here called Check.
+    await expect(select(next).locator('option[value="v5.5.0"]')).toHaveText(/cached/);
+  });
+
+  test('a remembered runtime whose bytes are gone does not download one at startup', async ({ page }) => {
+    await stubMirror(page);
+    await openLab(page);
+    await checkVersions(page);
+    await select(page).selectOption('v5.5.0');
+    await expect(page.locator('body')).toHaveAttribute('data-switching', 'false');
+
+    // Evict the cached megabyte and keep the preference. Without the cache
+    // check this is the case that turns every visit into a download.
+    await page.evaluate(async () => {
+      const { clearRuntimes } = await import('./src/notebook/storage.js');
+      await clearRuntimes();
+    });
+
+    const next = await page.context().newPage();
+    let asked = 0;
+    await next.route('**/release/**', (route) => { asked += 1; return route.continue(); });
+    await next.goto('/');
+    await next.waitForSelector('body[data-ready="true"]', { timeout: 30_000 });
+    await dismissLauncher(next);
+
+    await expect(next.locator('[data-console-log]')).toContainText('no longer cached');
+    expect(asked).toBe(0);
+    await expect(next.locator('body')).not.toHaveAttribute('data-runtime', 'v5.5.0');
+  });
+});
