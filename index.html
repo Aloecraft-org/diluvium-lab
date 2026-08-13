@@ -54,6 +54,28 @@
     if (slot) slot.textContent = 'v' + EXPECTED;
   });
 
+  /* A pinned theme, applied as early as the database can answer -- the
+   * module graph applies it again later, but by then the first paint has
+   * happened and a dark-pinned page has flashed the OS's light. Async by
+   * nature (IndexedDB has no sync read), so a one-frame flash remains
+   * possible; this makes it the exception rather than every load.
+   * Versionless open on purpose: this must never race an upgrade. */
+  try {
+    var themeReq = indexedDB.open('diluvium-lab');
+    themeReq.onsuccess = function () {
+      var db = themeReq.result;
+      try {
+        var get = db.transaction('notebooks', 'readonly').objectStore('notebooks').get('pref:theme');
+        get.onsuccess = function () {
+          if (get.result === 'light' || get.result === 'dark') {
+            document.documentElement.dataset.theme = get.result;
+          }
+        };
+      } catch (e) { /* first visit: no store yet */ }
+      db.close();
+    };
+  } catch (e) { /* no IndexedDB, no pin to restore */ }
+
   /* Give the module graph time to load and boot, then ask whether the code
    * that is actually running agrees with the page it is running in. */
   setTimeout(function () {
@@ -630,6 +652,10 @@
     display: block; width: 100%; resize: vertical;
     background: var(--sunk); color: inherit;
   }
+  /* The editor sizes itself from its content now; a manual drag handle
+     would fight the very next keystroke. The console keeps its handle --
+     nothing auto-sizes it. */
+  textarea[data-editor] { resize: none; }
 
   /* --- highlighted editor ---
      The textarea sits on top with transparent glyphs; the coloured copy is

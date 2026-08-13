@@ -213,6 +213,18 @@ test.describe('recently opened', () => {
     await expect(page.locator('[data-recent-empty]')).toBeVisible();
   });
 
+  test('a failed URL open reopens the dialog with the URL still in it', async ({ page }) => {
+    await openLab(page);
+    await page.route(/^https:\/\//, (route) => route.abort('failed'));
+    await viaControl(page, 'open-url');
+    await page.locator('[data-open-url-input]').fill(RAW);
+    await page.locator('[data-open-url-go]').click();
+    // The fetch fails; the dialog comes back with the attempt intact,
+    // so a typo is a fix rather than a retype.
+    await expect(page.locator('[data-open-url]')).toBeVisible();
+    await expect(page.locator('[data-open-url-input]')).toHaveValue(RAW);
+  });
+
   test('one entry can be forgotten without forgetting them all', async ({ page }) => {
     await openLab(page);
     await stubRemote(page, JSON.stringify(NOTEBOOK));

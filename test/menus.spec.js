@@ -371,6 +371,41 @@ test.describe('the launcher', () => {
     expect(stashed).toBe(true);
   });
 
+  test('successive replacements each keep their own stash', async ({ page }) => {
+    await openLab(page);
+    const editor = () => page.locator('.cell[data-cell-type="code"] [data-editor]').first();
+    await editor().fill('work_one = 1');
+    await viaControl(page, 'new');
+    await page.keyboard.type('work_two = 2');
+    await viaControl(page, 'new');
+    await page.waitForTimeout(400);
+    // Stashes were keyed on the filename, so the second New evicted the
+    // first stash -- whose only copy it was.
+    const kept = await page.evaluate(async () => {
+      const { listRecent } = await import('./src/notebook/storage.js');
+      const stashes = (await listRecent()).filter((entry) => entry.origin === 'replaced');
+      return {
+        one: stashes.some((entry) => (entry.ipynb ?? '').includes('work_one')),
+        two: stashes.some((entry) => (entry.ipynb ?? '').includes('work_two')),
+      };
+    });
+    expect(kept.one).toBe(true);
+    expect(kept.two).toBe(true);
+  });
+
+  test('a toast fired inside a modal shows above its backdrop', async ({ page }) => {
+    await openLab(page);
+    await viaControl(page, 'about');
+    await page.locator('[data-about-action="copy"]').click();
+    // Copy succeeds or fails by clipboard permission; either way the
+    // feedback is a toast, and it used to paint under the backdrop.
+    const onTop = await page.evaluate(() => {
+      const toast = document.querySelector('[data-toast]');
+      return !toast.hidden && toast.matches(':popover-open');
+    });
+    expect(onTop).toBe(true);
+  });
+
   test('a true first visit gets the launcher unprompted', async ({ page }) => {
     // No openLab: a fresh context with an empty database IS the first
     // visit, and nothing here dismisses anything.

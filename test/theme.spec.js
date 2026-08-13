@@ -30,7 +30,10 @@ test.describe('the theme', () => {
     await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
     expect(await colorScheme(page)).toBe('dark');
 
-    // A preference, not a session setting.
+    // A preference, not a session setting. The pref write is
+    // fire-and-forget; give IndexedDB its beat before the reload that
+    // is meant to read it back.
+    await page.waitForTimeout(400);
     await page.reload();
     await page.waitForSelector('body[data-ready="true"]', { timeout: 30_000 });
     await dismissLauncher(page);

@@ -154,9 +154,13 @@ export async function rememberRecent(entry) {
     name: entry.name ?? 'notebook.ipynb',
     /** The notebook's own name, which is not its filename. */
     title: entry.title ?? null,
-    origin: entry.origin ?? 'file',      // 'file' | 'url' | 'example'
+    origin: entry.origin ?? 'file',      // 'file' | 'url' | 'example' | 'replaced'
     url: entry.url ?? null,
-    source: entry.url ?? entry.name ?? 'notebook.ipynb',
+    // An explicit source wins: replacement stashes pass a unique one,
+    // because keying them on the bare filename made every new stash
+    // evict the previous one -- and reopening `foo.ipynb` evicted the
+    // stash of your edits to foo.ipynb in the very call that made it.
+    source: entry.source ?? entry.url ?? entry.name ?? 'notebook.ipynb',
     cells: Array.isArray(entry.ipynb?.cells) ? entry.ipynb.cells.length : 0,
     // Held as text rather than as a live object: structured clone of a
     // deeply nested notebook is slower than one JSON round trip, and this

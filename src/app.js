@@ -13,7 +13,7 @@ import { NotebookModel, EXPECT, expectationOf } from './notebook/model.js';
 import { toIpynb, fromIpynb, messageToOutput, IpynbError } from './notebook/ipynb.js';
 import { NotebookView, renderOutputs } from './notebook/ui.js';
 import { ConsoleView } from './notebook/console.js';
-import { saveAutosave, loadAutosave, debounceSave, rememberRecent, listRecent, clearRecent, forgetRecent, savePanelState, loadPanelState, savePref, loadPref } from './notebook/storage.js';
+import { saveAutosave, loadAutosave, debounceSave, rememberRecent, listRecent, clearRecent, forgetRecent, savePanelState, loadPanelState, savePref, loadPref, MAX_RECENT_BYTES } from './notebook/storage.js';
 import { ToolPanel } from './notebook/panel.js';
 import { renderOutline } from './notebook/outline.js';
 import { renderSwarm } from './notebook/swarm-view.js';
@@ -899,8 +899,12 @@ export class App {
         if (reply?.content.status === 'error') {
           // A cell that declares its error is the lesson does not end the
           // run -- the badge on it says so, and the intro notebook's own
-          // teaching error stranded everything after it here.
-          if (expectationOf(cell) === EXPECT.ERROR) continue;
+          // teaching error stranded everything after it here. A kernel
+          // that died producing it still does.
+          if (expectationOf(cell) === EXPECT.ERROR) {
+            if (this.kernel.status === STATUS.DEAD) break;
+            continue;
+          }
           // Name where, and show where: the failing cell was usually off
           // screen, leaving a toast pointing at nothing.
           this.view.cellNode(cell.id)?.scrollIntoView({ block: 'center' });
@@ -1105,8 +1109,20 @@ export class App {
     const snapshot = {
       name: this.filename, title: outgoing.title,
       origin: 'replaced', url: null, ipynb: toIpynb(outgoing),
+      // Unique on purpose: dedup on the filename made each stash evict
+      // the last, and the open that follows evicted it again. Distinct
+      // snapshots must coexist; identical ones are skipped below, and
+      // the recents cap trims the tail.
+      source: `replaced:${Date.now().toString(36)}:${this.filename}`,
     };
     const json = JSON.stringify(snapshot.ipynb);
+    if (json.length > MAX_RECENT_BYTES) {
+      // rememberRecent would drop the body, minting a recovery entry
+      // with nothing in it -- a promise the click cannot keep. Say so
+      // instead, while saving is still possible.
+      this._toast('The notebook being replaced is too large to snapshot — Save it first if you need it.', 'error');
+      return Promise.resolve();
+    }
     return listRecent()
       .then((entries) => {
         if (entries.some((entry) => entry.ipynb === json)) return null;
@@ -1400,11 +1416,13 @@ export class App {
     // one click in this dialog that cannot be taken back, and it sits
     // beside Close; a misclick should cost a second click, not the list.
     const recentClear = this.document.querySelector('[data-recent-clear]');
+    let disarmTimer = null;
     recentClear?.addEventListener('click', async () => {
+      clearTimeout(disarmTimer);   // a stale timer must not disarm a fresh arming
       if (recentClear.dataset.armed !== 'true') {
         recentClear.dataset.armed = 'true';
         recentClear.textContent = 'Forget all — sure?';
-        setTimeout(() => {
+        disarmTimer = setTimeout(() => {
           recentClear.dataset.armed = '';
           recentClear.textContent = 'Forget all';
         }, 4000);
@@ -1655,6 +1673,9 @@ export class App {
     // reaches the tool rail and cells but never the menus. Landing in the
     // first editor makes the keyboard's first press already useful.
     launcher?.addEventListener('close', () => {
+      // Not on touch: programmatic focus pops the on-screen keyboard
+      // over a page the reader has not chosen to type into yet.
+      if (doc.defaultView?.matchMedia?.('(pointer: coarse)')?.matches) return;
       const active = doc.activeElement;
       if (!active || active === doc.body) this.view.focusEditor();
     });
@@ -1861,7 +1882,12 @@ export class App {
     const body = this.document.body;
     const hiding = body.dataset.hideCode !== 'true';
     if (hiding) body.dataset.hideCode = 'true';
-    else delete body.dataset.hideCode;
+    else {
+      delete body.dataset.hideCode;
+      // Cells added while code was hidden were never measured -- their
+      // editors come back at the estimate height until sized.
+      this.view.render();
+    }
   }
 
   toggleConsole() {
@@ -1939,7 +1965,9 @@ export class App {
     const dialog = this.document.querySelector('[data-open-url]');
     const input = this.document.querySelector('[data-open-url-input]');
     if (!dialog) return;
-    if (input) input.value = '';
+    // Whatever was typed last stays: a backdrop click or Escape must not
+    // be how a long pasted URL is lost, and stale text is one Ctrl+A away.
+    input?.select();
     dialog.showModal();
   }
 

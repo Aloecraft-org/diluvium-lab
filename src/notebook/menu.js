@@ -70,6 +70,7 @@ export function attachDropdown(button, itemsFn, { onClose } = {}) {
   button.setAttribute('aria-expanded', 'false');
 
   let outside = null;
+  let scrolled = null;
 
   const close = ({ refocus = false } = {}) => {
     if (menu.hidden) return;
@@ -80,6 +81,7 @@ export function attachDropdown(button, itemsFn, { onClose } = {}) {
     menu.replaceChildren();
     button.setAttribute('aria-expanded', 'false');
     document_.removeEventListener('pointerdown', outside, true);
+    document_.removeEventListener('scroll', scrolled, true);
     if (refocus) button.focus();
     onClose?.();
   };
@@ -110,6 +112,10 @@ export function attachDropdown(button, itemsFn, { onClose } = {}) {
       if (!menu.contains(event.target) && event.target !== button) close();
     };
     document_.addEventListener('pointerdown', outside, true);
+    // The menu is position: fixed, so a wheel-scrolled sheet would slide
+    // out from under it. Scrolling closes it, the way native menus do.
+    scrolled = (event) => { if (!menu.contains(event.target)) close(); };
+    document_.addEventListener('scroll', scrolled, true);
   };
 
   const focusable = () => [...menu.querySelectorAll('.menu-item')];

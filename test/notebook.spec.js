@@ -323,6 +323,20 @@ test.describe('the console shares the kernel', () => {
     await expect(consoleLog(page).locator('[data-console-stream="stdout"]')).toContainText('still fine');
   });
 
+  test('a held Enter cannot run the same command twice', async ({ page }) => {
+    await openLab(page);
+    // Two submits racing the same is_complete round trip: the busy guard
+    // used to be set only after it, so both passed and both executed.
+    await page.evaluate(async () => {
+      const view = window.lab.console;
+      view.input.value = 'races = (races or 0) + 1';
+      await Promise.all([view.submit(), view.submit()]);
+    });
+    await consoleInput(page).fill('print(races)');
+    await consoleInput(page).press('Enter');
+    await expect(consoleLog(page).locator('[data-console-stream="stdout"]').last()).toHaveText(/^1\n?$/);
+  });
+
   test('a console error carries the same plain-English hint a cell gets', async ({ page }) => {
     await openLab(page);
     await consoleInput(page).fill('nothing.here');

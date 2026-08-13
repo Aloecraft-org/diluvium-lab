@@ -3149,3 +3149,39 @@ just the list, and the empty state appears when the last row goes.
 Beside it, Forget all arms on the first click and fires on the second
 (landed with the audit batch), since the one irreversible click in that
 dialog sat next to Close.
+
+### The review of the pass, and what it caught ✅ done
+
+The branch ended the way stages do here: an adversarial review — four
+readers over the diff, one skeptic per claim, 18 of 25 findings
+surviving refutation — and the survivors fixed.
+
+The one that mattered most was in the newest promise. Replacement
+stashes were keyed on the bare filename, and `rememberRecent` dedupes
+on that key — so every new stash evicted the previous one, and opening
+`foo.ipynb` over edited foo evicted the stash *in the very call that
+created it*. Stash keys are unique now (dedupe-by-content still skips
+true duplicates, the recents cap still trims the tail), a stash too
+large to keep a body is refused with a toast instead of minting a
+recovery entry that cannot recover, and successive replacements each
+keep their own copy — tested.
+
+The autosize had three edges: report mode hides editors via CSS with
+`hidden` still false, so a re-render measured scrollHeight 0 and wrote
+2px cells (skipped via offsetParent now, and leaving report mode
+re-renders); the render-time `rows` attribute acted as a floor that
+kept a cell tall after its lines were deleted (rows pinned to 1 before
+measuring); and the manual resize handle fought the very next
+keystroke (dropped from cell editors; the console keeps its own).
+
+The rest: fixed menus close on scroll instead of detaching from their
+cell; closing the launcher no longer pops a phone's keyboard
+(focus-on-close is fine-pointer only); a pinned theme is applied by the
+head script as early as IndexedDB answers, so the OS-theme flash is
+the exception rather than every load; the Open-from-URL dialog keeps
+its last text selected rather than cleared, so neither Escape nor a
+backdrop click can eat a pasted URL; Forget-all's disarm timer is
+cleared on re-arm; and Run all's declared-error continue checks the
+kernel is still alive first. New tests cover the double-Enter console
+guard, the failed-URL reopen, the toast riding above a modal backdrop,
+and the theme write given its beat before the reload that reads it.

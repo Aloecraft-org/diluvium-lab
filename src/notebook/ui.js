@@ -266,7 +266,13 @@ export class NotebookView {
    * border the border-box height must include.
    */
   _autosize(editor) {
-    if (editor.hidden) return;
+    // offsetParent is null while the editor is display:none -- report
+    // mode hides via CSS with `hidden` still false, and a measurement
+    // there reads scrollHeight 0 and writes a 2px cell.
+    if (editor.hidden || !editor.offsetParent) return;
+    // The rows attribute is only the pre-measurement estimate, and as a
+    // floor it kept a cell tall after its lines were deleted.
+    editor.rows = 1;
     editor.style.height = 'auto';
     editor.style.height = `${editor.scrollHeight + 2}px`;
   }
