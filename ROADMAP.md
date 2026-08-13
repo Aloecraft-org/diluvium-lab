@@ -3119,7 +3119,10 @@ or last line, and walking past the newest entry restores the draft that
 was being typed. The strip says "· running…" and dims its input while
 the kernel is busy (the attribute was set with no rule reading it), its
 header gained Clear and a collapse ✕, and hiding it is a preference now
-— it was the one View toggle a reload quietly undid.
+— it was the one View toggle a reload quietly undid. On a phone the
+header keeps only the word Console and its controls; the explainer
+sentence wrapped to three lines there and said nothing the input does
+not.
 
 Kernel controls stopped assuming a mouse and a healthy kernel: Stop's
 tooltip tells the truth per-kernel (the in-page fallback promised a stop

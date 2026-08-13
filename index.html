@@ -1106,6 +1106,9 @@
   }
 
   @media (max-width: 34rem) {
+    /* The header's explainer wrapped to three lines on a phone; the
+       input placeholder-free strip below says enough. */
+    .console-hint { display: none; }
     .sheet { padding: .5rem .4rem 4rem; }
     .cell { padding: .35rem .25rem; }
     /* Outputs were indented to line up under the prompt, which on a
@@ -1486,7 +1489,7 @@
 <section class="console" data-console>
   <div class="console-head">
     <strong>Console</strong>
-    <span>— shares the kernel with the notebook. Enter runs; Shift+Enter adds a line.</span>
+    <span class="console-hint">— shares the kernel with the notebook. Enter runs; Shift+Enter adds a line.</span>
     <span class="spacer"></span>
     <span data-kernel-backend></span>
     <button type="button" data-console-clear
