@@ -3185,3 +3185,47 @@ cleared on re-arm; and Run all's declared-error continue checks the
 kernel is still alive first. New tests cover the double-Enter console
 guard, the failed-URL reopen, the toast riding above a modal backdrop,
 and the theme write given its beat before the reload that reads it.
+
+### A SQLite notebook, because the gallery said there wasn't one ✅ done
+
+The previous pass added a hostcall section to `sql.ipynb` and left its
+title alone, reasoning that "SQL, without SQLite" is still true *of a
+cell* — a sealed program has no database in it, and that is the point of a
+capability.
+
+That reasoning was right about the boundary and wrong about the reader.
+The gallery card said "…plus what real SQLite in the artifact would take",
+so the one SQL entry in the list advertised the absence of a feature that
+had shipped, and the section proving otherwise was buried at the bottom of
+a notebook nobody had a reason to open. A technicality that requires
+reading to the end is not a title.
+
+So: **`notebooks/sqlite.ipynb` — "SQLite, through a hostcall"**, findable
+by name. It shows the joins, subqueries, CTEs and constraint semantics the
+Lua engine refuses; then all four gates that stand in for the authorizer
+the C host has and no JavaScript driver exposes — `BEGIN`/`PRAGMA`/`ATTACH`
+refused by keyword, one statement per call, an exact parameter count, and
+a row cap that refuses rather than truncating; then `mode = "read"`
+leaving `sql/exec` unwired, which is the capability and the configuration
+agreeing rather than a check inside the connector. It ends on the database
+as a *file*, and says plainly that Download/Open are buttons a cell cannot
+press — a notebook drives the kernel, not the page.
+
+`sql.ipynb` became **"Building SQL in Lua"**, which is what it always was:
+a tokenizer, a parser and a compiler written from nothing in a sealed
+program. Its summary now points at the other notebook instead of
+describing SQLite as unbuilt. Gallery 9 → 10.
+
+**One thing found and not fixed, recorded rather than left for someone to
+trip over.** `sql.ipynb`'s cell 15 — the pure-Lua `SELECT` demo, unchanged
+by this pass and already on main — takes **~209 s** under
+`examples.spec.js` and **~2 s** under a standalone runner driving the same
+page and the same buttons. It passes, at 3.6 minutes, against a 300 s
+per-test timeout, and it *did* time out once in a full-file run. It is not
+machine load: load average was 0.8 on four cores, and the new
+`sqlite.ipynb` — seven swarm starts and far more SQL — runs in 3.8 s in
+that same harness. So the harness is not slow; that one cell is slow in
+it, and the difference between the two harnesses has not been isolated.
+Left as a named finding rather than a guess, because the obvious
+candidates (contention, the added cells, notebook size) are all ruled out
+by the numbers above.

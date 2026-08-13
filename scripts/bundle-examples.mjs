@@ -39,6 +39,7 @@ const ORDER = [
   'swarm.ipynb',
   'showing-things.ipynb',
   'sql.ipynb',
+  'sqlite.ipynb',
   'browser-check.ipynb',
 ];
 
