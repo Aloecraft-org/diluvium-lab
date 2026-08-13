@@ -909,8 +909,34 @@ export class App {
     this.model.setOutputs(cellId, outputs);
     this.model.setExecutionCount(cellId, reply.content.execution_count);
     this.model.setExecutionTiming(cellId, startedAt, new Date().toISOString());
+    await this._syncSwarm();
     if (advance) this._focusNext(cellId);
     return reply;
+  }
+
+  /**
+   * Let the panel see a swarm a *cell* started.
+   *
+   * `swarm.start`, `swarm.step` and `swarm.stop` reach the kernel straight
+   * from Lua, while `this.swarm.report` was written only by the panel's
+   * own buttons -- so a swarm a notebook created was invisible here. The
+   * panel went on saying "No swarm is running" while one was, and
+   * `sqlite.ipynb`, whose last cell tells the reader to open the panel and
+   * download the database it just made, sent them to an empty panel.
+   *
+   * So take a snapshot after every cell: one cheap call that answers
+   * `{running: false}` when there is no swarm, and the panel then shows
+   * what the kernel actually holds rather than the last thing a button
+   * did. A snapshot is a courtesy and never a reason to fail a cell.
+   */
+  async _syncSwarm() {
+    if (this.kernel.capabilities?.swarm !== true) return;
+    try {
+      this.swarm.report = await this.kernel.swarmSnapshot();
+      this.panel.refresh();
+    } catch {
+      /* the cell's own result stands regardless */
+    }
   }
 
   /**
