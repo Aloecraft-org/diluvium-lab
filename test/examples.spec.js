@@ -180,6 +180,34 @@ test.describe('the examples actually run', () => {
   }
 });
 
+// A refusal the notebook set up on purpose has to *read* like one. Every
+// gate in sqlite.ipynb runs clean and prints its refusal to stdout, so the
+// only thing separating "this is the lesson" from "this is broken" is the
+// wording -- and it has been misread as failure more than once.
+test('sqlite.ipynb says a deliberate refusal is a deliberate refusal', async ({ page }) => {
+  test.setTimeout(300_000);
+  await openLab(page);
+  await page.evaluate(() => window.lab.openExample('sqlite'));
+  await expect(page.locator('.cell').first()).toBeVisible();
+
+  const cells = page.locator('.cell');
+  for (const [i, step] of (await plan(page)).entries()) {
+    if (!step.code) continue;
+    await cells.nth(i).locator('[data-action="run"]').click();
+    await expect(page.locator('[data-kernel-status]')).toHaveText('idle', { timeout: 60_000 });
+  }
+
+  const printed = (await cells.locator('[data-outputs]').allInnerTexts()).join('\n');
+  // The four gates plus the two constraint lines: none of them is a fault.
+  for (const gate of ['BEGIN', 'PRAGMA', 'ATTACH', 'two statements',
+                      'too few params', 'all 12, cap is 5', 'a write']) {
+    expect(printed, `${gate} should read as designed`)
+      .toContain(`${gate} -> refused as designed`);
+  }
+  // And the other half of the assertion: a gate that stopped holding.
+  expect(printed).not.toContain('UNEXPECTED');
+});
+
 test.describe('cells that misbehave on purpose', () => {
   test('Run all steps over a never-returning cell and says so', async ({ page }) => {
     await openLab(page);
