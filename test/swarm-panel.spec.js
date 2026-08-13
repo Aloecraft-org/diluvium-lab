@@ -304,3 +304,71 @@ test('a file that is not a database is refused when it is chosen', async ({ page
   await expect(page.locator('[data-toast]')).toContainText('SQLite format 3');
   await expect(page.locator('[data-swarm-dbfile]')).not.toContainText('opens on Start');
 });
+
+// A swarm a *cell* starts is the panel's business too.
+//
+// `swarm.start`/`step`/`stop` reach the kernel straight from Lua, and the
+// panel's report was written only by its own buttons -- so a notebook that
+// built a database and then said "open the Instances panel and download
+// it" sent the reader to a panel insisting no swarm was running. These two
+// cover that path: the panel sees what a cell did, and the database it
+// made outlives the swarm, because a stopped swarm's database is exactly
+// the one someone wants to take away.
+
+const runCell = async (page, source) => {
+  await page.locator('[data-toolbar="add-cell"]').click();
+  const cell = page.locator('.cell').last();
+  await cell.locator('textarea').fill(source);
+  await cell.locator('button', { hasText: 'Run' }).first().click();
+  await expect(cell.locator('[data-outputs]')).toBeVisible({ timeout: 30_000 });
+  return cell;
+};
+
+test('a swarm started from a cell shows up in the panel', async ({ page }) => {
+  const problems = await openLab(page);
+  await openPanel(page);
+  await expect(page.locator('[data-tool-panel]')).toContainText('No swarm is running');
+
+  await runCell(page, [
+    'swarm.start{ root = [[ local o = queue.lookup("outbox") queue.push(o, "up") ]],',
+    '  caps = { "queue:*" } }',
+    'swarm.step(20)',
+    'print("started from a cell")',
+  ].join('\n'));
+
+  // The panel was never touched: it must have noticed anyway.
+  await expect(page.locator('[data-tool-panel]')).not.toContainText('No swarm is running');
+  await expect(page.locator('[data-swarm-roster] tr[data-instance]')).toHaveCount(1);
+  expect(problems).toEqual([]);
+});
+
+test('a database outlives the swarm that built it, and still exports', async ({ page }) => {
+  const problems = await openLab(page);
+  await openPanel(page);
+
+  await runCell(page, [
+    'swarm.start{ root = [[',
+    '  local calls = queue.declare("host/calls", { capacity = 4, exported = true })',
+    '  local replies = queue.declare("host/replies", { capacity = 4 })',
+    '  queue.push(calls, { tok = 1, call = "sql/exec",',
+    '    args = { sql = "CREATE TABLE kept (id INTEGER PRIMARY KEY)" } })',
+    '  queue.wait({ replies })',
+    ']],',
+    '  caps = { "queue:*", "host:sql/exec", "host:sql/query" },',
+    '  connectors = { sql = { path = "kept.db", mode = "readwrite" } } }',
+    'swarm.step(50)',
+    'swarm.stop()',
+    'print("stopped")',
+  ].join('\n'));
+
+  // Stopped -- and the database is still there to be taken away.
+  const db = page.locator('[data-swarm-database]');
+  await expect(db).toBeVisible();
+  await expect(db).toContainText('kept');
+  const [download] = await Promise.all([
+    page.waitForEvent('download'),
+    page.locator('[data-swarm="database-export"]').click(),
+  ]);
+  expect(download.suggestedFilename()).toMatch(/\.(sqlite|db)$/);
+  expect(problems).toEqual([]);
+});

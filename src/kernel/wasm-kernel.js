@@ -217,6 +217,7 @@ export class WasmKernel extends Kernel {
     this._host = null;
     this._listener = null;
     this._database = null;
+    this._lastSwarmReport = null;
     this._swarmInstance = null;
     this._swarmWasi = null;
     this._swarmRef = null;
@@ -583,6 +584,7 @@ export class WasmKernel extends Kernel {
     for (const [name, fn] of connectors) host.connect(name, fn);
     this._listener = listener;
     this._database = database;
+    this._lastSwarmReport = null;
     host.start(source, config);
     this._host = host;
     return this._swarmReport();
@@ -604,7 +606,16 @@ export class WasmKernel extends Kernel {
   }
 
   async swarmSnapshot() {
-    if (!this._host) return { running: false, roster: [], events: [], faults: [] };
+    // A stopped swarm is not the same as one that never ran. The panel
+    // has words for both -- "its roster below is the last thing the host
+    // saw" against "no swarm is running" -- and could never show the
+    // first, because this forgot everything the moment the host was
+    // freed. Remembering is also what leaves a stopped swarm's database
+    // reachable, which is the one someone actually wants to download.
+    if (!this._host) {
+      return this._lastSwarmReport
+        ?? { running: false, roster: [], events: [], faults: [] };
+    }
     return this._swarmReport();
   }
 
@@ -656,10 +667,18 @@ export class WasmKernel extends Kernel {
   async swarmStop() {
     if (!this._host) return { running: false, roster: [], events: [], faults: [] };
     const final = this._swarmReport();
+    this._lastSwarmReport = { ...final, running: false };
     this._host.free();
     this._host = null;
     this._listener = null;
-    this._database = null;
+    // The database deliberately outlives the swarm that built it. The
+    // final report still carries it, so the panel draws its Download
+    // button after a Stop -- and nulling it here made that button throw
+    // "this swarm wired no database, so there is nothing to export". A
+    // stopped swarm's database is precisely what someone wants to take
+    // away; the panel's own text promises it survives until the kernel
+    // restarts, not until the swarm does. It is replaced by the next
+    // `swarmStart` and released with the kernel.
     return { ...final, running: false };
   }
 
@@ -783,10 +802,13 @@ export class WasmKernel extends Kernel {
       case 'wake': return host.wake(target()).status === 'ok';
       case 'kill': return host.kill(target()).status === 'ok';
       case 'stop': {
+        // Same as `swarmStop`: remember what the host last saw, and keep
+        // the database, so a cell that stops its swarm still leaves the
+        // panel something to show and something to download.
+        this._lastSwarmReport = { ...this._swarmReport(), running: false };
         host.free();
         this._host = null;
         this._listener = null;
-        this._database = null;
         return true;
       }
       default:
