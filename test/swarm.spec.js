@@ -249,7 +249,7 @@ return 0`;
   const CONFIG = {
     caps: ['queue:*', 'host:time', 'host:sql/query', 'host:sql/exec'],
     budget: { instructions: 50_000_000, memoryKb: 4096 },
-    connectors: { time: true, sql: { mode: 'readwrite' } },
+    connectors: { time: true, sql: { scope: 'lab', access: 'readwrite' } },
   };
 
   test('a call is answered with its token echoed verbatim', async ({ page }) => {
@@ -271,7 +271,8 @@ queue.push(log, {tok = reply.tok, status = reply.status, gotvalue = reply.value 
     // arrival order -- the discipline `doc/Hostcall.md` exists to reserve.
     const report = await drive(page, HOSTCALL_ROOT(`
 queue.push(calls, {tok = 1, call = 'sql/exec',
-  args = {sql = 'CREATE TABLE t (id INTEGER PRIMARY KEY, name TEXT NOT NULL)'}})
+  args = {db = 'lab.db',
+          sql = 'CREATE TABLE t (id INTEGER PRIMARY KEY, name TEXT NOT NULL)'}})
 queue.push(calls, {tok = 2, call = 'time'})
 local got = {}
 for i = 1, 2 do
@@ -311,6 +312,47 @@ queue.push(log, {status = reply.status, detail = reply.detail, tok = reply.tok})
     // the sender's own diagnostic where silence diagnoses nothing.
     expect(answer.value.tok ?? null).toBeNull();
     expect(answer.value.detail).toContain('tok');
+  });
+
+  test('the host library reaches the same connector as the raw idiom', async ({ page }) => {
+    await openKernel(page);
+    // `host` is a guest library, not a connector: it writes the loop above
+    // and nothing else changes. So a program that mixes the two on one
+    // queue pair must work -- which is also what proves the library's
+    // token space (0x40000000 up) is disjoint from a hand-rolled one.
+    const report = await drive(page, HOSTCALL_ROOT(`
+local db = host.sql.open('lab.db')
+db.exec('CREATE TABLE t (id INTEGER PRIMARY KEY, k TEXT)')
+db.exec('INSERT INTO t (k) VALUES (?)', 'via the library')
+
+queue.push(calls, {tok = 3, call = 'sql/query',
+  args = {db = 'lab.db', sql = 'SELECT k FROM t'}})
+local _, reply = queue.wait({replies})
+
+local _, status, detail = db.try_exec('BEGIN')
+queue.push(log, {raw = reply.value.rows[1][1],
+                 lib = db.query('SELECT k FROM t').rows[1][1],
+                 refused = status, detail = detail})`), CONFIG);
+
+    const answer = report.events.find((e) => e.event === 'message' && e.queue === 'log');
+    // The row the library wrote, read back through a hand-rolled call.
+    expect(answer.value.raw).toBe('via the library');
+    expect(answer.value.lib).toBe('via the library');
+    // And `try_*` returns a refusal rather than raising, with the
+    // connector's own sentence intact.
+    expect(answer.value.refused).toBe('error');
+    expect(answer.value.detail).toContain('refused by this connector');
+  });
+
+  test('a database name that leaves the scope is denied, not clamped', async ({ page }) => {
+    await openKernel(page);
+    const report = await drive(page, HOSTCALL_ROOT(`
+local _, status, detail = host.try('sql/query', {db = '../secrets.db', sql = 'SELECT 1'})
+queue.push(log, {status = status, detail = detail})`), CONFIG);
+
+    const answer = report.events.find((e) => e.event === 'message' && e.queue === 'log');
+    expect(answer.value.status).toBe('denied');
+    expect(answer.value.detail).toContain('steps outside the granted scope');
   });
 
   test('an unwired connector is denied even when the grant allows it', async ({ page }) => {

@@ -3268,3 +3268,107 @@ installs an init script that deletes the database on every navigation — a
 reload there wipes the very preference under test. A new page shares the
 origin's storage and carries no init script, which is also a truer model
 of what a reader's next visit is.
+
+## Caught up to build7: a scope, a library, and headers
+
+The Lab pins v5.5.1_build7 and had been talking to it in build6's
+vocabulary. Three things were out of step, and the first two are the same
+kind of mistake: `doc/Host.md`'s acceptance test is that **a guest must
+not be able to tell two hosts apart**, and a program written here would
+not have run there.
+
+### The sql connector grants a scope now
+
+`{ path, mode, max_rows }` became `{ scope, access, create,
+max_result_rows }`, and every call names its database in `args.db`. That
+is not a rename with extra steps — it moves a decision. The *deployment*
+grants a directory; the *program* decides what to open inside it. Neither
+half can be written by the other, which is what makes the grant worth
+writing down, and it is why one connector can now hold several databases
+at once.
+
+`SqliteDatabase` kept the engine and gained `SqliteScope` above it, which
+owns the names. The guest-visible rules are `dhost_sql.c`'s `db_for`
+line for line: a name is flat by construction — no separators, no `.` or
+`..` — and one that is not is **denied** rather than clamped to something
+legal, because a program that asked for the wrong database should hear so
+rather than quietly get a different one. An absent name is `error`, not
+`denied`: that is a malformed request rather than an escape attempt, and
+the C host classifies it the same way. `create` follows the write grant
+and is refused outright when it contradicts it.
+
+Two orderings turned out to matter, and both were found by writing the
+notebook rather than by reading the C:
+
+- **The grant is checked before the database is.** `conn_sql` refuses an
+  ungranted `sql/exec` first, so a read-only deployment with an empty
+  scope says "`sql/exec` is not wired" rather than "that database could
+  not be created". Getting this backwards made the read-only cell of
+  `sqlite.ipynb` teach the wrong lesson.
+- **The old keys are refused by name**, with the replacement in the
+  sentence, exactly as `dhost.c` does. A config that looks accepted and
+  silently grants the default instead of what it says is the worst of the
+  three outcomes.
+
+The panel follows: a **Databases** section listing the scope's grant and
+every database a program has opened, each with its own Download button.
+The uploaded-file chooser gained an editable **name**, because in a scope
+model the name is the address — a file staged as `orders.db` is the one
+`host.sql.open("orders.db")` finds, and the name a file happened to have
+on someone's disk is rarely the one the program was written against.
+
+### The notebooks use the `host` library
+
+`sqlite.ipynb` and `sql.ipynb` each opened with a page of hostcall
+plumbing — declare the pair, increment a token, loop on `queue.wait` until
+one matches. That was the honest thing to write when it was the only way.
+It is not the thing to teach now that the runtime ships `host` as a
+permanent: the loop is the same loop, written once in the runtime instead
+of once per program.
+
+So the notebooks say `host.sql.open("lab.db")` and `db.exec(...)`, and
+`sqlite.ipynb` keeps the hand-rolled version *visible* — as a fenced block
+in the markdown, so a reader sees exactly what is being replaced without a
+cell having to run it. The sample **request handler** in the panel moved
+too, and got shorter by half.
+
+The two shapes are the ergonomics of the thing and the notebook now leans
+on both: `db.exec`/`db.query` raise, which is the readable default;
+`db.try_exec`/`db.try_query` return `value, status, detail`, which is what
+a line that *expects* to be refused wants. Every gate in the notebook uses
+the second, and prints `refused as designed` — plus `UNEXPECTED` if a gate
+ever stops holding, which is the assertion that was missing.
+
+`swarm.spec.js` gained the acceptance test that matters: a program mixing
+the library and a hand-rolled call **on the same queue pair** works, which
+is what proves the library's token space (`0x40000000` up) is disjoint
+from a small-integer one.
+
+### Allowlisted request headers
+
+`listen` takes `headers`, a lowercase allowlist, empty by default. The
+rules are `dhost_http.c`'s because they are the half a guest sees:
+repeats join `", "` per RFC 7230's list rule, an absent header is absent
+rather than present and empty, a value past 4096 bytes is **refused**
+(431) rather than truncated, and when the deployment allowlists anything
+the message always carries a `headers` map — so the shape a guest
+pattern-matches is decided by its config and not by its traffic. The panel
+says which headers are forwarded, or that none are.
+
+### Two things found on the way
+
+**The roster's caps column collapsed to one character per line.**
+`word-break: break-all` makes a cell's min-content width one character,
+and an auto-layout table honours that — so `queue:* host:sql/query` drew
+as a vertical strip while the other columns took the width.
+`overflow-wrap: break-word` wraps the same text without moving the
+minimum.
+
+**`examples.spec.js` had the de-flake bug, and it was costing 396
+seconds.** One cell of `sql.ipynb` — reproducibly, and on `main` before
+any of this — took the click on its Run button from ~300 ms to 396 s,
+which is what timed the test out. Same fault the two specs de-flaked
+earlier had: the cell toolbar is revealed on hover, so a Run button that
+resolves but is not yet visible makes `click()` wait rather than fail.
+Hovering the cell first, as a reader would, took the whole file from 5.2
+minutes to 41 seconds.

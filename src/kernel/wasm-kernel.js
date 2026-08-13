@@ -216,7 +216,7 @@ export class WasmKernel extends Kernel {
     try { this._host?.free(); } catch { /* the module is already gone */ }
     this._host = null;
     this._listener = null;
-    this._database = null;
+    this._sqlScope = null;
     this._lastSwarmReport = null;
     this._swarmInstance = null;
     this._swarmWasi = null;
@@ -580,10 +580,10 @@ export class WasmKernel extends Kernel {
     const host = new SwarmHost(exports, this._swarmRef, {
       drain: () => this._swarmWasi.drain(),
     });
-    const { connectors, listener, database } = buildConnectors(config.connectors ?? {}, { sqlite });
+    const { connectors, listener, scope } = buildConnectors(config.connectors ?? {}, { sqlite });
     for (const [name, fn] of connectors) host.connect(name, fn);
     this._listener = listener;
-    this._database = database;
+    this._sqlScope = scope;
     this._lastSwarmReport = null;
     host.start(source, config);
     this._host = host;
@@ -629,8 +629,15 @@ export class WasmKernel extends Kernel {
    *
    * @returns {Promise<Uint8Array|null>}
    */
-  async swarmDatabaseExport() {
-    return this._database ? this._database.export() : null;
+  async swarmDatabaseExport(name) {
+    if (!this._sqlScope) return null;
+    // A scope holds several databases, so the export names one. No name
+    // means the only one there is -- which is the common case and would
+    // otherwise make the panel's single-database Download button carry an
+    // argument it has no way to be wrong about.
+    const only = this._sqlScope.databases;
+    if (name === undefined) return only.length === 1 ? only[0].export() : null;
+    return this._sqlScope.export(name);
   }
 
   /**
@@ -746,11 +753,11 @@ export class WasmKernel extends Kernel {
       const host = new SwarmHost(this._swarmInstance.exports, this._swarmRef, {
         drain: () => this._swarmWasi.drain(),
       });
-      const { connectors, listener, database } = buildConnectors(
+      const { connectors, listener, scope } = buildConnectors(
         config.connectors ?? {}, { sqlite: this._sqlite });
       for (const [name, fn] of connectors) host.connect(name, fn);
       this._listener = listener;
-      this._database = database;
+      this._sqlScope = scope;
       this._host = host;
       this._eventMark = 0;
       return host.start(config.root, config);
@@ -836,6 +843,7 @@ export class WasmKernel extends Kernel {
         bound: this._listener.bound,
         queue: this._listener.queue,
         replyQueue: this._listener.replyQueue,
+        headers: this._listener.headers,
         pending: [...this._listener.pending.values()],
         exchanges: this._listener.exchanges.slice(-50),
       };
@@ -854,13 +862,20 @@ export class WasmKernel extends Kernel {
       }
       report.listener.exchanges = this._listener.exchanges.slice(-50);
     }
-    if (this._database) {
-      report.database = {
-        path: this._database.path,
-        readwrite: this._database.readwrite,
-        maxRows: this._database.maxRows,
-        statements: this._database.statements,
-        tables: this._database.tables,
+    if (this._sqlScope) {
+      report.sql = {
+        scope: this._sqlScope.scope,
+        readwrite: this._sqlScope.readwrite,
+        create: this._sqlScope.create,
+        maxResultRows: this._sqlScope.maxResultRows,
+        // Every database a program has named, which is a thing that grows
+        // while the swarm runs: the scope is granted up front and the
+        // databases inside it are opened on first use.
+        databases: this._sqlScope.databases.map((db) => ({
+          name: db.name,
+          statements: db.statements,
+          tables: db.tables,
+        })),
       };
     }
     return report;

@@ -448,10 +448,19 @@ token, same capability check, same `ok`/`denied`/`error`/`malformed`
 vocabulary. What differs is what stands behind each one, and the Lab says
 which:
 
+A guest does not usually write that protocol by hand. Since v5.5.1_build7
+the runtime ships **`host`**, a guest library baked in beside `queue` that
+declares the queue pair, correlates the tokens and checks the status — so
+`host.sql.open("lab.db")`, `host.time()`, `host.fs.read(…)` are one line
+each and nothing on the wire changed. It is part of the *runtime*, not of
+either host, so the same calls reach both. `doc/Hostcall.md` is the
+protocol underneath, and **SQLite, through a hostcall** shows both
+spellings side by side.
+
 | connector | here | in production |
 | :--- | :--- | :--- |
 | `time` | wall clock | wall clock — identical |
-| `sql/query`, `sql/exec` | real SQLite, compiled to WASM (`vendor/sql-wasm.js`) | the system SQLite |
+| `sql/query`, `sql/exec` | real SQLite, compiled to WASM (`vendor/sql-wasm.js`), in a scope that is a name rather than a directory | the system SQLite, in a granted directory |
 | `listen` | a request composer in the panel | a bound socket |
 | `crypto/*` | a vendored synchronous SHA-256/HMAC | the same, over the runtime's SHA-256 |
 | `rng`, `js/invoke` | `crypto`, a registered function | host's choice |
@@ -502,15 +511,43 @@ it has not parsed, which is the same question answered by the thing that
 will run the statement. It is side-effect free — preparing is not running,
 and a request whose tail is `DROP TABLE t` leaves the table standing.
 
+### A scope, and the databases in it
+
+Since v5.5.1_build7 the configuration grants a **scope** — a directory —
+and the *program* names its database inside it:
+
+```lua
+connectors = { sql = { scope = "lab", access = "readwrite", max_result_rows = 64 } }
+```
+
+```lua
+local db = host.sql.open("orders.db")     -- guest-side; args.db on the wire
+db.exec("INSERT INTO orders (item) VALUES (?)", "widget")
+```
+
+Neither half can be written by the other, which is what makes the grant
+worth writing down. A name is a filename within the scope, never a path: a
+separator or a `..` is **denied** rather than clamped to something legal,
+because a program that asked for the wrong database should hear so rather
+than quietly get a different one. Whether an unnamed database may be
+*created* is `create`, which follows the write grant.
+
+There is no filesystem behind sql.js, so the scope is a name rather than a
+directory — the same bargain the listener's unbound port makes, and the
+panel says so. What is not approximated is the part a guest can observe:
+which names are legal, what a bad one does, and whether a new one may
+appear.
+
 ### The database is a file
 
 The database lives in memory — there is no filesystem behind a browser tab
 — but it is a real SQLite database, and it can leave. **Download .sqlite**
-in the Instances panel exports it, and what comes out begins `SQLite format
-3` because SQLite serialised it; `sqlite3`, a GUI, or another Lab session
-will open it. **Open .sqlite…** beside the program picker goes the other
-way, staged until you press Start because the database is built when the
-swarm is.
+in the Instances panel exports it, one button per database in the scope,
+and what comes out begins `SQLite format 3` because SQLite serialised it;
+`sqlite3`, a GUI, or another Lab session will open it. **Open .sqlite…**
+beside the program picker goes the other way, staged until you press Start
+because the scope is built when the swarm is — under a name you can edit,
+because the name is how a program reaches it.
 
 A file that is not a database is refused when you choose it, by name.
 That check is not decoration: sql.js accepts arbitrary bytes without

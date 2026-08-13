@@ -161,6 +161,13 @@ test.describe('the examples actually run', () => {
       for (const [i, step] of (await plan(page)).entries()) {
         if (!step.code || step.expect === 'never-returns') continue;
         const cell = cells.nth(i);
+        // Hover first, as a reader would. The cell toolbar is revealed on
+        // hover, and a Run button that resolves but is not yet visible
+        // makes `click()` wait out the whole test rather than fail --
+        // measured at 396s on one cell of sql.ipynb, and reproducible.
+        // Same fault the two de-flaked specs had, in the same shape.
+        await cell.scrollIntoViewIfNeeded();
+        await cell.hover();
         await cell.locator('[data-action="run"]').click();
         await expect(page.locator('[data-kernel-status]')).toHaveText('idle', { timeout: 60_000 });
 
@@ -193,7 +200,10 @@ test('sqlite.ipynb says a deliberate refusal is a deliberate refusal', async ({ 
   const cells = page.locator('.cell');
   for (const [i, step] of (await plan(page)).entries()) {
     if (!step.code) continue;
-    await cells.nth(i).locator('[data-action="run"]').click();
+    const cell = cells.nth(i);
+    await cell.scrollIntoViewIfNeeded();
+    await cell.hover();
+    await cell.locator('[data-action="run"]').click();
     await expect(page.locator('[data-kernel-status]')).toHaveText('idle', { timeout: 60_000 });
   }
 

@@ -243,7 +243,15 @@
   .swarm-roster td { padding: .25rem .35rem; border-bottom: 1px solid var(--sunk); vertical-align: top; }
   .swarm-roster .swarm-num { font-family: var(--mono); white-space: nowrap; }
   .swarm-roster .swarm-id { font-family: var(--mono); white-space: nowrap; }
-  .swarm-caps { font-family: var(--mono); font-size: .72rem; color: var(--quiet); word-break: break-all; }
+  /* `break-all` made this column's min-content width one character, and an
+     auto-layout table honours that: the caps collapsed into a one-character
+     vertical strip while the other columns took the width. `break-word`
+     keeps the wrapping without moving the minimum, so the column is at
+     least as wide as one capability name and only over-long ones break. */
+  .swarm-caps {
+    font-family: var(--mono); font-size: .72rem; color: var(--quiet);
+    word-break: normal; overflow-wrap: break-word; min-width: 8rem;
+  }
   .swarm-detail td { color: var(--bad); font-size: .74rem; padding-top: 0; }
   .swarm-queues td { padding-top: 0; }
   .swarm-queue {
@@ -303,6 +311,11 @@
     letter-spacing: .04em; color: var(--quiet);
   }
   .swarm-listener p, .swarm-database p { font-size: .76rem; margin: .2rem 0; }
+  .swarm-db { margin: .5rem 0 0; }
+  .swarm-db h4 {
+    font-size: .76rem; margin: 0; font-family: var(--mono); font-weight: 600;
+  }
+  .swarm-dbname { font-family: var(--mono); font-size: .72rem; }
   .swarm-request { display: flex; gap: .3rem; margin: .35rem 0; }
   .swarm-request input[data-listener-path] { width: 7rem; }
   .swarm-request input[data-listener-body] { flex: 1; min-width: 4rem; }
