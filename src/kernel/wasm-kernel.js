@@ -11,6 +11,7 @@ import { createWasi, unshimmedImports, HARD_MAX_BYTES } from './wasi.js';
 import { SwarmHost, swarmImports, swarmProblems, swarmCapable, ensureStack } from './swarm.js';
 import { buildConnectors } from './connectors.js';
 import { loadSqlite } from './sqlite.js';
+import { topologyOf, mermaidOf } from './topology.js';
 import {
   RECORD, KEYWORD_CANDIDATES, makeNonce, executeChunk, isCompleteChunk,
   completeChunk, languageInfoChunk, dumpChunk, widgetChunk, luaLiteral,
@@ -736,6 +737,13 @@ export class WasmKernel extends Kernel {
       return host.start(config.root, config);
     }
 
+    // Stopping something already stopped is a no-op, not an error. A
+    // notebook re-run from the top opens with `swarm.stop()` to clear
+    // whatever the last run left, and throwing there would make the tidy
+    // thing to write also the thing that breaks the cell. `swarm.spec.js`
+    // already calls shutdown idempotent; this is that, from the cell side.
+    if (op === 'stop' && !this._host) return false;
+
     this._requireSwarm();
     const host = this._host;
     const target = () => host.resolve(args.target);
@@ -765,6 +773,12 @@ export class WasmKernel extends Kernel {
       }
       case 'status':
         return host.status();
+      // The topology, as Mermaid text, for a cell that wants to *show* the
+      // shape rather than read a roster. The graph is a pure function of
+      // the report the panel already draws from, so this is the same
+      // picture reached from the other side of the kernel.
+      case 'mermaid':
+        return mermaidOf(topologyOf(this._swarmReport()));
       case 'hibernate': return host.hibernate(target()).status === 'ok';
       case 'wake': return host.wake(target()).status === 'ok';
       case 'kill': return host.kill(target()).status === 'ok';

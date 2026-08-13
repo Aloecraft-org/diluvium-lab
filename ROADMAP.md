@@ -2873,3 +2873,58 @@ And one bug the rendered picture caught that the drawing had already had
 fixed: `mermaidOf` still labelled the root "1 root · root", because `start`
 pre-aliases the root to `root` and the role was appended anyway. Same fix,
 in the second place it was needed.
+
+### The gallery caught up ✅ done
+
+Three passes added `swarm`, real SQLite and a topology graph, and the
+example notebooks knew about none of them. The gallery moved 8 → 9.
+
+**`notebooks/swarm.ipynb` — "A swarm, from a cell"** is the one that was
+missing outright. It probes for the layer rather than a version string,
+spawns two workers, shows a widening grant refused, lets a budget stop a
+runaway, and ends on the topology. It also leads with the mistake that
+actually bites people, because it bit the discofetch notebook and cost an
+afternoon: **`system/lifecycle` and `system/events` are declared, not
+looked up.** `queue.lookup` returns nil and the failure surfaces later as
+`bad argument #1 to 'push' (number expected, got nil)`, pointing at the
+push rather than at the declaration that never happened.
+
+One honest detail it states rather than smooths over: a budget kill reaches
+the *guest* as `faulted` on `system/events`, and the panel's roster calls
+the same death `exceeded` with the instruction count beside it. The host
+asked `dv_exceeded`; the guest was told only that its child died. Two views
+of one fact, and a notebook that showed one and hid the other would be
+teaching a reader to distrust the panel.
+
+**`sql.ipynb` was not rewritten, because its premise is still true.** "SQL,
+without SQLite" is about a cell, and a cell still has no SQLite — the
+artifact links none. What changed is on the other side of the boundary, so
+the notebook gained a note at the top and a section at the bottom: the same
+opening `SELECT`, with `ORDER BY`, asked of the host by hostcall and
+answered by real SQLite; and a `BEGIN` refused, so the shape of the
+confinement is visible rather than described. The closing section that used
+to be "what real SQLite would take" now says what arrived *instead* — a
+host connector rather than a guest-side library — with a table of the
+difference, because those are not the same feature and conflating them
+would make the recipe look delivered.
+
+**`swarm.mermaid()`** was added to the cell API for it. The panel could
+draw the topology and a notebook could not reach it, which made the
+feature panel-only for no reason; it is the same pure function over the
+same report, so the two cannot disagree.
+
+**And `swarm.stop()` is idempotent now.** Stopping a stopped swarm threw,
+which made the tidy thing to write at the top of a notebook — clear
+whatever the last run left — also the thing that broke the cell.
+`swarm.spec.js` already called shutdown idempotent from the host side;
+this is the same property from the cell side.
+
+Two of my own mistakes worth recording, since both were caught by running
+rather than reading. The first notebook I generated had `source` arrays
+whose lines carried no `\n`, so every cell arrived as one line and four
+cells failed to parse — and my attempt to repair the file in place joined
+those lines and destroyed the breaks permanently, so it had to be
+regenerated from source. And a Lua comment I put in `lua-harness.js`
+contained backticks, which closed the JavaScript template literal holding
+the harness and broke every module that imports it; the page went blank
+with no console error, and `node -e "import(...)"` found it in one line.

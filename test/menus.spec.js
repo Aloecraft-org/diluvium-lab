@@ -273,7 +273,14 @@ test.describe('the launcher', () => {
     await openLab(page);
     await page.locator('[data-home]').click();
     await expect(page.locator('[data-launcher]')).toBeVisible();
-    await expect(page.locator('[data-launcher-examples] .example-entry')).toHaveCount(8);
+    // Counted from the bundle rather than written down: a hardcoded number
+    // here is a thing to remember on every notebook added, and forgetting
+    // it fails a launcher test for a reason that has nothing to do with
+    // the launcher.
+    const bundled = await page.evaluate(async () =>
+      (await import('./src/notebook/examples.js')).EXAMPLES.length);
+    expect(bundled).toBeGreaterThan(1);
+    await expect(page.locator('[data-launcher-examples] .example-entry')).toHaveCount(bundled);
 
     // Opening an example from it adopts the notebook and closes it.
     await page.locator('[data-launcher-examples] .example-entry').first().click();

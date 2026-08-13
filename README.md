@@ -222,7 +222,8 @@ situation someone reaches for it would be worth less than no button.
 | **Messages and queues** | msgpack, `queue.declare` / `push` / `pop` / `info`, endpoints |
 | **Sandboxed instances** | budgets, isolation, and what a sandboxed run refuses |
 | **Showing things** | charts, event streams, controls, raw mime bundles |
-| **SQL, without SQLite** | a relational engine and a working SQL parser in pure Lua |
+| **A swarm, from a cell** | programs that spawn programs: grants that only narrow, budgets that stop a runaway, and the shape they make |
+| **SQL, without SQLite** | a relational engine and a working SQL parser in pure Lua — then the same query asked of a real SQLite, by hostcall |
 | **Browser check** | what works in the browser you are reading this in |
 
 Opening one replaces what is on screen, so save first if you have unsaved

@@ -566,6 +566,10 @@ if type(json) == "table" and type(io) == "table" then
     drain = function(__t, __q) return __ask("drain", { target = __t, queue = __q }) end,
     step = function(__n) return __ask("step", { n = __n or 1 }) end,
     status = function() return __ask("status") end,
+    -- The shape, as Mermaid text: print it in a cell, or paste it into a
+    -- PR. The panel draws the same graph from the same model, so the two
+    -- can never disagree about what happened.
+    mermaid = function() return __ask("mermaid") end,
     hibernate = function(__t) return __ask("hibernate", { target = __t }) end,
     wake = function(__t) return __ask("wake", { target = __t }) end,
     kill = function(__t) return __ask("kill", { target = __t }) end,

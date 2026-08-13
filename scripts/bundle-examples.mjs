@@ -36,6 +36,7 @@ const ORDER = [
   'secure-functions.ipynb',
   'messaging.ipynb',
   'sandbox.ipynb',
+  'swarm.ipynb',
   'showing-things.ipynb',
   'sql.ipynb',
   'browser-check.ipynb',
