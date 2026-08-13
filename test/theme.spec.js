@@ -72,4 +72,43 @@ test.describe('the theme', () => {
     expect(dark).not.toBeNull();
     expect(dark).not.toBe(light);
   });
+
+  // A dropdown's <option>s are painted by the platform, not the page, and
+  // Chrome on Linux and Windows draws that surface light whatever
+  // `color-scheme` says. The select is transparent so it sits in the
+  // toolbar; without an explicit colour on the options the transparency
+  // and the white `color: inherit` are what the popup gets, and a dark
+  // theme's runtime dropdown comes out white-on-white -- readable only by
+  // the one highlighted row. So: every option names both colours, in both
+  // themes, and they contrast.
+  test('an open dropdown is legible in both themes, not white on white',
+    async ({ page }) => {
+      await openLab(page);
+
+      for (const theme of ['dark', 'light']) {
+        await viaControl(page, `theme-${theme}`);
+        const opts = await page.evaluate(() =>
+          [...document.querySelectorAll('select')]
+            .filter((s) => s.offsetParent !== null)
+            .flatMap((s) => [...s.options].map((o) => {
+              const cs = getComputedStyle(o);
+              return { color: cs.color, background: cs.backgroundColor };
+            })));
+
+        expect(opts.length).toBeGreaterThan(0);
+        for (const o of opts) {
+          // Neither may be transparent: a transparent option is one that
+          // takes whatever the platform painted underneath it.
+          expect(o.background, `${theme}: option background`).not.toMatch(/rgba\(0, 0, 0, 0\)|transparent/);
+          const lum = (c) => {
+            const [r, g, b] = c.match(/\d+/g).map(Number);
+            return (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255;
+          };
+          // Not a full WCAG figure -- just that the two are not the same
+          // surface, which is the bug this guards.
+          expect(Math.abs(lum(o.color) - lum(o.background)),
+            `${theme}: option contrast`).toBeGreaterThan(0.4);
+        }
+      }
+    });
 });
