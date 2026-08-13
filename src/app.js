@@ -665,16 +665,29 @@ export class App {
           if (!looksLikeSqlite(bytes)) {
             throw new Error(`${arg.name} does not begin "SQLite format 3", so it is not a database file`);
           }
-          this.swarm.staged = { name: arg.name, bytes };
+          // Named, because the scope model means the name is how a
+          // program reaches it: `host.sql.open("orders.db")` finds the
+          // file staged as `orders.db` and nothing else. The chooser lets
+          // that name be edited for exactly this reason.
+          this.swarm.staged = { name: databaseNameOf(arg.name), bytes };
+          break;
+        }
+        case 'rename-database': {
+          if (!this.swarm.staged) break;
+          this.swarm.staged = { ...this.swarm.staged, name: databaseNameOf(arg) };
           break;
         }
         case 'clear-database':
           this.swarm.staged = null;
           break;
         case 'export-database': {
-          const bytes = await this.kernel.swarmDatabaseExport();
-          if (!bytes) throw new Error('this swarm wired no database, so there is nothing to export');
-          downloadBytes(this.swarm.report?.database?.path || 'lab.sqlite', bytes);
+          const bytes = await this.kernel.swarmDatabaseExport(arg);
+          if (!bytes) {
+            throw new Error(arg
+              ? `no database named '${arg}' has been opened in this deployment's scope`
+              : 'this swarm wired no database, so there is nothing to export');
+          }
+          downloadBytes(arg || 'lab.sqlite', bytes);
           break;
         }
         case 'step':
@@ -799,7 +812,14 @@ export class App {
       ...program.config,
       connectors: {
         ...program.config.connectors,
-        sql: { ...(sql === true ? {} : sql), bytes: this.swarm.staged.bytes },
+        sql: {
+          ...(sql === true ? {} : sql),
+          // Present in the scope from the start, under the name it was
+          // staged as -- which is what "the deployment grants a directory
+          // and the program names its database" means when the directory
+          // is a Map.
+          databases: { [this.swarm.staged.name]: this.swarm.staged.bytes },
+        },
       },
     };
   }
@@ -2351,6 +2371,20 @@ function emptyRecent(document_) {
   p.dataset.recentEmpty = 'true';
   p.textContent = 'Nothing yet. Notebooks you open from a file or a URL turn up here.';
   return p;
+}
+
+/**
+ * A picked file's name, as a database name inside a scope.
+ *
+ * The scope model's names are flat by construction -- no separators, no
+ * `.`/`..` -- and the connector denies one that is not. A chooser that
+ * staged `../etc/passwd` and let Start refuse it would be putting the
+ * complaint one step further from the mistake than it needs to be, so the
+ * name is made into a name here.
+ */
+function databaseNameOf(name) {
+  const base = String(name ?? '').split(/[/\\]/).pop().replace(/\0/g, '');
+  return base === '' || base === '.' || base === '..' ? 'lab.db' : base.slice(0, 127);
 }
 
 /** Hand bytes to the browser as a file. Same shape as bytecode-view.js's. */

@@ -352,7 +352,7 @@ export class WorkerKernel extends Kernel {
   // the same way everything else does. Copied rather than transferred: the
   // worker's own copy has to stay usable, which is the whole point of
   // exporting one.
-  async swarmDatabaseExport() { return this._call('swarmDatabaseExport', []); }
+  async swarmDatabaseExport(name) { return this._call('swarmDatabaseExport', [name]); }
   async swarmPush(id, queue, value) { return this._call('swarmPush', [id, queue, value]); }
   async swarmRequest(request) { return this._call('swarmRequest', [request]); }
   async swarmControl(action, id) { return this._call('swarmControl', [action, id]); }

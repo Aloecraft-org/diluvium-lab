@@ -101,25 +101,197 @@ export async function loadSqlite({
 // module. So the baked page has no SQL connector for the same reason it
 // has no swarm panel, and says so in the panel rather than 404ing.
 
-export class SqliteDatabase {
+/** The host's bound on databases open at once. `DH_SQL_MAX_DBS`. */
+export const MAX_DATABASES = 8;
+
+/** The host's bound on a name. `DH_NAME_MAX`, minus its NUL. */
+export const MAX_NAME = 127;
+
+/**
+ * A granted directory, and the databases a program names inside it.
+ *
+ * This is `host/dhost_sql.c`'s model since v5.5.1_build7, and the reason
+ * it is worth copying exactly rather than approximating: the *deployment*
+ * grants a scope, and the *program* decides which database it wants
+ * within that scope (`host.sql.open("orders.db")` guest-side, `args.db`
+ * on the wire). Neither half can be written by the other, which is what
+ * makes the grant worth writing down.
+ *
+ * There is no filesystem behind sql.js, so the scope is a name rather
+ * than a directory -- the same "carried because it is topology" bargain
+ * the listener's unbound port makes, and the panel says so. What is *not*
+ * approximated is the part a guest can observe: which names are legal,
+ * what happens to one that is not, and whether an unknown name may be
+ * created. Those are the guest-visible half of the contract, and they
+ * match the C host call for call.
+ */
+export class SqliteScope {
   /**
    * @param {object} SQL the initialised sql.js factory
-   * @param {object} [config] the connector's configuration, in
+   * @param {object} config the connector's configuration, in
    *   `host/types/host.lua`'s `diluvium.HostSql` shape
-   * @param {Uint8Array} [config.bytes] an existing database file to open,
-   *   rather than starting empty. Not part of `HostSql` — the C host names
-   *   a path and opens it; there is no path here, so the bytes come in
-   *   directly. See `SqliteDatabase.export`.
+   * @param {Object<string, Uint8Array>} [config.databases] existing
+   *   database files, by name, present in the scope from the start. Not
+   *   part of `HostSql` -- the C host finds files in a real directory and
+   *   there is none here, so bytes arrive directly. See `export`.
    */
-  constructor(SQL, { path = ':memory:', mode = 'read', max_rows: maxRows = 1024, bytes = null } = {}) {
-    // Kept, and not honoured as a *file*: there is no filesystem behind
-    // sql.js, so the path names a database rather than locating one. It is
-    // carried because it is topology -- a deployment moving to the C host
-    // should not have to discover the field exists -- and the panel shows
-    // it beside a sentence saying what does and does not persist. Same
-    // reasoning as the listener's unbound port.
-    this.path = path;
-    this.readwrite = mode === 'readwrite';
+  constructor(SQL, {
+    scope = 'lab', access = 'read', create = undefined,
+    max_result_rows: maxResultRows = 1024, databases = {},
+    // Named only to be refused. See below.
+    path = undefined, mode = undefined, max_rows: maxRows = undefined,
+  } = {}) {
+    // The pre-build7 spelling. Refused by name with the replacement in the
+    // sentence, exactly as `dhost.c` refuses it, because the alternative is
+    // a config that looks accepted and silently grants the default instead
+    // of what it says.
+    if (path !== undefined) {
+      throw new Error("connectors.sql.path is gone; the config grants a directory "
+        + "(scope) and the program names its database inside it (host.sql.open)");
+    }
+    if (mode !== undefined) {
+      throw new Error("connectors.sql.mode is now access, spelled the same "
+        + '("read" or "readwrite")');
+    }
+    if (maxRows !== undefined) {
+      throw new Error('connectors.sql.max_rows is now max_result_rows, which says '
+        + 'what it caps: rows in one query result');
+    }
+    if (typeof scope !== 'string' || scope === '') {
+      throw new Error('connectors.sql.scope names the granted directory and is required');
+    }
+    if (access !== 'read' && access !== 'readwrite') {
+      throw new Error(`connectors.sql.access is "read" or "readwrite", not ${JSON.stringify(access)}`);
+    }
+    this.SQL = SQL;
+    this.scope = scope;
+    this.readwrite = access === 'readwrite';
+    // An open-mode detail, and it defaults to the write grant: a read-only
+    // deployment creating files would be the config contradicting itself.
+    this.create = create === undefined ? this.readwrite : Boolean(create);
+    if (this.create && !this.readwrite) {
+      // Refused rather than half-honoured: a read-only handle cannot make
+      // a file, so this config asks for something it cannot have.
+      throw new Error('connectors.sql.create needs access "readwrite"; a read-only '
+        + 'deployment cannot create a database');
+    }
+    this.maxResultRows = maxResultRows;
+    /** @type {Map<string, SqliteDatabase>} name -> the open database */
+    this.dbs = new Map();
+    for (const [name, bytes] of Object.entries(databases ?? {})) {
+      const why = nameFault(name);
+      if (why) throw new Error(`the staged database ${JSON.stringify(name)} ${why}`);
+      this.dbs.set(name, new SqliteDatabase(SQL, {
+        name, readwrite: this.readwrite, maxRows: maxResultRows, bytes,
+      }));
+    }
+  }
+
+  /**
+   * `args.db` -> an open database, or a refusal in the connector's own
+   * vocabulary.
+   *
+   * A name that steps outside the scope is **denied**, not clamped to
+   * something inside it: a program that asked for the wrong thing should
+   * hear so rather than quietly get a different database. A name that is
+   * merely absent is an `error`, because on the C host that is what an
+   * ungranted `create` produces.
+   *
+   * @returns {{db: SqliteDatabase}|{status: string, detail: string}}
+   */
+  open(name) {
+    if (typeof name !== 'string' || name === '') {
+      return {
+        status: 'error',
+        detail: 'a scoped sql deployment answers calls that name their database: '
+          + 'args.db = "name" (host.sql.open picks it)',
+      };
+    }
+    if (name.length > MAX_NAME) {
+      return { status: 'error', detail: 'the database name is longer than a name' };
+    }
+    const why = nameFault(name);
+    if (why) {
+      return {
+        status: 'denied',
+        detail: `the database name '${name}' steps outside the granted scope; `
+          + 'a name is a filename within it, not a path',
+      };
+    }
+    const open = this.dbs.get(name);
+    if (open) return { db: open };
+    if (this.dbs.size >= MAX_DATABASES) {
+      return {
+        status: 'error',
+        detail: `this deployment already has ${this.dbs.size} databases open, `
+          + "which is the host's bound",
+      };
+    }
+    if (!this.create) {
+      return {
+        status: 'error',
+        detail: `no database named '${name}' in this deployment's scope, and `
+          + 'creating one is not granted (config.connectors.sql.create)',
+      };
+    }
+    const db = new SqliteDatabase(this.SQL, {
+      name, readwrite: this.readwrite, maxRows: this.maxResultRows,
+    });
+    this.dbs.set(name, db);
+    return { db };
+  }
+
+  /** Every database that has been named, in the order it first was. */
+  get databases() { return [...this.dbs.values()]; }
+
+  /** One database's bytes, for the panel's Download button. */
+  export(name) {
+    const db = this.dbs.get(name);
+    return db ? db.export() : null;
+  }
+
+  close() {
+    for (const db of this.dbs.values()) db.close();
+    this.dbs.clear();
+  }
+}
+
+/**
+ * Why a name is not a name, or the empty string when it is one.
+ *
+ * Flat by construction: no separators, no `.`/`..`, no NUL. The C host
+ * kills traversal here rather than after resolution, and so does this --
+ * the difference being that it also has a realpath check afterwards for
+ * the file itself being a symlink out of the scope, which is a thing a
+ * `Map` cannot have.
+ */
+function nameFault(name) {
+  if (typeof name !== 'string' || name === '') return 'is not a name';
+  if (name.includes('\0')) return 'has an embedded NUL';
+  if (name.includes('/') || name.includes('\\')) return 'is a path, not a name';
+  if (name === '.' || name === '..') return 'is a directory, not a name';
+  return '';
+}
+
+export class SqliteDatabase {
+  /**
+   * One database inside a scope. Constructed by `SqliteScope`, which owns
+   * the name-checking and the access grant -- this class is the engine.
+   *
+   * @param {object} SQL the initialised sql.js factory
+   * @param {object} [config]
+   * @param {Uint8Array} [config.bytes] an existing database file to open,
+   *   rather than starting empty. See `SqliteDatabase.export`.
+   */
+  constructor(SQL, { name = 'lab.db', readwrite = false, maxRows = 1024, bytes = null } = {}) {
+    // The name within the scope, and not honoured as a *file*: there is no
+    // filesystem behind sql.js, so the name names a database rather than
+    // locating one. It is carried because it is topology -- a deployment
+    // moving to the C host should not have to discover the field exists --
+    // and the panel shows it beside a sentence saying what does and does
+    // not persist. Same reasoning as the listener's unbound port.
+    this.name = name;
+    this.readwrite = readwrite;
     this.maxRows = maxRows;
     this.statements = 0;
     // `new SQL.Database(bytes)` opens a real SQLite file, so an upload is

@@ -132,53 +132,37 @@ const SERVICE = `
 -- apart.
 local inq  = queue.declare('http_in',  {capacity = 16})
 local outq = queue.declare('http_out', {capacity = 16, exported = true})
-local calls   = queue.declare('host/calls',   {capacity = 8, exported = true, on_full = 'reject'})
-local replies = queue.declare('host/replies', {capacity = 8})
 local log = queue.declare('log', {capacity = 64, exported = true})
 
--- The correlation token is required from the first prototype on. A guest
--- may have several requests outstanding and replies arrive in whatever
--- order the host answers them, so matching by arrival order is a bug
--- waiting for concurrency.
-local next_tok = 0
-local function hostcall (name, args)
-  next_tok = next_tok + 1
-  local tok = next_tok
-  queue.push(calls, {tok = tok, call = name, args = args})
-  while true do
-    local _, reply = queue.wait({replies})
-    if reply.tok == tok then return reply end
-    queue.push(log, ('a reply arrived for token %s, which is not %s')
-      :format(tostring(reply.tok), tostring(tok)))
-  end
-end
+-- \`host\` is a guest library (v5.5.1_build7+), not a connector: it is the
+-- token loop, the correlation and the status check, written once in the
+-- runtime instead of once per program. What goes over the wire is
+-- unchanged -- {tok, call, args} out, {tok, status, value} back -- and
+-- messaging.ipynb builds it by hand for anyone who wants to see it.
+--
+-- The deployment granted a *directory*; this names its database inside
+-- it. Which database is the program's business, and the config cannot
+-- make that choice for it.
+local db = host.sql.open('visits.db')
 
-local created = hostcall('sql/exec', {
-  sql = 'CREATE TABLE IF NOT EXISTS visit (id INTEGER PRIMARY KEY, path TEXT NOT NULL, at INTEGER)',
-})
-queue.push(log, 'schema: ' .. tostring(created.status))
+db.exec('CREATE TABLE IF NOT EXISTS visit (id INTEGER PRIMARY KEY, path TEXT NOT NULL, at INTEGER)')
+queue.push(log, 'schema: ok')
 
 while true do
   local q, req = queue.wait({inq})
-  local now = hostcall('time')
-  hostcall('sql/exec', {
-    sql = 'INSERT INTO visit (path, at) VALUES (?, ?)',
-    params = {req.path, now.value},
-  })
-  local counted = hostcall('sql/query', {
-    sql = 'SELECT COUNT(*) AS n FROM visit WHERE path = ?',
-    params = {req.path},
-  })
-  local n = 0
-  if counted.status == 'ok' and counted.value and counted.value.rows then
-    n = counted.value.rows[1] and counted.value.rows[1][1] or 0
-  end
+  -- Allowlisted request headers, when the deployment named any. A header
+  -- it did not name is not here to be read.
+  local agent = req.headers and req.headers['user-agent'] or 'nobody in particular'
+  db.exec('INSERT INTO visit (path, at) VALUES (?, ?)', req.path, host.time())
+  local counted = db.query('SELECT COUNT(*) AS n FROM visit WHERE path = ?', req.path)
+  local n = counted.rows[1] and counted.rows[1][1] or 0
   -- conn echoed verbatim: it is the host's and means nothing in here.
   queue.push(outq, {
     conn = req.conn,
     status = 200,
     content_type = 'text/plain',
-    body = ('%s %s has been asked for %d time(s)'):format(req.method, req.path, n),
+    body = ('%s %s has been asked for %d time(s), this one by %s')
+      :format(req.method, req.path, n, agent),
   })
 end
 `;
@@ -226,8 +210,13 @@ export const SWARM_PROGRAMS = [
       budget: { instructions: 200_000_000, memoryKb: 8192 },
       connectors: {
         time: true,
-        sql: { path: 'lab.db', mode: 'readwrite', max_rows: 1024 },
-        listen: { port: 8080, queue: 'http_in', reply_queue: 'http_out' },
+        sql: { scope: 'lab', access: 'readwrite', max_result_rows: 1024 },
+        listen: {
+          port: 8080, queue: 'http_in', reply_queue: 'http_out',
+          // Lowercase, and empty by default: a header the deployment does
+          // not name never reaches the guest.
+          headers: ['user-agent'],
+        },
       },
     },
   },
@@ -264,8 +253,11 @@ export const FROM_CELL = {
     connectors: {
       time: true,
       rng: true,
-      sql: { path: 'lab.db', mode: 'readwrite', max_rows: 1024 },
-      listen: { port: 8080, queue: 'http_in', reply_queue: 'http_out' },
+      sql: { scope: 'lab', access: 'readwrite', max_result_rows: 1024 },
+      listen: {
+        port: 8080, queue: 'http_in', reply_queue: 'http_out',
+        headers: ['user-agent', 'authorization'],
+      },
     },
   },
 };

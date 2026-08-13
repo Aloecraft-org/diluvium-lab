@@ -266,10 +266,18 @@ test('a database can be uploaded before Start and downloaded after', async ({ pa
     mimeType: 'application/vnd.sqlite3',
     buffer: Buffer.from(file),
   });
-  // Staged, not opened: the database is built when the swarm is, and the
+  // Staged, not opened: the scope is built when the swarm is, and the
   // label says so rather than leaving a read file looking like an ignored one.
-  await expect(page.locator('[data-swarm-dbfile]')).toContainText('earlier.sqlite');
-  await expect(page.locator('[data-swarm-dbfile]')).toContainText('opens on Start');
+  await expect(page.locator('[data-swarm-dbfile]')).toContainText('opens on Start as');
+  await expect(page.locator('[data-swarm-dbname]')).toHaveValue('earlier.sqlite');
+
+  // The name is the address. A program reaches this file by asking for it
+  // by name, so the panel lets the name a file happened to have on disk be
+  // changed to the one the program was written against -- here, the name
+  // the sample service opens.
+  await page.locator('[data-swarm-dbname]').fill('visits.db');
+  await page.locator('[data-swarm-dbname]').blur();
+  await expect(page.locator('[data-swarm-dbname]')).toHaveValue('visits.db');
 
   await page.locator('[data-swarm="swarm-start"]').click();
   await page.locator('[data-swarm="swarm-run"]').click();
@@ -279,13 +287,18 @@ test('a database can be uploaded before Start and downloaded after', async ({ pa
   const db = page.locator('[data-swarm-database]');
   await expect(db).toContainText('carried', { timeout: 15_000 });
   await expect(db).toContainText('1 row(s)');
+  // Both in one database, because both named it: the sample opens
+  // `visits.db` and that is what the file was staged as.
+  await expect(db).toContainText('visit');
+  await expect(db.locator('[data-swarm-db]')).toHaveCount(1);
 
-  // And it comes back out as a file.
+  // And it comes back out as a file, named for the database rather than
+  // for the scope.
   const [download] = await Promise.all([
     page.waitForEvent('download'),
-    page.locator('[data-swarm="database-export"]').click(),
+    page.locator('[data-swarm-db="visits.db"] [data-swarm="database-export"]').click(),
   ]);
-  expect(download.suggestedFilename()).toMatch(/\.(sqlite|db)$/);
+  expect(download.suggestedFilename()).toBe('visits.db');
 });
 
 test('a file that is not a database is refused when it is chosen', async ({ page }) => {
@@ -348,14 +361,11 @@ test('a database outlives the swarm that built it, and still exports', async ({ 
 
   await runCell(page, [
     'swarm.start{ root = [[',
-    '  local calls = queue.declare("host/calls", { capacity = 4, exported = true })',
-    '  local replies = queue.declare("host/replies", { capacity = 4 })',
-    '  queue.push(calls, { tok = 1, call = "sql/exec",',
-    '    args = { sql = "CREATE TABLE kept (id INTEGER PRIMARY KEY)" } })',
-    '  queue.wait({ replies })',
+    '  local db = host.sql.open("kept.db")',
+    '  db.exec("CREATE TABLE kept (id INTEGER PRIMARY KEY)")',
     ']],',
     '  caps = { "queue:*", "host:sql/exec", "host:sql/query" },',
-    '  connectors = { sql = { path = "kept.db", mode = "readwrite" } } }',
+    '  connectors = { sql = { scope = "lab", access = "readwrite" } } }',
     'swarm.step(50)',
     'swarm.stop()',
     'print("stopped")',

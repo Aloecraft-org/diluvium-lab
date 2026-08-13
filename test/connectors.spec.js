@@ -63,4 +63,57 @@ test.describe('the other connectors', () => {
     expect(state.unmatched).toBeNull();
     expect(state.matched.status).toBe(204);
   });
+
+  test('only allowlisted request headers reach the guest', async ({ page }) => {
+    await open(page);
+    // `host/dhost_http.c`'s rules, because this is the half a guest can
+    // see: nothing forwarded by default, repeats joined ", " per RFC
+    // 7230's list rule, an absent header absent rather than empty, and a
+    // value past the bound refused rather than truncated.
+    const state = await page.evaluate(() => {
+      const bare = window.lab.buildConnectors({ listen: { port: 1 } }).listener;
+      const picky = window.lab.buildConnectors({
+        listen: { port: 2, headers: ['user-agent', 'Authorization', 'x-trace'] },
+      }).listener;
+      let tooLong = null;
+      try {
+        picky.request({ path: '/big', headers: { 'x-trace': 'z'.repeat(5000) } });
+      } catch (err) { tooLong = err.message; }
+      let tooMany = null;
+      try {
+        window.lab.buildConnectors({ listen: { headers: Array(9).fill('x') } });
+      } catch (err) { tooMany = err.message; }
+      return {
+        bare: bare.request({ path: '/', headers: { 'user-agent': 'curl' } }),
+        allowed: picky.request({
+          path: '/',
+          headers: {
+            'User-Agent': 'curl/8',            // matched case-insensitively
+            Authorization: 'Bearer t',         // allowlisted with a capital A
+            Cookie: 'session=secret',          // not allowlisted: never seen
+            'x-trace': ['a', 'b'],             // repeats join
+          },
+        }),
+        none: picky.request({ path: '/', headers: {} }),
+        allowlist: picky.headers,
+        tooLong,
+        tooMany,
+      };
+    });
+    // Empty by default: a header the deployment did not name never arrives,
+    // and the `headers` field is not there at all.
+    expect(state.bare.headers).toBeUndefined();
+    // The allowlist is lowercased, whatever the config wrote.
+    expect(state.allowlist).toEqual(['user-agent', 'authorization', 'x-trace']);
+    expect(state.allowed.headers).toEqual({
+      'user-agent': 'curl/8',
+      authorization: 'Bearer t',
+      'x-trace': 'a, b',
+    });
+    // The map is there even when nothing matched, so the shape a guest
+    // matches on is decided by config rather than by traffic.
+    expect(state.none.headers).toEqual({});
+    expect(state.tooLong).toContain('431');
+    expect(state.tooMany).toContain('up to 8');
+  });
 });

@@ -32,10 +32,14 @@
 // Connectors are **all off by default**. A deployment names the ones it
 // wires, and a call to an unwired one is `denied` with a sentence saying so.
 
-import { SqliteDatabase } from './sqlite.js';
+import { SqliteScope } from './sqlite.js';
 import {
   sha256, hmacSha256, utf8Bytes, bytesToHex, base64url, fromBase64url, equalBytes,
 } from './sha256.js';
+
+/** The listener's header bounds. `DH_MAX_HDRS` and `HTTP_HDR_VALUE_MAX`. */
+const MAX_HEADERS = 8;
+const MAX_HEADER_VALUE = 4096;
 
 /** What a connector returns. Mirrors `dh_call_status` on the C side. */
 const ok = (value) => ({ status: 'ok', value });
@@ -51,12 +55,12 @@ const failed = (detail) => ({ status: 'error', detail });
  *
  * @param {object} description the `connectors` table, `host/example.host.lua`'s shape
  * @param {object} [services] host-side objects the connectors talk to
- * @returns {{connectors: Map<string, Function>, listener: Listener|null, database: SqliteDatabase|null}}
+ * @returns {{connectors: Map<string, Function>, listener: Listener|null, scope: SqliteScope|null}}
  */
 export function buildConnectors(description = {}, services = {}) {
   const connectors = new Map();
   let listener = null;
-  let database = null;
+  let scope = null;
 
   for (const [name, spec] of Object.entries(description)) {
     if (!spec) continue;                 // false, null and absent all mean off
@@ -75,8 +79,8 @@ export function buildConnectors(description = {}, services = {}) {
         if (!services.sqlite) {
           throw new Error('the sql connector needs SQLite, which this page could not load');
         }
-        database = new SqliteDatabase(services.sqlite, spec === true ? {} : spec);
-        connectors.set('sql', sqlConnector(database));
+        scope = new SqliteScope(services.sqlite, spec === true ? {} : spec);
+        connectors.set('sql', sqlConnector(scope));
         break;
       }
       case 'listen':
@@ -95,7 +99,7 @@ export function buildConnectors(description = {}, services = {}) {
           `unknown connector '${name}'; this host wires time, rng, crypto, sql, listen and js`);
     }
   }
-  return { connectors, listener, database };
+  return { connectors, listener, scope };
 }
 
 /**
@@ -144,29 +148,44 @@ export function rngConnector(spec) {
 }
 
 /**
- * `sql/query` and `sql/exec`, over the mock engine.
+ * `sql/query` and `sql/exec`, over a granted scope.
  *
  * Split into two calls so the capability grammar can split with them: a
  * grant of `host:sql/query` against a read-only deployment says exactly what
  * it says, and `host:sql/*` on a readwrite one says the bigger thing.
+ *
+ * Every call names its database in `args.db` — the config granted a
+ * directory, not a file, and which database inside it is the program's
+ * business. Guest-side that is `host.sql.open("name")`, whose handle
+ * carries the name into every request it makes.
  */
-export function sqlConnector(database) {
+export function sqlConnector(scope) {
   return (call, args) => {
+    if (call !== 'sql/query' && call !== 'sql/exec') {
+      return failed(`the sql connector answers 'sql/query' and 'sql/exec'; '${call}' is neither`);
+    }
+    // The grant before the database, in that order, because `conn_sql`
+    // checks them in that order: an ungranted `sql/exec` against a scope
+    // holding no databases yet must hear that it is not wired, not that
+    // the database it named could not be created.
+    if (call === 'sql/exec' && !scope.readwrite) {
+      return denied('this deployment grants read access '
+        + '(config.connectors.sql.access "read"), so \'sql/exec\' is not wired');
+    }
+    const resolved = scope.open(args?.db);
+    if (!resolved.db) {
+      return resolved.status === 'denied' ? denied(resolved.detail) : failed(resolved.detail);
+    }
+    const database = resolved.db;
     const sql = args?.sql;
     if (typeof sql !== 'string' || sql.trim() === '') {
-      return failed(`${call} wants {sql = "...", params = {...}}; there is no 'sql' string in this request`);
+      return failed(`${call} wants {db = "name", sql = "...", params = {...}}; `
+        + "there is no 'sql' string in this request");
     }
     const params = normaliseParams(args?.params);
     try {
       if (call === 'sql/query') return ok(database.query(sql, params));
-      if (call === 'sql/exec') {
-        if (!database.readwrite) {
-          return denied('this deployment opened the database read-only, so sql/exec is unwired; '
-            + "set mode = 'readwrite' in the connector's configuration to wire it");
-        }
-        return ok(database.exec(sql, params));
-      }
-      return failed(`the sql connector answers 'sql/query' and 'sql/exec'; '${call}' is neither`);
+      return ok(database.exec(sql, params));
     } catch (err) {
       return failed(err.message);
     }
@@ -338,13 +357,25 @@ export function jsConnector(invoke) {
 export class Listener {
   constructor({ port = 8080, bind = '127.0.0.1', queue = 'http_in',
     reply_queue: replyQueue = 'http_out', max_body: maxBody = 65536,
-    deadline_ms: deadlineMs = 10000 } = {}) {
+    deadline_ms: deadlineMs = 10000, headers = [] } = {}) {
     this.port = port;
     this.bind = bind;
     this.queue = queue;
     this.replyQueue = replyQueue;
     this.maxBody = maxBody;
     this.deadlineMs = deadlineMs;
+    // A LOWERCASE allowlist, and empty by default: a header a deployment
+    // did not name never reaches the guest. Lowercased here rather than
+    // trusted, because HTTP field names are case-insensitive and a config
+    // that wrote `Authorization` should not silently allowlist nothing.
+    if (!Array.isArray(headers)) {
+      throw new Error('connectors.listen.headers is an array of lowercase header names');
+    }
+    if (headers.length > MAX_HEADERS) {
+      throw new Error(`connectors.listen.headers allows up to ${MAX_HEADERS} names, `
+        + `and this one names ${headers.length}`);
+    }
+    this.headers = headers.map((name) => String(name).toLowerCase());
     this.bound = false;                  // a browser tab binds nothing, ever
     this._conn = 0;
     /** conn -> the request still waiting for its reply. */
@@ -355,6 +386,17 @@ export class Listener {
   /**
    * Turn a request into the message a guest sees. The `conn` is the host's
    * and means nothing to the program beyond "put it back on the reply".
+   *
+   * Headers follow `host/dhost_http.c`'s rule exactly, because this is the
+   * half a guest can see: only allowlisted names are forwarded, repeats
+   * join `", "` (RFC 7230's list rule), an absent header is absent from
+   * the map rather than present and empty, and a value past the bound is
+   * **refused** rather than truncated — 431 on the socket, and a throw
+   * here, which is the same answer the page's composer shows.
+   *
+   * When the deployment allowlists anything, the message always carries a
+   * `headers` map even when no header matched, so the shape a guest
+   * pattern-matches is decided by its config and not by its traffic.
    */
   request({ method = 'GET', path = '/', body = '', headers = {} } = {}) {
     const encoded = typeof body === 'string' ? new TextEncoder().encode(body) : body;
@@ -363,9 +405,36 @@ export class Listener {
     }
     const conn = ++this._conn;
     const message = { conn, method, path, body: typeof body === 'string' ? body : body };
+    if (this.headers.length) message.headers = this._allowed(headers);
     this.pending.set(conn, { conn, method, path, at: Date.now() });
     this.exchanges.push({ conn, method, path, status: null, body: null, at: Date.now() });
     return message;
+  }
+
+  /** The allowlisted subset of a request's headers, joined and bounded. */
+  _allowed(headers) {
+    // Repeats: an object cannot hold the same key twice, so a caller that
+    // means "this header appeared twice" passes an array. Both spellings
+    // fold to the one joined value the C host builds from the wire.
+    const seen = new Map();
+    for (const [name, value] of Object.entries(headers ?? {})) {
+      const key = String(name).toLowerCase();
+      if (!this.headers.includes(key)) continue;
+      const joined = (Array.isArray(value) ? value : [value]).map(String).join(', ');
+      seen.set(key, seen.has(key) ? `${seen.get(key)}, ${joined}` : joined);
+    }
+    const out = {};
+    for (const name of this.headers) {
+      const value = seen.get(name);
+      if (value === undefined) continue;   // absent, not present and empty
+      if (value.length > MAX_HEADER_VALUE) {
+        throw new Error(`the '${name}' header is ${value.length} bytes and this host's `
+          + `value bound is ${MAX_HEADER_VALUE}; the C host answers 431 rather than `
+          + 'forwarding a truncated one');
+      }
+      out[name] = value;
+    }
+    return out;
   }
 
   /**

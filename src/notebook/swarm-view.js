@@ -82,7 +82,7 @@ export function renderSwarm(container, options) {
       draft: options.draft ?? { method: 'GET', path: '/', body: '' },
     }));
   }
-  if (report.database) container.append(databaseSection(report.database, options.onAction));
+  if (report.sql) container.append(sqlSection(report.sql, options.onAction));
   if (report.faults?.length) container.append(faultsSection(report.faults));
   container.append(events(report.events ?? []));
 }
@@ -178,12 +178,31 @@ function databaseChooser(staged, onAction) {
     if (file) onAction('open-database', file);
   });
   wrap.append(input);
-  wrap.append(el('span', {}, [staged?.name
-    ? `${staged.name} (${Math.ceil(staged.bytes.length / 1024)} KB) opens on Start`
-    : 'Open .sqlite\u2026']));
-  if (staged?.name) {
-    wrap.append(actionButton('clear', 'database-clear', () => onAction('clear-database'), false));
+  if (!staged?.name) {
+    wrap.append(el('span', {}, ['Open .sqlite\u2026']));
+    return wrap;
   }
+  // The name is editable because in the scope model it is the *address*:
+  // a program reaches this file by asking for it by name, and the name a
+  // file happened to have on someone's disk is rarely the one the program
+  // was written against. Committed on blur or Enter rather than per
+  // keystroke, so the panel is not rebuilt under the caret.
+  const name = el('input', {
+    type: 'text', class: 'swarm-dbname', 'data-swarm-dbname': '',
+    value: staged.name, size: 16, 'aria-label': 'the name this database has in the scope',
+  });
+  const commit = () => { if (name.value !== staged.name) onAction('rename-database', name.value); };
+  name.addEventListener('blur', commit);
+  name.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter') { event.preventDefault(); name.blur(); }
+    event.stopPropagation();          // the notebook's own keymap is not wanted here
+  });
+  // A file input's label swallows clicks into the file chooser, which
+  // would make this field unfocusable.
+  name.addEventListener('click', (event) => event.preventDefault());
+  wrap.append(el('span', {}, [`${Math.ceil(staged.bytes.length / 1024)} KB opens on Start as`]));
+  wrap.append(name);
+  wrap.append(actionButton('clear', 'database-clear', () => onAction('clear-database'), false));
   return wrap;
 }
 
@@ -285,6 +304,17 @@ function listenerSection(listener, { onAction, draft, onDraft }) {
     `port ${listener.port} on ${listener.bind}, not bound — a browser tab binds nothing. `
     + `Requests arrive on \`${listener.queue}\`; replies drain from \`${listener.replyQueue}\`.`,
   ]));
+  // Config a guest can observe, so the panel says it: with an allowlist
+  // every request carries a `headers` map, and without one the field is
+  // not there at all. Which of those a program should pattern-match is
+  // decided here rather than by whatever traffic happens to arrive.
+  section.append(el('p', { class: 'muted' }, [
+    listener.headers?.length
+      ? `Forwarded headers: ${listener.headers.join(', ')}. Anything else a request `
+        + 'carries stops at the host.'
+      : 'No headers are forwarded, so a request reaches the program as '
+        + '{conn, method, path, body} and nothing else.',
+  ]));
 
   // The composer's contents are the caller's, not this function's. The
   // panel repaints from scratch after every action -- that is what stops a
@@ -330,31 +360,54 @@ function listenerSection(listener, { onAction, draft, onDraft }) {
   return section;
 }
 
-function databaseSection(database, onAction) {
+/**
+ * The granted scope, and the databases programs have opened inside it.
+ *
+ * Two levels because the config has two: a deployment grants a *directory*
+ * and a program names its database within it (`host.sql.open("orders.db")`).
+ * A scope with nothing in it yet is a real and common state -- the grant
+ * exists from Start and the databases appear on first use -- so it says so
+ * rather than looking like a panel that failed to load.
+ */
+function sqlSection(sql, onAction) {
   const section = el('section', { class: 'swarm-database', 'data-swarm-database': '' });
-  section.append(el('h3', {}, ['Database']));
+  section.append(el('h3', {}, ['Databases']));
   section.append(el('p', { class: 'muted' }, [
-    `${database.path}, ${database.readwrite ? 'readwrite' : 'read-only'}, `
-    + `max_rows ${database.maxRows}, ${database.statements} statement(s) run. `
-    + 'Real SQLite, vendored — but in memory: the path is the one your configuration '
-    + 'names, and there is no filesystem here to put a file on, so it is gone when the '
-    + 'kernel restarts. Download it first and it is a real .sqlite file, openable '
-    + 'anywhere and re-openable here. The contract is the C host’s exactly; the confinement is '
-    + 'weaker, because no JavaScript driver exposes SQLite’s authorizer — transactions, '
-    + 'ATTACH and PRAGMA are gated by keyword rather than refused by the engine. Fine for '
-    + 'prototyping a schema; not for a database that matters.',
+    `scope ${sql.scope}, ${sql.readwrite ? 'readwrite' : 'read-only'}, `
+    + `${sql.create ? 'may create' : 'no create'}, max_result_rows ${sql.maxResultRows}. `
+    + 'Real SQLite, vendored \u2014 but in memory: the scope is the directory your '
+    + 'configuration grants, and there is no filesystem here to put one on, so what a '
+    + 'program builds is gone when the kernel restarts. Download it first and it is a '
+    + 'real .sqlite file, openable anywhere and re-openable here. The contract is the C '
+    + 'host\u2019s exactly; the confinement is weaker, because no JavaScript driver exposes '
+    + 'SQLite\u2019s authorizer \u2014 transactions, ATTACH and PRAGMA are gated by keyword '
+    + 'rather than refused by the engine. Fine for prototyping a schema; not for a '
+    + 'database that matters.',
   ]));
-  const list = el('ul', { class: 'swarm-tables' });
-  for (const table of database.tables ?? []) {
-    list.append(el('li', {}, [`${table.name} — ${table.rows} row(s): ${table.columns.join(', ')}`]));
+  const databases = sql.databases ?? [];
+  if (!databases.length) {
+    section.append(el('p', { class: 'muted' }, [
+      'No program has opened a database in this scope yet.',
+    ]));
+    return section;
   }
-  section.append(database.tables?.length ? list : el('p', { class: 'muted' }, ['No tables yet.']));
-  // `db.export()` is SQLite serializing itself, so this is a real file --
-  // the same bytes `sqlite3` writes, openable anywhere. Which is what
-  // makes the Lab somewhere a schema can be built rather than only tried.
-  section.append(el('p', { class: 'swarm-dbactions' }, [
-    actionButton('Download .sqlite', 'database-export', () => onAction('export-database'), false),
-  ]));
+  for (const database of databases) {
+    const block = el('div', { class: 'swarm-db', 'data-swarm-db': database.name });
+    block.append(el('h4', {}, [`${database.name} \u2014 ${database.statements} statement(s) run`]));
+    const list = el('ul', { class: 'swarm-tables' });
+    for (const table of database.tables ?? []) {
+      list.append(el('li', {}, [`${table.name} \u2014 ${table.rows} row(s): ${table.columns.join(', ')}`]));
+    }
+    block.append(database.tables?.length ? list : el('p', { class: 'muted' }, ['No tables yet.']));
+    // `db.export()` is SQLite serializing itself, so this is a real file --
+    // the same bytes `sqlite3` writes, openable anywhere. Which is what
+    // makes the Lab somewhere a schema can be built rather than only tried.
+    block.append(el('p', { class: 'swarm-dbactions' }, [
+      actionButton('Download .sqlite', 'database-export',
+        () => onAction('export-database', database.name), false),
+    ]));
+    section.append(block);
+  }
   return section;
 }
 

@@ -19,14 +19,21 @@ async function open(page) {
   await page.waitForSelector('body[data-ready="true"]', { timeout: 30_000 });
 }
 
-/** Run statements through the connector, exactly as a guest would reach it. */
-const sql = (page, statements, config = { mode: 'readwrite', max_rows: 8 }) =>
-  page.evaluate(async ([list, cfg]) => {
+/**
+ * Run statements through the connector, exactly as a guest would reach it
+ * -- which since v5.5.1_build7 means naming the database: the config
+ * grants a scope and `args.db` picks a database inside it. Guest-side that
+ * is what `host.sql.open("lab.db")` puts on every call it makes.
+ */
+const sql = (page, statements, config = { scope: 'lab', access: 'readwrite', max_result_rows: 8 },
+  db = 'lab.db') =>
+  page.evaluate(async ([list, cfg, name]) => {
     const sqlite = await window.lab.loadSqlite();
     const { connectors } = window.lab.buildConnectors({ sql: cfg }, { sqlite });
     const fn = connectors.get('sql');
-    return list.map(([call, text, params]) => fn(`sql/${call}`, { sql: text, params: params ?? [] }));
-  }, [statements, config]);
+    return list.map(([call, text, params]) => fn(`sql/${call}`,
+      { db: name, sql: text, params: params ?? [] }));
+  }, [statements, config, db]);
 
 test.describe('what the old engine refused, SQLite does', () => {
   test('joins, subqueries and grouping', async ({ page }) => {
@@ -175,10 +182,140 @@ test.describe('the confinement, which is the weaker half', () => {
     const out = await sql(page, [
       ['query', 'SELECT 1 AS one'],
       ['exec', 'CREATE TABLE t (id INTEGER)'],
-    ], { mode: 'read' });
-    expect(out[0].status).toBe('ok');
+    ], { scope: 'lab', access: 'read' });
+    // The grant is checked before the database is, exactly as `conn_sql`
+    // does: an ungranted write hears that it is not wired rather than that
+    // its database could not be created.
     expect(out[1].status).toBe('denied');
-    expect(out[1].detail).toContain('read-only');
+    expect(out[1].detail).toContain("'sql/exec' is not wired");
+    // And the read half: a read-only scope cannot bring a database into
+    // existence either, because `create` follows the write grant.
+    expect(out[0].status).toBe('error');
+    expect(out[0].detail).toContain('creating one is not granted');
+  });
+
+  test('create without the write grant is refused, not half-honoured', async ({ page }) => {
+    await open(page);
+    const refused = await page.evaluate(async () => {
+      const sqlite = await window.lab.loadSqlite();
+      try {
+        window.lab.buildConnectors(
+          { sql: { scope: 'lab', access: 'read', create: true } }, { sqlite });
+        return null;
+      } catch (err) { return err.message; }
+    });
+    expect(refused).toContain('needs access "readwrite"');
+  });
+});
+
+test.describe('the scope, which is the grant the config actually makes', () => {
+  test('a name that is a path is denied, not clamped to something inside', async ({ page }) => {
+    await open(page);
+    // Flat by construction, exactly as `dhost_sql.c`'s `db_for` is: a
+    // separator or a `..` kills traversal before any resolution runs. And
+    // it is DENIED rather than quietly turned into a legal name, because a
+    // program that asked for the wrong database should hear so instead of
+    // silently getting a different one.
+    const out = await page.evaluate(async () => {
+      const sqlite = await window.lab.loadSqlite();
+      const { connectors } = window.lab.buildConnectors(
+        { sql: { scope: 'lab', access: 'readwrite' } }, { sqlite });
+      const fn = connectors.get('sql');
+      const ask = (db) => fn('sql/query', { db, sql: 'SELECT 1 AS one', params: [] });
+      return {
+        traversal: ask('../secrets.db'),
+        nested: ask('sub/other.db'),
+        windows: ask('sub\\\\other.db'),
+        dot: ask('..'),
+        missing: ask(undefined),
+        empty: ask(''),
+        fine: ask('lab.db'),
+      };
+    });
+    for (const key of ['traversal', 'nested', 'windows', 'dot']) {
+      expect(out[key].status, key).toBe('denied');
+      expect(out[key].detail, key).toContain('steps outside the granted scope');
+    }
+    // An absent name is a malformed request rather than an escape attempt,
+    // and the C host says so with `error` too.
+    expect(out.missing.status).toBe('error');
+    expect(out.missing.detail).toContain('args.db');
+    expect(out.empty.status).toBe('error');
+    expect(out.fine.status).toBe('ok');
+  });
+
+  test('several databases in one scope, each its own', async ({ page }) => {
+    await open(page);
+    // The whole point of the scope model: the deployment grants a
+    // directory and the *program* decides what to open in it. Two names
+    // are two databases, not two views of one.
+    const out = await page.evaluate(async () => {
+      const sqlite = await window.lab.loadSqlite();
+      const { connectors, scope } = window.lab.buildConnectors(
+        { sql: { scope: 'lab', access: 'readwrite' } }, { sqlite });
+      const fn = connectors.get('sql');
+      fn('sql/exec', { db: 'a.db', sql: 'CREATE TABLE only_in_a (id INTEGER)', params: [] });
+      fn('sql/exec', { db: 'b.db', sql: 'CREATE TABLE only_in_b (id INTEGER)', params: [] });
+      return {
+        crossed: fn('sql/query', { db: 'b.db', sql: 'SELECT * FROM only_in_a', params: [] }),
+        own: fn('sql/query', { db: 'b.db', sql: 'SELECT * FROM only_in_b', params: [] }),
+        names: scope.databases.map((d) => d.name),
+      };
+    });
+    expect(out.crossed.status).toBe('error');
+    expect(out.crossed.detail).toContain('only_in_a');
+    expect(out.own.status).toBe('ok');
+    expect(out.names).toEqual(['a.db', 'b.db']);
+  });
+
+  test('create is the grant that decides whether a new name may appear', async ({ page }) => {
+    await open(page);
+    // An open-mode detail, defaulting to the write grant -- a read-only
+    // deployment that created files would be the config contradicting
+    // itself. Set explicitly here so the refusal is about `create` and not
+    // about `access`.
+    const out = await page.evaluate(async () => {
+      const sqlite = await window.lab.loadSqlite();
+      const { connectors } = window.lab.buildConnectors({
+        sql: {
+          scope: 'lab', access: 'readwrite', create: false,
+          databases: { 'seeded.db': null },
+        },
+      }, { sqlite });
+      const fn = connectors.get('sql');
+      return {
+        unknown: fn('sql/query', { db: 'fresh.db', sql: 'SELECT 1 AS one', params: [] }),
+        seeded: fn('sql/query', { db: 'seeded.db', sql: 'SELECT 1 AS one', params: [] }),
+      };
+    });
+    expect(out.unknown.status).toBe('error');
+    expect(out.unknown.detail).toContain('creating one is not granted');
+    expect(out.seeded.status).toBe('ok');
+  });
+
+  test('the pre-build7 config keys are refused by name, with their replacement', async ({ page }) => {
+    await open(page);
+    // A config that looks accepted and silently grants a default instead
+    // of what it says is the worst of the three outcomes, so each old key
+    // is refused by name with the new one in the sentence -- the same
+    // migration `dhost.c` performs.
+    const out = await page.evaluate(async () => {
+      const sqlite = await window.lab.loadSqlite();
+      const refuse = (spec) => {
+        try { window.lab.buildConnectors({ sql: spec }, { sqlite }); return null; }
+        catch (err) { return err.message; }
+      };
+      return {
+        path: refuse({ path: 'lab.db', access: 'read' }),
+        mode: refuse({ scope: 'lab', mode: 'readwrite' }),
+        maxRows: refuse({ scope: 'lab', max_rows: 64 }),
+        access: refuse({ scope: 'lab', access: 'rw' }),
+      };
+    });
+    expect(out.path).toContain('scope');
+    expect(out.mode).toContain('access');
+    expect(out.maxRows).toContain('max_result_rows');
+    expect(out.access).toContain('"read" or "readwrite"');
   });
 });
 
@@ -208,14 +345,15 @@ test.describe('a database is a file, in both directions', () => {
     await open(page);
     const out = await page.evaluate(async () => {
       const sqlite = await window.lab.loadSqlite();
-      const { database, connectors } = window.lab.buildConnectors(
-        { sql: { mode: 'readwrite', max_rows: 8 } }, { sqlite });
+      const { scope, connectors } = window.lab.buildConnectors(
+        { sql: { scope: 'lab', access: 'readwrite', max_result_rows: 8 } }, { sqlite });
       const fn = connectors.get('sql');
-      fn('sql/exec', { sql: 'CREATE TABLE t (id INTEGER PRIMARY KEY, k TEXT)', params: [] });
-      fn('sql/exec', { sql: 'INSERT INTO t (k) VALUES (?)', params: ['alpha'] });
-      fn('sql/exec', { sql: 'INSERT INTO t (k) VALUES (?)', params: ['beta'] });
+      const db = 'lab.db';
+      fn('sql/exec', { db, sql: 'CREATE TABLE t (id INTEGER PRIMARY KEY, k TEXT)', params: [] });
+      fn('sql/exec', { db, sql: 'INSERT INTO t (k) VALUES (?)', params: ['alpha'] });
+      fn('sql/exec', { db, sql: 'INSERT INTO t (k) VALUES (?)', params: ['beta'] });
 
-      const bytes = database.export();
+      const bytes = scope.export(db);
       // Not a bespoke dump: SQLite serialises itself, so the first sixteen
       // bytes are the format's own magic and any tool that reads one reads
       // this. That is what makes a schema able to leave the Lab.
@@ -223,9 +361,14 @@ test.describe('a database is a file, in both directions', () => {
 
       // And back in through the front door: a fresh connector opened on
       // those bytes, reached the way a guest reaches it.
-      const { connectors: reopened } = window.lab.buildConnectors(
-        { sql: { mode: 'readwrite', max_rows: 8, bytes } }, { sqlite });
-      const read = reopened.get('sql')('sql/query', { sql: 'SELECT k FROM t ORDER BY id', params: [] });
+      const { connectors: reopened } = window.lab.buildConnectors({
+        sql: {
+          scope: 'lab', access: 'readwrite', max_result_rows: 8,
+          databases: { 'restored.db': bytes },
+        },
+      }, { sqlite });
+      const read = reopened.get('sql')('sql/query',
+        { db: 'restored.db', sql: 'SELECT k FROM t ORDER BY id', params: [] });
       return { magic, size: bytes.length, read };
     });
     expect(out.magic).toBe('SQLite format 3');
@@ -241,7 +384,9 @@ test.describe('a database is a file, in both directions', () => {
       const rubbish = new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]);
       let refused = null;
       try {
-        window.lab.buildConnectors({ sql: { mode: 'read', bytes: rubbish } }, { sqlite });
+        window.lab.buildConnectors(
+          { sql: { scope: 'lab', access: 'read', databases: { 'rubbish.db': rubbish } } },
+          { sqlite });
       } catch (err) { refused = err.message; }
 
       // And what SQLite alone would have done with the same bytes, which
