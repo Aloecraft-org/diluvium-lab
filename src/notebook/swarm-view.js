@@ -82,7 +82,7 @@ export function renderSwarm(container, options) {
       draft: options.draft ?? { method: 'GET', path: '/', body: '' },
     }));
   }
-  if (report.database) container.append(databaseSection(report.database));
+  if (report.database) container.append(databaseSection(report.database, options.onAction));
   if (report.faults?.length) container.append(faultsSection(report.faults));
   container.append(events(report.events ?? []));
 }
@@ -133,7 +133,7 @@ function summary(report, busy) {
 
 const pair = (term, value) => [el('dt', {}, [term]), el('dd', {}, [value])];
 
-function controls({ report, busy, source, programs, onChange, onAction }) {
+function controls({ report, busy, source, programs, staged, onChange, onAction }) {
   const running = !!report?.running;
   const row = el('div', { class: 'swarm-controls' });
 
@@ -145,6 +145,12 @@ function controls({ report, busy, source, programs, onChange, onAction }) {
     select.addEventListener('change', () => onChange({ source: select.value }));
     row.append(select);
     row.append(actionButton('Start', 'swarm-start', () => onAction('start'), busy));
+    // Only for a program that wires `sql`, and only before Start: the
+    // database is opened when the swarm is built, so a file chosen after
+    // that would be a file nothing read.
+    if (programs?.find((p) => p.id === source)?.config?.connectors?.sql) {
+      row.append(databaseChooser(staged, onAction));
+    }
   } else {
     row.append(actionButton('Step', 'swarm-step', () => onAction('step'), busy));
     row.append(actionButton('Run', 'swarm-run', () => onAction('run'), busy));
@@ -153,6 +159,32 @@ function controls({ report, busy, source, programs, onChange, onAction }) {
     row.append(actionButton('Stop', 'swarm-stop', () => onAction('stop'), false));
   }
   return row;
+}
+
+/**
+ * "Open .sqlite…", and what is staged.
+ *
+ * A file input rather than a button because a browser will not open a file
+ * chooser any other way. Staged rather than opened on the spot: the
+ * database is constructed when the swarm is, so the bytes wait for Start
+ * — and the label says so, because a file that had been read but had done
+ * nothing yet would otherwise look like a file that had been ignored.
+ */
+function databaseChooser(staged, onAction) {
+  const wrap = el('label', { class: 'swarm-dbfile', 'data-swarm-dbfile': '' });
+  const input = el('input', { type: 'file', accept: '.sqlite,.db,.sqlite3,application/vnd.sqlite3' });
+  input.addEventListener('change', () => {
+    const file = input.files?.[0];
+    if (file) onAction('open-database', file);
+  });
+  wrap.append(input);
+  wrap.append(el('span', {}, [staged?.name
+    ? `${staged.name} (${Math.ceil(staged.bytes.length / 1024)} KB) opens on Start`
+    : 'Open .sqlite\u2026']));
+  if (staged?.name) {
+    wrap.append(actionButton('clear', 'database-clear', () => onAction('clear-database'), false));
+  }
+  return wrap;
 }
 
 function actionButton(label, name, onClick, disabled) {
@@ -298,7 +330,7 @@ function listenerSection(listener, { onAction, draft, onDraft }) {
   return section;
 }
 
-function databaseSection(database) {
+function databaseSection(database, onAction) {
   const section = el('section', { class: 'swarm-database', 'data-swarm-database': '' });
   section.append(el('h3', {}, ['Database']));
   section.append(el('p', { class: 'muted' }, [
@@ -306,7 +338,8 @@ function databaseSection(database) {
     + `max_rows ${database.maxRows}, ${database.statements} statement(s) run. `
     + 'Real SQLite, vendored — but in memory: the path is the one your configuration '
     + 'names, and there is no filesystem here to put a file on, so it is gone when the '
-    + 'kernel restarts. The contract is the C host’s exactly; the confinement is '
+    + 'kernel restarts. Download it first and it is a real .sqlite file, openable '
+    + 'anywhere and re-openable here. The contract is the C host’s exactly; the confinement is '
     + 'weaker, because no JavaScript driver exposes SQLite’s authorizer — transactions, '
     + 'ATTACH and PRAGMA are gated by keyword rather than refused by the engine. Fine for '
     + 'prototyping a schema; not for a database that matters.',
@@ -316,6 +349,12 @@ function databaseSection(database) {
     list.append(el('li', {}, [`${table.name} — ${table.rows} row(s): ${table.columns.join(', ')}`]));
   }
   section.append(database.tables?.length ? list : el('p', { class: 'muted' }, ['No tables yet.']));
+  // `db.export()` is SQLite serializing itself, so this is a real file --
+  // the same bytes `sqlite3` writes, openable anywhere. Which is what
+  // makes the Lab somewhere a schema can be built rather than only tried.
+  section.append(el('p', { class: 'swarm-dbactions' }, [
+    actionButton('Download .sqlite', 'database-export', () => onAction('export-database'), false),
+  ]));
   return section;
 }
 

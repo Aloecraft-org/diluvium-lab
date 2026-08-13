@@ -17,6 +17,7 @@ import { saveAutosave, loadAutosave, debounceSave, rememberRecent, listRecent, c
 import { ToolPanel } from './notebook/panel.js';
 import { renderOutline } from './notebook/outline.js';
 import { renderSwarm } from './notebook/swarm-view.js';
+import { looksLikeSqlite } from './kernel/sqlite.js';
 import { SWARM_PROGRAMS, ALL_PROGRAMS, programById } from './notebook/swarm-programs.js';
 import { renderMenuBar, renderDrawer, attachDropdown } from './notebook/menu.js';
 import { fetchNotebook, hostOf, describeOpenError, normaliseNotebookUrl } from './notebook/remote.js';
@@ -191,6 +192,9 @@ export class App {
       // The listener composer's contents, held here rather than in the DOM
       // because the panel repaints from scratch after every action.
       draft: { method: 'GET', path: '/', body: '' },
+      // A `.sqlite` file chosen but not yet opened. It waits for Start,
+      // because the database is built when the swarm is.
+      staged: null,
     };
     this.panel.register({
       id: 'swarm',
@@ -204,6 +208,7 @@ export class App {
         busy: this.swarm.busy,
         source: this.swarm.source,
         draft: this.swarm.draft,
+        staged: this.swarm.staged,
         programs: ALL_PROGRAMS,
         onChange: (patch) => { Object.assign(this.swarm, patch); this.panel.refresh(); },
         // Kept apart from `onChange` on purpose: a draft field must not
@@ -588,7 +593,26 @@ export class App {
           // "From the selected cell" has no source of its own: the
           // notebook is the composer, so the cell is the program.
           const source = program.source ?? this._selectedCellSource();
-          this.swarm.report = await this.kernel.swarmStart(source, program.config);
+          this.swarm.report = await this.kernel.swarmStart(source, this._swarmConfig(program));
+          break;
+        }
+        case 'open-database': {
+          // Read here rather than in the view: a `File` is a handle and
+          // reading it is asynchronous, and the panel's render is not.
+          const bytes = new Uint8Array(await arg.arrayBuffer());
+          if (!looksLikeSqlite(bytes)) {
+            throw new Error(`${arg.name} does not begin "SQLite format 3", so it is not a database file`);
+          }
+          this.swarm.staged = { name: arg.name, bytes };
+          break;
+        }
+        case 'clear-database':
+          this.swarm.staged = null;
+          break;
+        case 'export-database': {
+          const bytes = await this.kernel.swarmDatabaseExport();
+          if (!bytes) throw new Error('this swarm wired no database, so there is nothing to export');
+          downloadBytes(this.swarm.report?.database?.path || 'lab.sqlite', bytes);
           break;
         }
         case 'step':
@@ -672,6 +696,27 @@ export class App {
       if (!report.alive || !report.steps || done?.(report)) break;
       spent += report.steps;
     }
+  }
+
+  /**
+   * A program's configuration, with an uploaded database folded in.
+   *
+   * Kept out of `swarm-programs.js` because a sample program's config is a
+   * *description* -- structured-cloneable data that crosses to the worker
+   * -- and the bytes someone picked belong to this session rather than to
+   * the sample. Left alone entirely when nothing was staged, so the
+   * ordinary path stays the object the program declared.
+   */
+  _swarmConfig(program) {
+    const sql = program.config?.connectors?.sql;
+    if (!this.swarm.staged || !sql) return program.config;
+    return {
+      ...program.config,
+      connectors: {
+        ...program.config.connectors,
+        sql: { ...(sql === true ? {} : sql), bytes: this.swarm.staged.bytes },
+      },
+    };
   }
 
   /**
@@ -1932,4 +1977,16 @@ function emptyRecent(document_) {
   p.dataset.recentEmpty = 'true';
   p.textContent = 'Nothing yet. Notebooks you open from a file or a URL turn up here.';
   return p;
+}
+
+/** Hand bytes to the browser as a file. Same shape as bytecode-view.js's. */
+function downloadBytes(name, bytes) {
+  const url = URL.createObjectURL(new Blob([bytes], { type: 'application/vnd.sqlite3' }));
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = name.endsWith('.sqlite') || name.endsWith('.db') ? name : `${name}.sqlite`;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 0);
 }

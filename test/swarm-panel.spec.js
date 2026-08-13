@@ -242,3 +242,65 @@ test('the topology counts traffic in both directions and invents no edges', asyn
   const between = edges.filter((e) => e.kind !== 'spawn' && !e.ends.includes('host'));
   expect(between).toEqual([]);
 });
+
+test('a database can be uploaded before Start and downloaded after', async ({ page }) => {
+  await openLab(page);
+  await openPanel(page);
+  await page.locator('[data-swarm-program]').selectOption('service');
+
+  // A real SQLite file, made by SQLite: built in the page, exported, then
+  // fed back in through the panel's file input exactly as a user's would
+  // be. Nothing here hand-rolls a database header.
+  const file = await page.evaluate(async () => {
+    const SQL = await import('./src/kernel/sqlite.js').then((m) => m.loadSqlite());
+    const db = new SQL.Database();
+    db.run('CREATE TABLE carried (id INTEGER PRIMARY KEY, note TEXT)');
+    db.run("INSERT INTO carried (note) VALUES ('from an earlier session')");
+    const bytes = db.export();
+    db.close();
+    return Array.from(bytes);
+  });
+
+  await page.locator('[data-swarm-dbfile] input[type=file]').setInputFiles({
+    name: 'earlier.sqlite',
+    mimeType: 'application/vnd.sqlite3',
+    buffer: Buffer.from(file),
+  });
+  // Staged, not opened: the database is built when the swarm is, and the
+  // label says so rather than leaving a read file looking like an ignored one.
+  await expect(page.locator('[data-swarm-dbfile]')).toContainText('earlier.sqlite');
+  await expect(page.locator('[data-swarm-dbfile]')).toContainText('opens on Start');
+
+  await page.locator('[data-swarm="swarm-start"]').click();
+  await page.locator('[data-swarm="swarm-run"]').click();
+
+  // The uploaded table is in the running database, beside the one the
+  // program made for itself.
+  const db = page.locator('[data-swarm-database]');
+  await expect(db).toContainText('carried', { timeout: 15_000 });
+  await expect(db).toContainText('1 row(s)');
+
+  // And it comes back out as a file.
+  const [download] = await Promise.all([
+    page.waitForEvent('download'),
+    page.locator('[data-swarm="database-export"]').click(),
+  ]);
+  expect(download.suggestedFilename()).toMatch(/\.(sqlite|db)$/);
+});
+
+test('a file that is not a database is refused when it is chosen', async ({ page }) => {
+  await openLab(page);
+  await openPanel(page);
+  await page.locator('[data-swarm-program]').selectOption('service');
+  await page.locator('[data-swarm-dbfile] input[type=file]').setInputFiles({
+    name: 'holiday.jpg',
+    mimeType: 'image/jpeg',
+    buffer: Buffer.from([0xff, 0xd8, 0xff, 0xe0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]),
+  });
+  // Named, and at the moment of choosing. Accepting it here would move the
+  // complaint to the first query, which is arbitrarily far from the
+  // mistake that caused it.
+  await expect(page.locator('[data-toast]')).toContainText('holiday.jpg');
+  await expect(page.locator('[data-toast]')).toContainText('SQLite format 3');
+  await expect(page.locator('[data-swarm-dbfile]')).not.toContainText('opens on Start');
+});

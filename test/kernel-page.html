@@ -18,7 +18,7 @@
 import { WasmKernel, splitCompletionToken } from '../src/kernel/wasm-kernel.js';
 import { executeCollected } from '../src/kernel/kernel.js';
 import { luaLongString, parseRecord, makeNonce } from '../src/kernel/lua-harness.js';
-import { loadSqlite, SqliteDatabase, stripLiterals } from '../src/kernel/sqlite.js';
+import { loadSqlite, SqliteDatabase, stripLiterals, looksLikeSqlite } from '../src/kernel/sqlite.js';
 import { buildConnectors } from '../src/kernel/connectors.js';
 import { topologyOf, mermaidOf, layoutOf } from '../src/kernel/topology.js';
 import { encode, decode } from '../vendor/msgpack.js';
@@ -45,6 +45,7 @@ window.lab = {
   loadSqlite,
   SqliteDatabase,
   stripLiterals,
+  looksLikeSqlite,
   buildConnectors,
   topologyOf,
   mermaidOf,

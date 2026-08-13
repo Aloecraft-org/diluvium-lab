@@ -608,6 +608,20 @@ export class WasmKernel extends Kernel {
   }
 
   /**
+   * The database as a `.sqlite` file, or null when none is wired.
+   *
+   * A method rather than a field on the report, because the report is
+   * built on every step and crosses the worker boundary each time — a
+   * megabyte of database riding along with it would be paid for
+   * continuously to be used almost never.
+   *
+   * @returns {Promise<Uint8Array|null>}
+   */
+  async swarmDatabaseExport() {
+    return this._database ? this._database.export() : null;
+  }
+
+  /**
    * Push a message into a guest's queue -- duty 4's inbound half, and the
    * one that makes a mocked listener indistinguishable from a socket.
    */

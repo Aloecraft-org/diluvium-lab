@@ -106,19 +106,60 @@ export class SqliteDatabase {
    * @param {object} SQL the initialised sql.js factory
    * @param {object} [config] the connector's configuration, in
    *   `host/types/host.lua`'s `diluvium.HostSql` shape
+   * @param {Uint8Array} [config.bytes] an existing database file to open,
+   *   rather than starting empty. Not part of `HostSql` — the C host names
+   *   a path and opens it; there is no path here, so the bytes come in
+   *   directly. See `SqliteDatabase.export`.
    */
-  constructor(SQL, { path = ':memory:', mode = 'read', max_rows: maxRows = 1024 } = {}) {
-    // Kept, and not honoured: there is no filesystem behind sql.js, so
-    // every database here is in memory and dies with the kernel. The path
-    // is carried because it is *topology* -- a deployment moving to the C
-    // host should not have to discover the field exists -- and the panel
-    // shows it next to a sentence saying nothing is written to it. Same
+  constructor(SQL, { path = ':memory:', mode = 'read', max_rows: maxRows = 1024, bytes = null } = {}) {
+    // Kept, and not honoured as a *file*: there is no filesystem behind
+    // sql.js, so the path names a database rather than locating one. It is
+    // carried because it is topology -- a deployment moving to the C host
+    // should not have to discover the field exists -- and the panel shows
+    // it beside a sentence saying what does and does not persist. Same
     // reasoning as the listener's unbound port.
     this.path = path;
     this.readwrite = mode === 'readwrite';
     this.maxRows = maxRows;
     this.statements = 0;
-    this.db = new SQL.Database();
+    // `new SQL.Database(bytes)` opens a real SQLite file, so an upload is
+    // not an import routine: the bytes someone drops in are the same bytes
+    // `sqlite3` would have written.
+    //
+    // The header is checked first because **SQLite does not check it
+    // here** -- measured, not assumed: handing `new SQL.Database` eight
+    // bytes of rubbish constructs happily and fails at the first *query*,
+    // which puts the complaint arbitrarily far from the wrong file that
+    // caused it. Refusing at the moment of opening is the difference
+    // between "that is not a database" and "no such table: t".
+    if (bytes && bytes.length) {
+      if (!looksLikeSqlite(bytes)) {
+        throw new Error('these bytes do not begin "SQLite format 3", so they are not a database file');
+      }
+      this.db = new SQL.Database(bytes);
+    } else {
+      this.db = new SQL.Database();
+    }
+  }
+
+  /**
+   * The database as a file.
+   *
+   * `db.export()` is SQLite serializing itself, so what comes out starts
+   * with `SQLite format 3` and opens in any tool that reads one. That
+   * matters more than it sounds: it is the difference between the Lab
+   * being a place you try a schema and a place you *build* one, because
+   * the schema can leave.
+   *
+   * It is also the half of "does a session survive a reload" that is not
+   * blocked upstream. A swarm's Lua state is unreachable — `dvs_hibernate`
+   * caches a snapshot and nothing hands over the bytes — but the database
+   * hands over its own.
+   *
+   * @returns {Uint8Array}
+   */
+  export() {
+    return this.db.export();
   }
 
   /**
@@ -230,16 +271,35 @@ export class SqliteDatabase {
     // One statement per call. The drivers prepare the first and ignore the
     // rest, so a second statement would ride in unauthorised and silently
     // unrun -- which is worse than either running it or refusing it.
-    const trailing = stripped.replace(/;\s*$/, '');
-    if (trailing.includes(';')) {
+    //
+    // Decided by **SQLite's own parser**, not by scanning for a `;`. That
+    // is what `iterateStatements` is for: it hands back the text it has
+    // not parsed yet, which is the same question answered by the thing
+    // that will run the statement. The scan this replaced got the easy
+    // cases right and was still a guess.
+    //
+    // Two properties this depends on, both measured rather than assumed:
+    // preparing is not running -- a probe whose tail is `DROP TABLE t`
+    // leaves the table standing -- and a *malformed* tail does not throw
+    // on the way in, so the refusal below is what a reader gets rather
+    // than a compile error about text that was never going to run.
+    const iterator = this.db.iterateStatements(sql);
+    const first = iterator.next();
+    if (first.done) throw new Error('an empty statement');
+    const remaining = iterator.getRemainingSQL();
+    first.value.free();
+    if (remaining.trim()) {
       throw new Error('one statement per call; this request carries more than one');
     }
 
     // Exact parameter count. Too few silently NULL-binds the rest, which
     // is the same class of silent truncation the row cap refuses. Counted
-    // from the text with literals and comments removed, because sql.js
-    // exposes no `sqlite3_bind_parameter_count`.
-    const wanted = (trailing.match(/\?/g) ?? []).length;
+    // from the text with literals and comments removed, because
+    // `sqlite3_bind_parameter_count` is not among the functions this build
+    // exports -- checked, not assumed, the same way `sqlite3_stmt_readonly`
+    // was. So this gate stays a text count while the one above stopped
+    // being one.
+    const wanted = (stripped.match(/\?/g) ?? []).length;
     if (wanted !== params.length) {
       throw new Error(
         `this statement takes ${wanted} parameter(s) and ${params.length} were given`);
@@ -298,4 +358,24 @@ export function stripLiterals(sql) {
     out += c; i++;
   }
   return out;
+}
+
+/** The 16 bytes every SQLite file starts with, per its own file-format spec. */
+const SQLITE_MAGIC = 'SQLite format 3\0';
+
+/**
+ * Is this a SQLite file at all?
+ *
+ * Exported because two places need the same answer and two copies would be
+ * two answers: the panel wants to refuse a wrong file at the moment it is
+ * chosen, with the filename in the message, and `SqliteDatabase` has to
+ * refuse it regardless of who is calling — a class that trusts its caller
+ * to have checked is a class that is only safe by convention.
+ */
+export function looksLikeSqlite(bytes) {
+  if (!bytes || bytes.length < SQLITE_MAGIC.length) return false;
+  for (let i = 0; i < SQLITE_MAGIC.length; i++) {
+    if (bytes[i] !== SQLITE_MAGIC.charCodeAt(i)) return false;
+  }
+  return true;
 }

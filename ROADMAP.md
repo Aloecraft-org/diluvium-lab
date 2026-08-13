@@ -2754,3 +2754,55 @@ graph showed a host connected to nothing. `_settle` now keeps the last
 queue list the same way it already kept the last usage — read at the last
 moment it is readable. "The roster is the last thing the host saw" is a
 promise the panel already made elsewhere; this is it keeping it.
+
+### A database that can leave, and a gate that stopped guessing ✅ done
+
+Two things asked for together, and they turned out to share a discovery.
+
+**The database is a file now, in both directions.** `db.export()` is
+SQLite serialising itself, so what the panel downloads begins `SQLite
+format 3` and opens in `sqlite3`, a GUI, or another Lab session;
+`new SQL.Database(bytes)` opens one someone uploads. Both were verified in
+the browser before anything was written around them — a real export
+reopened with its rows intact — because the last few passes have all been
+better for measuring the library rather than trusting its README.
+
+That makes the Lab somewhere a schema can be *built* rather than only
+tried, and it is the half of session persistence that is not blocked
+upstream. A swarm's Lua state is unreachable: `dvs_hibernate` writes a
+snapshot to an internal cache and `dvs_cached_size` will tell you how big
+it is, but no export hands over the bytes. A database hands over its own.
+
+The upload is staged rather than opened on the spot, and the label says
+so, because the database is constructed when the swarm is — a file that
+had been read but not yet used would otherwise look like a file that had
+been ignored.
+
+**And the check that a file is a database is load-bearing rather than
+polite.** Measured: `new SQL.Database` handed sixteen bytes of rubbish
+constructs without complaint and fails at the first *query*. So the
+complaint would arrive arbitrarily far from the wrong file that caused it
+— "no such table" instead of "that is not a database". `looksLikeSqlite`
+therefore lives in `sqlite.js` and is exported rather than sitting in the
+panel: the class has to refuse regardless of its caller, because a class
+that trusts callers to have checked is safe only by convention. The panel
+uses the same function so it can put the filename in the message.
+
+**One statement per call stopped being a text scan.** Probing sql.js for
+the export machinery turned up `iterateStatements`, whose iterator has
+`getRemainingSQL()` — SQLite's own parser reporting where a statement
+ends. The gate that used to blank literals and hunt for a `;` now asks the
+engine that will run the statement. Three properties, all measured rather
+than assumed: a semicolon inside a literal is correctly not a separator; a
+*malformed* tail does not throw on the way in, so a reader gets the
+refusal rather than a compile error about text that was never going to
+run; and the gate executes nothing — a probe whose tail is `DROP TABLE t`
+leaves the table standing.
+
+The same probe settled the other two gates in the opposite direction, and
+they stay text-based with the reason now checked rather than inferred:
+**neither `sqlite3_bind_parameter_count` nor `sqlite3_stmt_readonly` is
+among this build's exported functions.** `doc/Lab.md` §1a predicted the
+second; the first is the same class of gap. So the parameter count is
+still counted out of blanked text and the read/write split is still by
+first keyword, and both say so where they are written.

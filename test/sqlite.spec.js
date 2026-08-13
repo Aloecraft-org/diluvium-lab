@@ -202,3 +202,86 @@ test('literals and comments are blanked before anything is counted', async ({ pa
   // And the length is preserved, which is what "blanked" buys.
   expect(stripped.quoted).toHaveLength("SELECT 'a;b?c' AS x".length);
 });
+
+test.describe('a database is a file, in both directions', () => {
+  test('what the connector wrote can be read back by SQLite itself', async ({ page }) => {
+    await open(page);
+    const out = await page.evaluate(async () => {
+      const sqlite = await window.lab.loadSqlite();
+      const { database, connectors } = window.lab.buildConnectors(
+        { sql: { mode: 'readwrite', max_rows: 8 } }, { sqlite });
+      const fn = connectors.get('sql');
+      fn('sql/exec', { sql: 'CREATE TABLE t (id INTEGER PRIMARY KEY, k TEXT)', params: [] });
+      fn('sql/exec', { sql: 'INSERT INTO t (k) VALUES (?)', params: ['alpha'] });
+      fn('sql/exec', { sql: 'INSERT INTO t (k) VALUES (?)', params: ['beta'] });
+
+      const bytes = database.export();
+      // Not a bespoke dump: SQLite serialises itself, so the first sixteen
+      // bytes are the format's own magic and any tool that reads one reads
+      // this. That is what makes a schema able to leave the Lab.
+      const magic = new TextDecoder().decode(bytes.slice(0, 15));
+
+      // And back in through the front door: a fresh connector opened on
+      // those bytes, reached the way a guest reaches it.
+      const { connectors: reopened } = window.lab.buildConnectors(
+        { sql: { mode: 'readwrite', max_rows: 8, bytes } }, { sqlite });
+      const read = reopened.get('sql')('sql/query', { sql: 'SELECT k FROM t ORDER BY id', params: [] });
+      return { magic, size: bytes.length, read };
+    });
+    expect(out.magic).toBe('SQLite format 3');
+    expect(out.size).toBeGreaterThan(0);
+    expect(out.read.status).toBe('ok');
+    expect(out.read.value.rows).toEqual([['alpha'], ['beta']]);
+  });
+
+  test('bytes that are not a database are refused when opened, not at first query', async ({ page }) => {
+    await open(page);
+    const out = await page.evaluate(async () => {
+      const sqlite = await window.lab.loadSqlite();
+      const rubbish = new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]);
+      let refused = null;
+      try {
+        window.lab.buildConnectors({ sql: { mode: 'read', bytes: rubbish } }, { sqlite });
+      } catch (err) { refused = err.message; }
+
+      // And what SQLite alone would have done with the same bytes, which
+      // is why the check above exists rather than being belt-and-braces.
+      let sqlJsAlone = 'constructed without complaint';
+      const db = new sqlite.Database(rubbish);
+      try {
+        db.exec('SELECT 1');
+        sqlJsAlone = 'and answered a query too';
+      } catch (err) { sqlJsAlone = `threw only at query time: ${err.message}`; }
+      return { refused, sqlJsAlone, magic: window.lab.looksLikeSqlite(rubbish) };
+    });
+    expect(out.refused).toContain('not a database file');
+    expect(out.magic).toBe(false);
+    // Documented rather than asserted loosely: sql.js accepts the bytes and
+    // defers the complaint, which puts it arbitrarily far from the wrong
+    // file that caused it.
+    expect(out.sqlJsAlone).toMatch(/threw only at query time|answered a query too/);
+  });
+});
+
+test('the one-statement gate is SQLite\'s parser now, not a scan for semicolons', async ({ page }) => {
+  await open(page);
+  const out = await sql(page, [
+    ['exec', 'CREATE TABLE t (id INTEGER PRIMARY KEY, a TEXT)'],
+    // Two statements: refused, and the second must not have run.
+    ['exec', "INSERT INTO t (a) VALUES ('x'); DROP TABLE t"],
+    // A semicolon inside a literal is one statement, and SQLite is what
+    // says so — the text scan this replaced had to blank literals first to
+    // reach the same answer, and only for the cases it anticipated.
+    ['exec', "INSERT INTO t (a) VALUES ('x;y')"],
+    // A trailing semicolon and trailing space are not a second statement.
+    ['exec', "INSERT INTO t (a) VALUES ('z');   "],
+    ['query', 'SELECT a FROM t ORDER BY id'],
+  ]);
+  expect(out[1].status).toBe('error');
+  expect(out[1].detail).toContain('one statement per call');
+  expect(out[2].status).toBe('ok');
+  expect(out[3].status).toBe('ok');
+  // The table is still here, so the refused DROP never ran — the gate
+  // prepares and frees, and preparing is not running.
+  expect(out[4].value.rows).toEqual([['x;y'], ['z']]);
+});

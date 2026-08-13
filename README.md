@@ -485,6 +485,32 @@ A text gate is a floor rather than a target. Build to the contract so your
 guest cannot tell the two hosts apart, and do not point this at a database
 that matters — production is the C host.
 
+One of those gates stopped being a text gate. **One statement per call** is
+now decided by SQLite's own parser: `iterateStatements` hands back the text
+it has not parsed, which is the same question answered by the thing that
+will run the statement. It is side-effect free — preparing is not running,
+and a request whose tail is `DROP TABLE t` leaves the table standing.
+
+### The database is a file
+
+The database lives in memory — there is no filesystem behind a browser tab
+— but it is a real SQLite database, and it can leave. **Download .sqlite**
+in the Instances panel exports it, and what comes out begins `SQLite format
+3` because SQLite serialised it; `sqlite3`, a GUI, or another Lab session
+will open it. **Open .sqlite…** beside the program picker goes the other
+way, staged until you press Start because the database is built when the
+swarm is.
+
+A file that is not a database is refused when you choose it, by name.
+That check is not decoration: sql.js accepts arbitrary bytes without
+complaint and only fails at the first *query*, which would put the
+complaint arbitrarily far from the wrong file that caused it.
+
+This is also the half of "does a session survive a reload" that is not
+blocked upstream. A swarm's Lua state is unreachable — `dvs_hibernate`
+caches a snapshot and nothing hands over the bytes — but a database hands
+over its own.
+
 ## Naming a notebook
 
 The name at the top of the page is the notebook's, and it is **not** its
