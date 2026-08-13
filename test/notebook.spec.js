@@ -322,6 +322,35 @@ test.describe('the console shares the kernel', () => {
     await consoleInput(page).press('Enter');
     await expect(consoleLog(page).locator('[data-console-stream="stdout"]')).toContainText('still fine');
   });
+
+  test('a console error carries the same plain-English hint a cell gets', async ({ page }) => {
+    await openLab(page);
+    await consoleInput(page).fill('nothing.here');
+    await consoleInput(page).press('Enter');
+    await expect(consoleLog(page).locator('[data-console-error]')).toContainText('nil');
+    // The console is where first Lua gets typed; it was the one error
+    // surface with no hint under the runtime's words.
+    await expect(consoleLog(page).locator('[data-hint]')).toContainText('has no value yet');
+  });
+
+  test('history keeps the draft you were typing, one press per step', async ({ page }) => {
+    await openLab(page);
+    await consoleInput(page).fill('print("first")');
+    await consoleInput(page).press('Enter');
+    await expect(consoleLog(page).locator('[data-console-input-echo]')).toHaveCount(1);
+
+    await consoleInput(page).fill('half a draft');
+    await consoleInput(page).press('ArrowUp');
+    await expect(consoleInput(page)).toHaveValue('print("first")');
+    // One ArrowUp recalled it even though the caret sat at the end of
+    // the draft -- the old caret==0 rule cost two presses per step.
+    await consoleInput(page).press('ArrowDown');
+    await expect(consoleInput(page)).toHaveValue('half a draft');
+  });
+
+  // The collapse-persistence test lives in menus.spec.js: this file's
+  // openLab clears IndexedDB via addInitScript, which re-runs on the very
+  // reload a persistence test depends on (the trap storage.spec documents).
 });
 
 test.describe('output caps', () => {

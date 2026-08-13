@@ -12,7 +12,7 @@ import { renderMarkdown } from './markdown.js';
 import { outputText, bundleOf } from './ipynb.js';
 import { renderBundle } from './display.js';
 import { HighlightedEditor } from './editor.js';
-import { hintFor, tipForOutput } from './hints.js';
+import { hintFor, tipForOutput, withCodeSpans } from './hints.js';
 import { BytecodeView } from './bytecode-view.js';
 import { SandboxView } from './sandbox-view.js';
 import { EXPECT, expectationOf } from './model.js';
@@ -93,18 +93,6 @@ function countLines(text) {
   let n = 1;
   for (let i = 0; i < text.length; i++) if (text.charCodeAt(i) === 10) n++;
   return text.endsWith('\n') ? n - 1 : n;
-}
-
-/**
- * Hint text carries `code spans`. Built as nodes rather than assigned as
- * HTML: hints are our own strings today, but the rule in this codebase is
- * that nothing reaches the DOM as markup, so there is no version of this
- * that can be got wrong later.
- */
-function withCodeSpans(text) {
-  return String(text).split(/`([^`]+)`/).map((piece, i) => (
-    i % 2 === 1 ? el('code', {}, [piece]) : piece
-  )).filter((piece) => piece !== '');
 }
 
 export function renderOutputs(cell, expandedSet, displayCtx = {}) {

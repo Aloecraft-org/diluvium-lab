@@ -162,3 +162,16 @@ export function tipForOutput(text) {
 
 /** Rendered by the UI; exported for tests and for a future docs page. */
 export const HINT_RULE_COUNT = RULES.length;
+
+/**
+ * Hint text carries `code spans`. Built as nodes rather than assigned as
+ * HTML: hints are our own strings today, but the rule in this codebase is
+ * that nothing reaches the DOM as markup, so there is no version of this
+ * that can be got wrong later. Lives beside the hints because everything
+ * that shows one -- cells and console alike -- needs it.
+ */
+export function withCodeSpans(text) {
+  return String(text).split(/`([^`]+)`/).map((piece, i) => (
+    i % 2 === 1 ? Object.assign(document.createElement('code'), { textContent: piece }) : piece
+  )).filter((piece) => piece !== '');
+}

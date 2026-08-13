@@ -38,16 +38,17 @@ import { BUNDLED } from '../vendor/pinned.js';
  * page makes no network request at load beyond the kernel itself, and the
  * baked single-file build has nowhere to fetch from anyway.
  *
- * Kept to syntax the pinned 5.4.7 runtime understands -- `switch`, compound
- * assignment and the rewritten f-strings are 5.5 and would fail confusingly
- * on first run.
+ * The pin is a 5.5 runtime now (vendor/PINNED_TAG), so 5.5 syntax is fair
+ * game here -- the f-string below is already using it. Kept to four cells
+ * on purpose: this is a doorstep, not the tour; hello.ipynb is the tour.
  */
 const DEFAULT_NOTEBOOK = {
   cells: [
     { cell_type: 'markdown', metadata: {}, source: [
       '# Diluvium Lab\n', '\n',
       'Cells share one kernel, so state carries from one to the next.\n',
-      'Run a cell with **Ctrl+Enter**, or Shift+Enter to run and move on.\n',
+      'Run a cell with **Ctrl+Enter** (⌘ on a Mac), or Shift+Enter to run and move on.\n',
+      '**Start here** above opens guided notebooks; **Help** lists every shortcut.\n',
     ] },
     { cell_type: 'code', execution_count: null, metadata: {}, outputs: [], source: [
       'local who = "world"\n', 'print($"hello, {who}!")',
@@ -301,6 +302,7 @@ export class App {
       }
       const theme = await loadPref('theme');
       if (theme === 'light' || theme === 'dark') this.setTheme(theme);
+      if ((await loadPref('console-hidden')) === true) this.toggleConsole();
     });
 
     // A first visit with nothing loaded gets the launcher, once. A
@@ -453,6 +455,7 @@ export class App {
       return;
     }
     this.document.body.dataset.checking = 'true';
+    this._setSwitchControls(true);
     try {
       const entries = await this.registry.check();
       this._renderVersions();
@@ -462,9 +465,22 @@ export class App {
         : 'The mirror lists no other builds yet.');
     } catch (err) {
       this._toast(err.message, 'error');
+      // The toast lasts six seconds; the release errors it carries are
+      // deliberately detailed. The console keeps the evidence.
+      this.console.note(`Checking the mirror failed: ${err.message}`);
     } finally {
       this.document.body.dataset.checking = 'false';
+      this._setSwitchControls(false);
     }
+  }
+
+  /** The runtime dropdown and ⟳, disabled together while either is busy --
+      a second pick mid-download started a second concurrent switch. */
+  _setSwitchControls(disabled) {
+    const select = this.document.querySelector('[data-version-select]');
+    const check = this.document.querySelector('[data-toolbar="check-versions"]');
+    if (select) select.disabled = disabled;
+    if (check) check.disabled = disabled;
   }
 
   /**
@@ -476,6 +492,7 @@ export class App {
     if (id === this.runtimeId) return;
     const previous = this.runtimeId;
     this.document.body.dataset.switching = 'true';
+    this._setSwitchControls(true);
     this._renderStatus(STATUS.STARTING);
 
     let loaded;
@@ -488,6 +505,7 @@ export class App {
       this._renderVersions();
       this._renderStatus(this.kernel.status);
       this.document.body.dataset.switching = 'false';
+      this._setSwitchControls(false);
       return;
     }
 
@@ -507,6 +525,7 @@ export class App {
       `Switched to ${this.registry.entries().find((e) => e.id === id)?.label ?? id}` +
       `${loaded.fromCache ? ' (from cache)' : ''}. Every variable is gone.`);
     this.document.body.dataset.switching = 'false';
+    this._setSwitchControls(false);
   }
 
   /**
@@ -1502,6 +1521,11 @@ export class App {
       { label: 'Help', items: () => [
         { label: 'Keyboard shortcuts', toolbar: 'shortcuts',
           run: () => this.showShortcuts() },
+        // The guided notebooks, from the menu a lost newcomer actually
+        // opens -- Start here also lives on the toolbar, but a person
+        // scanning for help scans Help.
+        { label: 'Example notebooks', toolbar: 'examples-menu',
+          run: () => this.showExamples() },
         { sep: true },
         { label: 'Diluvium website', toolbar: 'website',
           title: 'The language this Lab runs — diluvium.aloecraft.org',
@@ -1620,6 +1644,9 @@ export class App {
       doc.querySelector('[data-file-input]')?.click();
     });
     doc.querySelector('[data-launcher-url]')?.addEventListener('click', () => { launcher?.close(); this._openUrlDialog(); });
+
+    doc.querySelector('[data-console-collapse]')?.addEventListener('click', () => this.toggleConsole());
+    doc.querySelector('[data-console-clear]')?.addEventListener('click', () => this.console.clear());
 
     const shortcuts = doc.querySelector('[data-shortcuts]');
     doc.querySelector('[data-shortcuts-close]')?.addEventListener('click', () => shortcuts?.close());
@@ -1819,8 +1846,12 @@ export class App {
 
   toggleConsole() {
     const body = this.document.body;
-    if (body.dataset.consoleHidden === 'true') delete body.dataset.consoleHidden;
-    else body.dataset.consoleHidden = 'true';
+    const hidden = body.dataset.consoleHidden !== 'true';
+    if (hidden) body.dataset.consoleHidden = 'true';
+    else delete body.dataset.consoleHidden;
+    // A preference like the masthead's: hiding the console should not be
+    // something a reload quietly undoes.
+    savePref('console-hidden', hidden).catch(() => {});
   }
 
   /**
@@ -1977,10 +2008,26 @@ export class App {
     // that appears and vanishes moves the toolbar under the pointer and
     // drops in and out of the tab order mid-task.
     const stop = this.document.querySelector('[data-toolbar="stop"]');
-    if (stop) stop.disabled = !(status === STATUS.BUSY && this.kernel.capabilities?.interrupt);
+    if (stop) {
+      const canStop = this.kernel.capabilities?.interrupt === true;
+      stop.disabled = !(status === STATUS.BUSY && canStop);
+      // The tooltip tells the truth for *this* kernel: the in-page
+      // fallback kept promising "Stop the running cell" on a button that
+      // can never work there.
+      stop.title = canStop
+        ? 'Stop the running cell. This restarts the kernel, so every variable is lost.'
+        : (this.kernel.fallbackReason
+          ? `This kernel runs in the page and cannot be stopped (${this.kernel.fallbackReason}).`
+          : 'This kernel cannot be stopped.');
+    }
     if (!this.statusNode) return;
     this.statusNode.textContent = status;
     this.statusNode.dataset.status = status;
+    // "dead" was jargon and a dead end; the pill now says where recovery
+    // lives, since Restart hides behind an unlabeled arrow.
+    this.statusNode.title = status === STATUS.DEAD
+      ? 'The kernel stopped. Restart it from the ▾ menu next to Stop.'
+      : '';
   }
 
   /**

@@ -3103,3 +3103,36 @@ its Close row sticky (it was 1300px tall on a phone with the exits at
 the very bottom), the fold toggle and split arrows meet 44px on touch,
 and `In [1]:` and the elapsed clock stopped wrapping mid-unit in a
 crowded head.
+
+### The console grew manners, and help points somewhere ✅ done
+
+The console batch, from the audit's reading of console.js against a
+live drive. Errors typed into the console now carry the same
+plain-English hint a cell shows — the console is where first Lua gets
+typed, and it was the one error surface with nothing under the
+runtime's words (`withCodeSpans` moved to hints.js, which every hint
+surface imports anyway). A command killed by Stop leaves an error entry
+instead of an echo followed by silence; the busy guard moved ahead of
+the is_complete round trip, so a held Enter cannot run the same line
+twice; history recall is one press per step from anywhere on the first
+or last line, and walking past the newest entry restores the draft that
+was being typed. The strip says "· running…" and dims its input while
+the kernel is busy (the attribute was set with no rule reading it), its
+header gained Clear and a collapse ✕, and hiding it is a preference now
+— it was the one View toggle a reload quietly undid.
+
+Kernel controls stopped assuming a mouse and a healthy kernel: Stop's
+tooltip tells the truth per-kernel (the in-page fallback promised a stop
+it can never deliver), the dead pill says where Restart lives, the
+runtime dropdown and ⟳ disable during a switch instead of allowing a
+second concurrent one, mirror failures leave a console note that
+outlives the six-second toast, and the toast itself keeps the
+release-checker's deliberate line breaks.
+
+And the guidance now points somewhere: hello.ipynb's map gained the two
+notebooks three features had added without telling it (swarm, SQL);
+Help gained Example notebooks; About says what the Lab *is* and links
+diluvium.aloecraft.org; the seed notebook points at Start here and
+Help, notes ⌘, and its comment stopped claiming a 5.4.7 pin two
+runtimes gone; the shortcuts reference admits Ctrl+Y and the
+double-click that edits rendered markdown.

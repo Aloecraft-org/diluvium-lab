@@ -42,6 +42,24 @@ test.describe('the three rows', () => {
     await expect(page.locator('[data-toolbar="examples"]')).toBeVisible();
   });
 
+  test('the console collapses from its own header, and stays put', async ({ page }) => {
+    await openLab(page);
+    await page.locator('[data-console-collapse]').click();
+    await expect(page.locator('.console')).toBeHidden();
+    // The pref write is fire-and-forget; give IndexedDB its beat before
+    // the reload that is meant to read it back.
+    await page.waitForTimeout(400);
+
+    await page.reload();
+    await page.waitForSelector('body[data-ready="true"]', { timeout: 30_000 });
+    await dismissLauncher(page);
+    await expect(page.locator('.console')).toBeHidden();
+
+    // View › Console brings it back, and that sticks too.
+    await viaControl(page, 'toggle-console');
+    await expect(page.locator('.console')).toBeVisible();
+  });
+
   test('the masthead folds away and stays folded over a reload', async ({ page }) => {
     await openLab(page);
     await page.locator('[data-masthead-toggle]').click();

@@ -1031,6 +1031,19 @@
     padding: .3rem .75rem; font-size: .78rem; color: var(--quiet);
     border-bottom: 1px solid var(--edge);
   }
+  .console-head button {
+    font: inherit; font-size: .75rem; padding: .05rem .45rem; cursor: pointer;
+    border: 1px solid transparent; border-radius: 6px;
+    background: transparent; color: var(--quiet);
+  }
+  .console-head button:hover { background: var(--sunk); color: inherit; }
+  /* The attribute was being set with no rule reading it: while a command
+     (or a cell -- the worker serialises everything) runs, the input looks
+     live and Enter is silently swallowed. Now the strip says so. */
+  .console[data-busy="true"] .console-input-row { opacity: .6; }
+  .console[data-busy="true"] .console-head strong::after {
+    content: " · running…"; font-weight: 400; color: var(--warn);
+  }
   [data-console-log] { overflow: auto; padding: .5rem .75rem; font-size: .84rem; }
   [data-console-log] pre { margin: 0; font-family: var(--mono); white-space: pre-wrap; word-break: break-word; }
   .console-entry { display: flex; gap: .4rem; color: var(--quiet); }
@@ -1046,6 +1059,7 @@
   [data-toast] {
     position: fixed; left: 50%; bottom: 1rem; top: auto; right: auto;
     transform: translateX(-50%); width: max-content; max-width: min(46rem, 92vw);
+    white-space: pre-line;
     margin: 0; padding: .5rem .9rem; border-radius: 8px; border: 1px solid var(--edge);
     background: Canvas; color: CanvasText; font-size: .86rem; z-index: 10;
   }
@@ -1284,6 +1298,10 @@
      are things worth reimplementing badly. -->
 <dialog data-about aria-labelledby="about-title">
   <h2 id="about-title">Diluvium Lab</h2>
+  <p class="about-note">
+    A notebook for the Diluvium language —
+    <a href="https://diluvium.aloecraft.org" target="_blank" rel="noopener">diluvium.aloecraft.org</a>.
+  </p>
   <dl data-about-facts></dl>
   <p class="about-note">
     Paste the block below into a bug report — it says exactly which Lab,
@@ -1332,7 +1350,8 @@
     <div>
       <div class="shortcut-head">Anywhere</div>
       <div class="shortcut-row"><span>Save .ipynb</span><kbd>Ctrl+S</kbd></div>
-      <div class="shortcut-row"><span>Undo / redo</span><kbd>Ctrl+Z · Ctrl+Shift+Z</kbd></div>
+      <div class="shortcut-row"><span>Undo / redo</span><kbd>Ctrl+Z · Ctrl+Shift+Z / Ctrl+Y</kbd></div>
+      <div class="shortcut-row"><span>Edit rendered markdown</span><kbd>double-click</kbd></div>
       <div class="shortcut-head">In the console</div>
       <div class="shortcut-row"><span>Run</span><kbd>Enter</kbd></div>
       <div class="shortcut-row"><span>Add a line</span><kbd>Shift+Enter</kbd></div>
@@ -1462,6 +1481,11 @@
     <span>— shares the kernel with the notebook. Enter runs; Shift+Enter adds a line.</span>
     <span class="spacer"></span>
     <span data-kernel-backend></span>
+    <button type="button" data-console-clear
+            title="Empty the console log" aria-label="Empty the console log">Clear</button>
+    <button type="button" data-console-collapse
+            title="Hide the console — View › Console brings it back"
+            aria-label="Hide the console">✕</button>
   </div>
   <div data-console-log></div>
   <div class="console-input-row">
