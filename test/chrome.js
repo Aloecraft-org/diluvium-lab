@@ -14,7 +14,7 @@ const MENU_OF = {
   'hide-code': 'view', 'collapse-all': 'view', 'expand-all': 'view',
   'toggle-console': 'view', 'panel-outline': 'view',
   'theme-system': 'view', 'theme-light': 'view', 'theme-dark': 'view',
-  docs: 'help', about: 'help',
+  docs: 'help', about: 'help', shortcuts: 'help', website: 'help',
 };
 
 /** Which split-button dropdown, for the rest. */

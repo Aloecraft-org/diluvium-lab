@@ -1426,9 +1426,16 @@ export class App {
           run: () => this.loadDiagramRenderer() },
       ] },
       { label: 'Help', items: () => [
+        { label: 'Keyboard shortcuts', toolbar: 'shortcuts',
+          run: () => this.showShortcuts() },
+        { sep: true },
+        { label: 'Diluvium website', toolbar: 'website',
+          title: 'The language this Lab runs — diluvium.aloecraft.org',
+          run: () => this.document.defaultView.open('https://diluvium.aloecraft.org', '_blank', 'noopener') },
         { label: 'Diluvium documentation', toolbar: 'docs',
           title: 'The language and runtime docs, on GitHub',
           run: () => this.document.defaultView.open('https://github.com/Aloecraft-org/diluvium/tree/main/doc', '_blank', 'noopener') },
+        { sep: true },
         { label: 'About', toolbar: 'about', run: () => this.showAbout() },
       ] },
     ];
@@ -1529,6 +1536,9 @@ export class App {
       doc.querySelector('[data-file-input]')?.click();
     });
     doc.querySelector('[data-launcher-url]')?.addEventListener('click', () => { launcher?.close(); this._openUrlDialog(); });
+
+    const shortcuts = doc.querySelector('[data-shortcuts]');
+    doc.querySelector('[data-shortcuts-close]')?.addEventListener('click', () => shortcuts?.close());
 
     // The source dialog's controls.
     const source = doc.querySelector('[data-source]');
@@ -1657,6 +1667,10 @@ export class App {
     input.value = this.model.title;
     dialog.showModal();
     input.select();
+  }
+
+  showShortcuts() {
+    this.document.querySelector('[data-shortcuts]')?.showModal();
   }
 
   showSource() {

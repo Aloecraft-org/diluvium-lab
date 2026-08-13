@@ -329,6 +329,45 @@ test.describe('the launcher', () => {
   });
 });
 
+test.describe('help for the keyboard and the language', () => {
+  test('Help opens the shortcuts reference, and it closes again', async ({ page }) => {
+    await openLab(page);
+    await viaControl(page, 'shortcuts');
+    const dialog = page.locator('[data-shortcuts]');
+    await expect(dialog).toBeVisible();
+    // The two keys a newcomer needs first are both in it.
+    await expect(dialog).toContainText('Ctrl+Enter');
+    await expect(dialog).toContainText('Ctrl+Space');
+    await page.locator('[data-shortcuts-close]').click();
+    await expect(dialog).toBeHidden();
+  });
+
+  test('the launcher links back to the Diluvium site', async ({ page }) => {
+    await openLab(page);
+    await page.locator('[data-home]').click();
+    const link = page.locator('[data-launcher] a[href="https://diluvium.aloecraft.org"]');
+    await expect(link).toBeVisible();
+    // In a new tab, and without a handle on this page.
+    await expect(link).toHaveAttribute('target', '_blank');
+    await expect(link).toHaveAttribute('rel', 'noopener');
+  });
+
+  test('an empty cell says which keys matter, a filled one says nothing', async ({ page }) => {
+    await openLab(page);
+    await viaControl(page, 'new');
+    const editor = page.locator('.cell[data-cell-type="code"] [data-editor]').first();
+    await expect(editor).toHaveAttribute('placeholder', /Ctrl\+Enter/);
+    // A placeholder only exists while the editor is empty -- typing one
+    // character removes the nudge without anything having to manage it.
+    await editor.fill('print(1)');
+    const shown = await editor.evaluate((node) => {
+      const style = getComputedStyle(node);
+      return node.value === '' && style.visibility !== 'hidden';
+    });
+    expect(shown).toBe(false);
+  });
+});
+
 test.describe('the split buttons', () => {
   test('+ Cell adds the kind it last added', async ({ page }) => {
     await openLab(page);

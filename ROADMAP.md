@@ -2967,3 +2967,21 @@ the OS happened to point when you left.
 light against an emulated dark OS, and checks a token actually
 re-colours — the mechanism and its one previously-broken edge, not
 pixels.
+
+### The keyboard, written down — and a way back to Diluvium ✅ done
+
+Everything the editor could do was invisible until you happened to press
+it: Tab indented, Ctrl+/ commented, Ctrl+Space completed, and no surface
+in the page said so. Help now opens a **Keyboard shortcuts** reference —
+a static dialog, because the shortcuts are decisions in the source, not
+state. An empty editor carries the two keys that matter as its
+placeholder (`-- Ctrl+Enter runs · Ctrl+Space completes`), which is
+self-erasing guidance: it exists exactly while there is nothing else to
+look at, and typing one character removes it. The placeholder colour is
+spelled out because the textarea's own text is deliberately transparent
+under the highlight overlay, and a placeholder left to inherit that is
+defined as invisible.
+
+Help also gained **Diluvium website**, and the launcher's opening line
+links `diluvium.aloecraft.org` — the Lab kept explaining the language
+while pointing nowhere that teaches it.

@@ -782,6 +782,29 @@
      given any weight. */
   .toolbar .start-here { border-color: var(--accent); font-weight: 600; }
 
+  /* --- keyboard shortcuts reference --- */
+  dialog[data-shortcuts] { max-width: min(40rem, 92vw); }
+  .shortcut-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 0 2rem; }
+  @media (max-width: 40rem) { .shortcut-cols { grid-template-columns: 1fr; } }
+  .shortcut-head {
+    font-size: .78rem; font-weight: 650; color: var(--quiet);
+    text-transform: uppercase; letter-spacing: .04em; margin: .7rem 0 .25rem;
+  }
+  .shortcut-row {
+    display: flex; align-items: baseline; justify-content: space-between;
+    gap: 1rem; padding: .16rem 0; font-size: .86rem;
+  }
+  dialog[data-shortcuts] kbd {
+    font-family: var(--mono); font-size: .76rem; white-space: nowrap;
+    padding: .05rem .35rem; border: 1px solid var(--edge);
+    border-bottom-width: 2px; border-radius: 5px; background: var(--sunk);
+  }
+
+  /* The nudge inside an empty editor. Spelled out because the textarea's
+     own text is deliberately transparent (the highlight overlay carries
+     the glyphs), and a placeholder left to inherit that is invisible. */
+  textarea[data-editor]::placeholder { color: var(--quiet); opacity: .75; font-style: italic; }
+
   dialog[data-examples] { max-width: min(46rem, 92vw); }
   .example-entry {
     display: block; width: 100%; text-align: left; font: inherit; cursor: pointer;
@@ -1211,6 +1234,40 @@
   </form>
 </dialog>
 
+<!-- The keyboard, written down. Everything here already works; this is
+     where somebody finds out. Static content on purpose: the page's
+     shortcuts are decisions in the source, not state to render. -->
+<dialog data-shortcuts aria-labelledby="shortcuts-title">
+  <h2 id="shortcuts-title">Keyboard shortcuts</h2>
+  <div class="shortcut-cols">
+    <div>
+      <div class="shortcut-head">In a cell</div>
+      <div class="shortcut-row"><span>Run the cell</span><kbd>Ctrl+Enter</kbd></div>
+      <div class="shortcut-row"><span>Run, then move on</span><kbd>Shift+Enter</kbd></div>
+      <div class="shortcut-row"><span>Complete at the caret</span><kbd>Ctrl+Space</kbd></div>
+      <div class="shortcut-row"><span>Indent / dedent</span><kbd>Tab · Shift+Tab</kbd></div>
+      <div class="shortcut-row"><span>Comment or uncomment</span><kbd>Ctrl+/</kbd></div>
+      <div class="shortcut-row"><span>Leave by keyboard</span><kbd>Esc, then Tab</kbd></div>
+    </div>
+    <div>
+      <div class="shortcut-head">Anywhere</div>
+      <div class="shortcut-row"><span>Save .ipynb</span><kbd>Ctrl+S</kbd></div>
+      <div class="shortcut-row"><span>Undo / redo</span><kbd>Ctrl+Z · Ctrl+Shift+Z</kbd></div>
+      <div class="shortcut-head">In the console</div>
+      <div class="shortcut-row"><span>Run</span><kbd>Enter</kbd></div>
+      <div class="shortcut-row"><span>Add a line</span><kbd>Shift+Enter</kbd></div>
+    </div>
+  </div>
+  <p class="dialog-note">
+    On a Mac, <kbd>⌘</kbd> works wherever Ctrl is shown. Undo inside an
+    editor is the text's own history; outside one it is the notebook's —
+    cells added, moved, deleted.
+  </p>
+  <div class="about-actions">
+    <button type="button" data-shortcuts-close>Close</button>
+  </div>
+</dialog>
+
 <dialog data-recent>
   <h2>Recently opened</h2>
   <div data-recent-list></div>
@@ -1241,6 +1298,8 @@
   <p class="dialog-note">
     Lua 5.5 with messaging, budgets and instances — running in this page,
     nothing installed. Pick a notebook or start typing in a blank one.
+    The language itself lives at
+    <a href="https://diluvium.aloecraft.org" target="_blank" rel="noopener">diluvium.aloecraft.org</a>.
   </p>
   <div class="launcher-actions">
     <button type="button" data-launcher-new>New notebook</button>

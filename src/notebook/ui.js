@@ -364,6 +364,11 @@ export class NotebookView {
       spellcheck: 'false',
       rows: Math.max(1, cell.source.split('\n').length),
       'aria-label': `${cell.cell_type} cell ${index + 1}`,
+      // Only an empty editor shows it, which is exactly the moment the
+      // two keys worth knowing are not yet discoverable any other way.
+      placeholder: isCode
+        ? '-- Ctrl+Enter runs · Ctrl+Space completes'
+        : 'Write markdown — Ctrl+Enter renders it',
     });
     editor.value = cell.source;
     editor.hidden = !editing || folded;
