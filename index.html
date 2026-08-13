@@ -120,6 +120,19 @@
   :root[data-theme="light"] { color-scheme: light; }
   :root[data-theme="dark"] { color-scheme: dark; }
   * { box-sizing: border-box; }
+  /* A <select> here is drawn transparent so it sits in the toolbar rather
+     than on it -- but `background: transparent` and `color: inherit` are
+     inherited by its <option>s, and the option list is painted by the
+     platform rather than by the page. Where that surface comes out light
+     regardless of `color-scheme` (Chrome on Linux and on Windows both do
+     it), the inherited white text lands on white and the open dropdown
+     reads as blank rows. So name both colours on the options: system
+     colours, so they follow the theme like everything else on this page,
+     and inert on macOS, where the popup is native and takes no styling. */
+  select option, select optgroup {
+    background-color: Canvas;
+    color: CanvasText;
+  }
   /* One focus treatment for every control that is not a text field --
      three surfaces had their own and everything else wore whichever ring
      the UA felt like. Text fields keep their native behaviour: for them
