@@ -20,6 +20,7 @@ import { executeCollected } from '../src/kernel/kernel.js';
 import { luaLongString, parseRecord, makeNonce } from '../src/kernel/lua-harness.js';
 import { loadSqlite, SqliteDatabase, stripLiterals } from '../src/kernel/sqlite.js';
 import { buildConnectors } from '../src/kernel/connectors.js';
+import { topologyOf, mermaidOf, layoutOf } from '../src/kernel/topology.js';
 import { encode, decode } from '../vendor/msgpack.js';
 import { sha256, hmacSha256, utf8Bytes, bytesToHex } from '../src/kernel/sha256.js';
 
@@ -45,6 +46,9 @@ window.lab = {
   SqliteDatabase,
   stripLiterals,
   buildConnectors,
+  topologyOf,
+  mermaidOf,
+  layoutOf,
   msgpack: { encode, decode },
   crypto: { sha256, hmacSha256, utf8: utf8Bytes, toHex: bytesToHex },
 };

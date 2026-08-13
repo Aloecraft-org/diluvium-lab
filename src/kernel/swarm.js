@@ -535,6 +535,13 @@ export class SwarmHost {
     if (slot) {
       slot.parked = false;
       slot.finalUsage = this._usage(inst);
+      // And its queues, for the same reason as its usage: they are readable
+      // now and unreadable one line later. Without this the roster's shape
+      // changes when a program ends -- the routes it declared stop being
+      // reported, so a topology drawn after the swarm finished showed a
+      // host connected to nothing. "The roster is the last thing the host
+      // saw" is the promise the panel already makes; this keeps it.
+      slot.finalQueues = this._queuesOf(inst);
       // The last moment this instance exists. `destroy` fires after the
       // swarm has released it, and by then its queues are gone -- so a
       // program whose final act is to push its answer to `outbox` would
@@ -597,6 +604,16 @@ export class SwarmHost {
         outcome: null,
         detail: null,
         finalUsage: null,
+        finalQueues: null,
+        // What the host has delivered *into* this instance, by queue name.
+        //
+        // Outbound traffic is already visible -- an exported queue the host
+        // drains produces a `message` event naming the instance and the
+        // queue. Inbound had no such trace, so the graph the roster
+        // describes had edges going one way only. This is host bookkeeping
+        // in the same sense the roster is: duty 4 is the queue pump, and a
+        // host that pumps without counting cannot say what it pumped.
+        delivered: new Map(),
         caps: this._capsOf(id),
         budget: this._budgetOf(id),
       });
@@ -684,7 +701,8 @@ export class SwarmHost {
         usage: inst ? this._usage(inst) : (slot.gone ? slot.finalUsage : null),
         exceeded: inst ? this.exports.dv_exceeded(inst) !== 0 : slot.outcome === 'exceeded',
         cachedSize: resident ? 0 : (this.exports.dvs_cached_size(this.sw, slot.id) >>> 0),
-        queues: inst ? this._queuesOf(inst) : [],
+        queues: inst ? this._queuesOf(inst) : (slot.finalQueues ?? []),
+        delivered: Object.fromEntries(slot.delivered),
         createdAtStep: slot.createdAtStep,
         goneAtStep: slot.goneAtStep ?? null,
         wakes: slot.wakes,
@@ -776,6 +794,12 @@ export class SwarmHost {
       const st = this.exports.dvs_push(
         this.sw, id, scratch.cstring(queue), scratch.bytes(payload), payload.length,
       );
+      // Counted only when it landed. A refused push is backpressure, not
+      // an edge, and drawing one would say a route exists that does not.
+      if (st === DVS.OK) {
+        const slot = this.slots.get(Number(id));
+        if (slot) slot.delivered.set(queue, (slot.delivered.get(queue) ?? 0) + 1);
+      }
       return { status: DVS_NAMES[st] ?? String(st), detail: st === DVS.OK ? null : this._lastError(st) };
     } finally {
       scratch.free();

@@ -325,7 +325,27 @@ older builds can run a single sandboxed instance (the Sandbox button
 below) but nothing in them can spawn.
 
 Pick a root program, press **Start**, then **Step** one step at a time or
-**Run** to a standstill. The roster fills in as instances come to exist:
+**Run** to a standstill.
+
+Above the roster is the **topology**: the shape the instances make, drawn
+as it changes. Solid lines are spawns, which the runtime is the authority
+on — `dvs_parent` said so at create time. Queue lines are routes the guest
+declared, drawn dashed until something has crossed them and labelled with
+how much has; hovering one lists the queues behind it, because a program
+with five exported queues would otherwise put five arrows on the same two
+points and say less than one.
+
+**There are no instance-to-instance edges, and that is not an omission.**
+Guests do not push to each other. A message leaves on an exported queue,
+the host takes it, and the host decides what happens next — so an arrow
+from one instance to another would assert a route the runtime does not
+have. A → host → B is two edges, and is what actually happened.
+
+The same graph is offered as Mermaid text under the picture, for a PR or a
+design doc. It is text and not a rendering because rendering it would mean
+vendoring about a megabyte, and everything this page uses is vendored.
+
+The roster below fills in as instances come to exist:
 
 | column | what it is |
 | :--- | :--- |
@@ -812,6 +832,8 @@ src/notebook/       the document: model, .ipynb, markdown, highlighting, renderi
 src/notebook/display.js  rich output by mime type; plot.js draws the charts
 src/kernel/swarm.js      the swarm host: doc/Host.md's seven duties, in JS
 src/kernel/connectors.js the hostcall connectors; sqlite.js is the sql one
+src/kernel/topology.js   a host report as a graph — no DOM, so it can be
+                    lifted into doc/Host.md and grown in the C host
 notebooks/          the Start here gallery, bundled into the page by
                     scripts/bundle-examples.mjs -> src/notebook/examples.js
 vendor/             the pinned Diluvium runtime, both modules, plus the

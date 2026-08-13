@@ -181,3 +181,64 @@ test('the notebook still works while a swarm is running', async ({ page }) => {
   expect(output).toContain('still here');
   expect(problems).toEqual([]);
 });
+
+test('the topology shows the shape of the swarm, and what it is sure of', async ({ page }) => {
+  await openLab(page);
+  await openPanel(page);
+  await page.locator('[data-swarm="swarm-start"]').click();
+  await page.locator('[data-swarm="swarm-run"]').click();
+
+  // The same swarm as the roster test above: a root and three workers, the
+  // fourth spawn refused. The picture has to agree with the table, which is
+  // the point of drawing it from the same roster rather than from a second
+  // source of truth.
+  const graph = page.locator('[data-swarm-graph]');
+  await expect(graph).toBeVisible({ timeout: 15_000 });
+  await expect(graph.locator('[data-node]')).toHaveCount(5);          // 4 instances + the host
+  await expect(graph.locator('[data-edge-kind="spawn"]')).toHaveCount(3);
+
+  await expect(graph.locator('[data-node="1"]')).toContainText('root');
+
+  // Children are drawn below their parent. Asserted on the geometry rather
+  // than on a class, because "below" is the thing a reader is being told.
+  const y = async (id) => Number(await graph.locator(`[data-node="${id}"] circle`).getAttribute('cy'));
+  expect(await y(2)).toBeGreaterThan(await y(1));
+
+  // And the Mermaid is there for the places a picture cannot go. Read with
+  // textContent, not innerText: it lives inside a closed <details>, so it
+  // is in the document and not rendered, and innerText reports what is
+  // rendered.
+  const mermaid = await page.locator('[data-swarm-mermaid]').textContent();
+  expect(mermaid.split('\n')[0]).toBe('flowchart TD');
+  expect(mermaid).toContain('i1');
+});
+
+test('the topology counts traffic in both directions and invents no edges', async ({ page }) => {
+  await openLab(page);
+  await openPanel(page);
+  await page.locator('[data-swarm-program]').selectOption('service');
+  await page.locator('[data-swarm="swarm-start"]').click();
+  await page.locator('[data-swarm="swarm-run"]').click();
+  await expect(page.locator('[data-swarm-graph]')).toBeVisible({ timeout: 15_000 });
+
+  await page.locator('[data-listener-path]').fill('/hello');
+  await page.locator('[data-swarm="listener-send"]').click();
+  await expect(page.locator('[data-listener-exchanges]'))
+    .toContainText('\u2192 200', { timeout: 15_000 });
+
+  // A request the host pushed in is an edge with a direction and a count.
+  // Counted, not asserted visible: an SVG line with no width has no
+  // bounding box, and Playwright calls that hidden.
+  await expect(page.locator('[data-swarm-graph] [data-edge="host>1"]')).toHaveCount(1);
+  await expect(page.locator('[data-swarm-topology]')).toContainText('http_in \u00d71');
+  // Outbound too, from a queue the guest exported and the host drained.
+  await expect(page.locator('[data-swarm-graph] [data-edge-kind="export"]').first()).toHaveCount(1);
+
+  // No edge joins two instances, because no such route exists: a message
+  // leaves on an exported queue and the host is what decides where it goes.
+  // Every non-spawn edge therefore has the host at one end.
+  const edges = await page.locator('[data-swarm-graph] [data-edge]').evaluateAll((nodes) =>
+    nodes.map((n) => ({ ends: n.getAttribute('data-edge'), kind: n.getAttribute('data-edge-kind') })));
+  const between = edges.filter((e) => e.kind !== 'spawn' && !e.ends.includes('host'));
+  expect(between).toEqual([]);
+});

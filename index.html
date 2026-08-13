@@ -206,6 +206,29 @@
   .swarm-state-parked { color: var(--quiet); }
   .swarm-state-gone { color: var(--quiet); text-decoration: line-through; }
   .swarm-state-hibernated { border-color: color-mix(in srgb, var(--accent) 35%, transparent); }
+
+  /* The topology picture. Drawn, not vendored -- see topology-view.js. */
+  .swarm-graph { width: 100%; height: auto; display: block; margin: .3rem 0 .5rem; }
+  .topo-shape { fill: var(--sunk); stroke: var(--edge); stroke-width: 1.2; }
+  .topo-host .topo-shape { fill: transparent; stroke-dasharray: 3 2; }
+  .topo-label { font-family: var(--mono); font-size: .68rem; fill: var(--ink); }
+  .topo-caption { font-size: .62rem; fill: var(--quiet); }
+  .topo-state-running .topo-shape { stroke: color-mix(in srgb, var(--accent) 60%, var(--edge)); }
+  .topo-state-parked .topo-shape { stroke: var(--edge); fill: transparent; }
+  .topo-state-hibernated .topo-shape { stroke-dasharray: 2 2; fill: transparent; }
+  .topo-state-gone .topo-shape { stroke: var(--quiet); fill: transparent; opacity: .5; }
+  .topo-state-gone .topo-label, .topo-state-gone .topo-caption { opacity: .5; }
+  .topo-edge { stroke: var(--edge); stroke-width: 1.1; fill: none; }
+  .topo-edge-spawn { stroke: color-mix(in srgb, var(--accent) 45%, var(--edge)); }
+  /* A declared route nothing has crossed. Dashed rather than hidden: the
+     route existing is a fact worth showing, and so is its being unused. */
+  .topo-edge-idle { stroke-dasharray: 3 3; opacity: .55; }
+  .topo-edge-label { font-size: .58rem; fill: var(--quiet); font-family: var(--mono); }
+  .topo-arrowhead { fill: var(--edge); }
+  .swarm-mermaid pre {
+    font-size: .66rem; overflow-x: auto; margin: .3rem 0 0;
+    padding: .35rem; background: var(--sunk); border-radius: 5px;
+  }
   .swarm-actions button {
     font: inherit; font-size: .7rem; padding: .05rem .35rem; margin-right: .2rem;
     cursor: pointer; border: 1px solid var(--edge); border-radius: 5px;
@@ -1328,6 +1351,7 @@
     "./src/kernel/sha256.js": "./src/kernel/sha256.js?v=0.11.0",
     "./src/kernel/sqlite.js": "./src/kernel/sqlite.js?v=0.11.0",
     "./src/kernel/swarm.js": "./src/kernel/swarm.js?v=0.11.0",
+    "./src/kernel/topology.js": "./src/kernel/topology.js?v=0.11.0",
     "./src/kernel/wasi.js": "./src/kernel/wasi.js?v=0.11.0",
     "./src/kernel/wasm-kernel.js": "./src/kernel/wasm-kernel.js?v=0.11.0",
     "./src/kernel/worker-kernel.js": "./src/kernel/worker-kernel.js?v=0.11.0",
@@ -1354,6 +1378,7 @@
     "./src/notebook/storage.js": "./src/notebook/storage.js?v=0.11.0",
     "./src/notebook/swarm-programs.js": "./src/notebook/swarm-programs.js?v=0.11.0",
     "./src/notebook/swarm-view.js": "./src/notebook/swarm-view.js?v=0.11.0",
+    "./src/notebook/topology-view.js": "./src/notebook/topology-view.js?v=0.11.0",
     "./src/notebook/ui.js": "./src/notebook/ui.js?v=0.11.0",
     "./src/version.js": "./src/version.js?v=0.11.0",
     "./vendor/msgpack.js": "./vendor/msgpack.js?v=0.11.0",

@@ -2682,3 +2682,75 @@ was the leftover. It now sends the draft.
 Verified the way the earlier lesson says to: reproduced under load first,
 then fixed, then 174 runs of the panel and cell specs at four workers with
 the CPU saturated.
+
+### The shape of a swarm, drawn ✅ done
+
+The panel could tell you *that* four instances existed and what each one
+was doing. It could not tell you what shape they made. `src/kernel/
+topology.js` turns a host report into a graph and `src/notebook/
+topology-view.js` draws it, above the roster — because "show sub instances
+as they are created" was a question about shape, and the table is the
+detail behind the answer rather than the answer.
+
+**The model has no DOM in it, on purpose, and that is the whole design.**
+`doc/Host.md` duty 3 says there is deliberately no enumeration API: a host
+learns an instance exists because its `create` callback fired. Which means
+every host already keeps this information — it has no choice — so a
+topology view is not a Lab feature so much as a rendering of a duty every
+host performs. If this shape is right it belongs in `doc/Host.md` and in
+the C host, and it can only get there as a copy rather than a rewrite if
+it never touched a page. That is the answer to "should the serializer live
+upstream": **this half should not, and the other half must.** A graph says
+who exists and how they are wired, and the Lab can compute all of it. A
+*session* serializer needs each instance's Lua state, and the runtime
+exports no way to read it — `dvs_hibernate` writes a snapshot to an
+internal cache and `dvs_cached_size` reports its size, but nothing hands
+over the bytes. That gap is upstream's and looks like two exports.
+
+Three edge kinds, and the picture distinguishes them because presenting a
+guess with the weight of a fact is the failure this project keeps naming:
+
+- **spawn** — exact. `dvs_parent` said so at create time.
+- **deliver** — host into a guest's queue. The route is declared and the
+  count is real: `SwarmHost.push` now records what it delivered, and only
+  when the push returned OK, because a refused push is backpressure rather
+  than an edge.
+- **export** — guest out through a queue the host drains. Declared by the
+  guest, counted from the messages actually taken off it.
+
+**There are no instance-to-instance edges, and their absence is the point.**
+Guests do not push to each other: a message leaves on an exported queue,
+the host takes it, and the host decides what happens next. Drawing A → B
+would assert a route the runtime does not have. A → host → B is two edges
+and is what happened.
+
+Mermaid is emitted as *text*, next to the picture rather than instead of
+it. Rendering it would mean vendoring about a megabyte, and this page
+vendors what it uses; the graph arrives laid out as a tree, so drawing it
+is lines and circles. What the text is for is the places a picture cannot
+go — a PR, an issue, a design doc.
+
+Four things the drawing got wrong first, each fixed against a screenshot
+rather than against a test that could not see them:
+
+- Five exported queues drew five arrows and five labels between the same
+  two points. Parallel edges are now bundled per direction in the
+  *drawing*, with the per-queue detail on the line's tooltip. The model
+  still keeps one edge per queue, which is what the Mermaid emits.
+- The two directions between a pair then landed on top of each other
+  anyway. The sideways nudge was measured off the direction of travel, so
+  reversing the travel flipped the perpendicular *and* the side and the
+  two cancelled. It is measured off a canonical orientation now.
+- Every queue label sat near the host, because every queue edge has the
+  host at one end. They sit near the instance end now, where the instances
+  are spread across a row and the labels spread with them.
+- The root's caption read "root · root": `start` pre-aliases the root to
+  `root`, so appending the role repeated the name.
+
+And one fidelity bug the picture exposed in the host rather than in
+itself. The roster reports an instance's queues only while it is resident,
+so when a program ended its declared routes stopped being reported and the
+graph showed a host connected to nothing. `_settle` now keeps the last
+queue list the same way it already kept the last usage — read at the last
+moment it is readable. "The roster is the last thing the host saw" is a
+promise the panel already made elsewhere; this is it keeping it.

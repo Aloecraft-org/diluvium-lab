@@ -29,6 +29,8 @@
 //   from the configuration, exactly as it does on the C host.
 
 import { el } from './dom.js';
+import { topologyOf } from '../kernel/topology.js';
+import { topologySection } from './topology-view.js';
 
 /** Severity words for the §9.2 event kinds, from the reserved status palette. */
 const EVENT_KIND = {
@@ -69,6 +71,10 @@ export function renderSwarm(container, options) {
 
   if (report.stack?.moved) container.append(stackNote(report.stack));
   container.append(summary(report, busy));
+  // Before the roster, because the shape is the question the panel was
+  // asked -- "show sub instances as they are created" -- and the table is
+  // the detail behind it rather than the other way round.
+  container.append(topologySection(topologyOf(report)));
   container.append(roster(report, options));
   if (report.listener) {
     container.append(listenerSection(report.listener, {
