@@ -91,6 +91,8 @@ export class App {
     // theatre for moving a cell), and + Cell remembers what it last made.
     this.readOnly = false;
     this.cellClipboard = null;
+    /** 'light' | 'dark' | null -- null means the OS decides. */
+    this.theme = null;
     /** The last panel-state write, so `panelSettled` has something to await. */
     this._panelWrite = Promise.resolve();
     this._lastCellType = 'code';
@@ -297,6 +299,8 @@ export class App {
       if ((await loadPref('masthead-hidden')) === true) {
         this.document.querySelector('[data-masthead-toggle]')?.click();
       }
+      const theme = await loadPref('theme');
+      if (theme === 'light' || theme === 'dark') this.setTheme(theme);
     });
 
     // A first visit with nothing loaded gets the launcher, once. A
@@ -1398,6 +1402,16 @@ export class App {
           run: () => this.panel.toggle(tool.id),
         })),
         { sep: true },
+        // Three checkable items rather than a cycling label: a cycle hides
+        // the other two answers, and a menu that re-renders on open shows
+        // the current one for free.
+        { label: 'System theme', toolbar: 'theme-system',
+          checked: () => this.theme === null, run: () => this.setTheme(null) },
+        { label: 'Light theme', toolbar: 'theme-light',
+          checked: () => this.theme === 'light', run: () => this.setTheme('light') },
+        { label: 'Dark theme', toolbar: 'theme-dark',
+          checked: () => this.theme === 'dark', run: () => this.setTheme('dark') },
+        { sep: true },
         // The one thing in this page that fetches something which is not a
         // Diluvium release, so it is a menu item rather than something
         // that happens on its own. Checked when loaded, and the label says
@@ -1489,6 +1503,22 @@ export class App {
       drawer.showModal();
     });
     doc.querySelector('[data-drawer-close]')?.addEventListener('click', () => drawer?.close());
+
+    // Every dialog closes on a backdrop click, making Escape and clicking
+    // away agree. pointerdown rather than click: a text-selection drag
+    // that starts inside and ends on the backdrop fires click with the
+    // dialog as its target, and must not close anything. A pointerdown on
+    // the dialog element itself is either its padding or the backdrop;
+    // the bounding box tells them apart.
+    for (const dialog of doc.querySelectorAll('dialog')) {
+      dialog.addEventListener('pointerdown', (event) => {
+        if (event.target !== dialog) return;
+        const box = dialog.getBoundingClientRect();
+        const inside = event.clientX >= box.left && event.clientX <= box.right
+          && event.clientY >= box.top && event.clientY <= box.bottom;
+        if (!inside) dialog.close();
+      });
+    }
 
     // The launcher's own controls.
     const launcher = doc.querySelector('[data-launcher]');
@@ -1667,6 +1697,21 @@ export class App {
     const body = this.document.body;
     if (body.dataset.consoleHidden === 'true') delete body.dataset.consoleHidden;
     else body.dataset.consoleHidden = 'true';
+  }
+
+  /**
+   * Force light or dark, or hand the choice back to the OS (null).
+   *
+   * One attribute is the whole mechanism: the page is drawn from system
+   * colours and light-dark() pairs, all of which follow `color-scheme`,
+   * and the attribute pins it. Nothing else needs to know the theme.
+   */
+  setTheme(theme) {
+    this.theme = theme === 'light' || theme === 'dark' ? theme : null;
+    const root = this.document.documentElement;
+    if (this.theme) root.dataset.theme = this.theme;
+    else delete root.dataset.theme;
+    savePref('theme', this.theme).catch(() => {});
   }
 
   /** Fold or unfold every code cell. */

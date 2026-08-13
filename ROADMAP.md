@@ -2928,3 +2928,42 @@ regenerated from source. And a Lua comment I put in `lua-harness.js`
 contained backticks, which closed the JavaScript template literal holding
 the harness and broke every module that imports it; the page went blank
 with no console error, and `node -e "import(...)"` found it in one line.
+
+### Dialogs close when you click away ✅ done
+
+The launcher was already a real `<dialog>` — Escape worked, focus was
+contained — but a click on the backdrop did nothing, which reads as the
+page ignoring you. One listener in `_bindChrome` now closes any of the
+page's dialogs on a backdrop click, so Escape and clicking away finally
+agree.
+
+Two details that are the difference between doing this and doing it
+right. It listens for `pointerdown`, not `click`: a text-selection drag
+that starts inside the source dialog's JSON and ends on the backdrop
+fires `click` with the dialog as its target, and must not eat the dialog
+mid-selection. And a `pointerdown` whose target *is* the dialog element
+is either its padding or the backdrop — only the bounding box tells them
+apart, so it checks.
+
+### A theme you can pin ✅ done
+
+View gained three checkable items — System, Light, Dark — and the whole
+mechanism is one attribute. The page was already drawn from system
+colours (`Canvas`, `CanvasText`, `Highlight`) riding `color-scheme:
+light dark`, so forcing a theme is `:root[data-theme]` pinning
+`color-scheme` and nothing else.
+
+The one real change was to the few raw colours that differ by mode: the
+syntax tokens, the eight chart slots and `.bc-op` lived in
+`prefers-color-scheme` media blocks, and a media query only ever hears
+the OS — force dark on a light OS and the code would have kept its
+light colours on a dark page. They are `light-dark()` pairs now, which
+follow the same switch as everything else. The choice persists as a
+`pref:` key in IndexedDB like the masthead's, and the hand-back is
+honest: System removes the attribute rather than remembering which way
+the OS happened to point when you left.
+
+`test/theme.spec.js` drives the menu, reloads for persistence, forces
+light against an emulated dark OS, and checks a token actually
+re-colours — the mechanism and its one previously-broken edge, not
+pixels.

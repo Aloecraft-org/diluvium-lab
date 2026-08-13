@@ -13,6 +13,7 @@ const MENU_OF = {
   'paste-cell': 'edit', 'clear-outputs': 'edit', duplicate: 'edit',
   'hide-code': 'view', 'collapse-all': 'view', 'expand-all': 'view',
   'toggle-console': 'view', 'panel-outline': 'view',
+  'theme-system': 'view', 'theme-light': 'view', 'theme-dark': 'view',
   docs: 'help', about: 'help',
 };
 

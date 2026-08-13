@@ -288,6 +288,31 @@ test.describe('the launcher', () => {
     await expect(page.locator('[data-nb-title]')).toHaveText('Hello, Diluvium');
   });
 
+  test('clicking the backdrop closes it, like every dialog', async ({ page }) => {
+    await openLab(page);
+    await page.locator('[data-home]').click();
+    const launcher = page.locator('[data-launcher]');
+    await expect(launcher).toBeVisible();
+
+    // A click inside the dialog's own padding does not close it.
+    const box = await launcher.boundingBox();
+    await page.mouse.click(box.x + 4, box.y + 4);
+    await expect(launcher).toBeVisible();
+
+    // A click on the backdrop does. (1,1) is the page's corner, which the
+    // centered dialog never reaches.
+    await page.mouse.click(1, 1);
+    await expect(launcher).toBeHidden();
+
+    // And the same behaviour holds for the other dialogs — About stands
+    // in for the rest, since one listener serves them all.
+    await viaControl(page, 'about');
+    const about = page.locator('[data-about]');
+    await expect(about).toBeVisible();
+    await page.mouse.click(1, 1);
+    await expect(about).toBeHidden();
+  });
+
   test('a true first visit gets the launcher unprompted', async ({ page }) => {
     // No openLab: a fresh context with an empty database IS the first
     // visit, and nothing here dismisses anything.

@@ -75,6 +75,12 @@
   :root {
     color-scheme: light dark;
     --edge: color-mix(in srgb, currentColor 18%, transparent);
+    /* Everything below is drawn from system colours (Canvas, CanvasText,
+       Highlight) or from currentColor, so the whole page follows
+       `color-scheme` -- and forcing a theme is nothing more than pinning
+       it. The few raw colours that differ by mode use light-dark(), which
+       follows the same switch. View > theme sets this attribute;
+       unset means the OS decides. */
     --sunk: color-mix(in srgb, currentColor 5%, transparent);
     --quiet: color-mix(in srgb, currentColor 60%, transparent);
     --ok: #1a7f37;
@@ -85,6 +91,8 @@
     --accent: Highlight;
     --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   }
+  :root[data-theme="light"] { color-scheme: light; }
+  :root[data-theme="dark"] { color-scheme: dark; }
   * { box-sizing: border-box; }
   /* Several rules below set `display`, which would otherwise beat the UA
      stylesheet's [hidden] rule and leave "hidden" elements on screen. */
@@ -589,24 +597,18 @@
   }
   .editor-highlight code { font: inherit; }
 
-  .tok-keyword  { color: #8250df; font-weight: 600; }
-  .tok-builtin  { color: #0550ae; }
-  .tok-constant { color: #6639ba; }
-  .tok-string   { color: #0a7c42; }
-  .tok-string-prefix { color: #0a7c42; font-weight: 700; }
-  .tok-interp-brace  { color: #bc4c00; font-weight: 700; }
-  .tok-number   { color: #0550ae; }
+  /* light-dark() rather than a prefers-color-scheme block, so a theme
+     forced from the View menu re-colours these too -- a media query only
+     ever hears the OS. */
+  .tok-keyword  { color: light-dark(#8250df, #d2a8ff); font-weight: 600; }
+  .tok-builtin  { color: light-dark(#0550ae, #79c0ff); }
+  .tok-constant { color: light-dark(#6639ba, #d2a8ff); }
+  .tok-string   { color: light-dark(#0a7c42, #7ee787); }
+  .tok-string-prefix { color: light-dark(#0a7c42, #7ee787); font-weight: 700; }
+  .tok-interp-brace  { color: light-dark(#bc4c00, #ffa657); font-weight: 700; }
+  .tok-number   { color: light-dark(#0550ae, #79c0ff); }
   .tok-comment  { color: color-mix(in srgb, currentColor 55%, transparent); font-style: italic; }
   .tok-operator { color: color-mix(in srgb, currentColor 75%, transparent); }
-  @media (prefers-color-scheme: dark) {
-    .tok-keyword  { color: #d2a8ff; }
-    .tok-builtin  { color: #79c0ff; }
-    .tok-constant { color: #d2a8ff; }
-    .tok-string   { color: #7ee787; }
-    .tok-string-prefix { color: #7ee787; }
-    .tok-interp-brace  { color: #ffa657; }
-    .tok-number   { color: #79c0ff; }
-  }
   .cell[data-cell-type="markdown"][data-editing="false"] .rendered { padding: 0 .1rem; }
   .rendered h1 { font-size: 1.5rem; } .rendered h2 { font-size: 1.25rem; }
   .rendered h3 { font-size: 1.05rem; }
@@ -657,8 +659,14 @@
      a faulted instance can never be mistaken for the fourth line on a
      graph. Each pairs with a word for the same reason. */
   :root {
-    --s1: #2a78d6; --s2: #eb6834; --s3: #1baf7a; --s4: #eda100;
-    --s5: #e87ba4; --s6: #008300; --s7: #4a3aa7; --s8: #e34948;
+    /* Each light/dark pair was validated against its own surface -- the
+       dark steps are not an automatic flip, which is why slot 6 is the
+       same in both and the rest are not. light-dark() so a forced theme
+       re-steps them along with everything else. */
+    --s1: light-dark(#2a78d6, #3987e5); --s2: light-dark(#eb6834, #d95926);
+    --s3: light-dark(#1baf7a, #199e70); --s4: light-dark(#eda100, #c98500);
+    --s5: light-dark(#e87ba4, #d55181); --s6: #008300;
+    --s7: light-dark(#4a3aa7, #9085e9); --s8: light-dark(#e34948, #e66767);
     --tone-good: #0ca30c; --tone-warning: #fab219;
     --tone-serious: #ec835a; --tone-critical: #d03b3b;
   }
@@ -853,16 +861,6 @@
 
   @media (max-width: 34rem) { .sandbox { margin-left: 0; } }
 
-  @media (prefers-color-scheme: dark) {
-    /* The same eight hues, stepped for a dark surface. Not an automatic
-       flip: each step was validated against the dark background on its
-       own, which is why slot 6 is unchanged and the rest are not. */
-    :root {
-      --s1: #3987e5; --s2: #d95926; --s3: #199e70; --s4: #c98500;
-      --s5: #d55181; --s6: #008300; --s7: #9085e9; --s8: #e66767;
-    }
-  }
-
   /* Plain-English help, under the runtime's own message and clearly not
      part of it. */
   .hint {
@@ -894,7 +892,7 @@
   .bc-table td { padding: .05rem .5rem .05rem 0; vertical-align: top; white-space: nowrap; }
   .bc-pc { color: var(--quiet); text-align: right; }
   .bc-line { color: var(--quiet); }
-  .bc-op { color: #8250df; font-weight: 600; }
+  .bc-op { color: light-dark(#8250df, #d2a8ff); font-weight: 600; }
   .bc-comment { color: var(--quiet); white-space: pre-wrap; }
   .bc-aside { font-family: var(--mono); font-size: .76rem; color: var(--quiet); margin-top: .25rem; }
   .bc-const { margin-right: .5rem; }
@@ -909,7 +907,6 @@
   .bc-note { font-size: .8rem; color: var(--quiet); margin: .2rem 0 .4rem; }
   .bc-error { padding: .5rem .6rem; color: var(--bad); font-size: .85rem; }
   .bc-error .bc-note { color: var(--quiet); }
-  @media (prefers-color-scheme: dark) { .bc-op { color: #d2a8ff; } }
 
   /* --- completion --- */
   .completions {
