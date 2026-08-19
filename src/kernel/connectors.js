@@ -41,6 +41,17 @@ import {
 const MAX_HEADERS = 8;
 const MAX_HEADER_VALUE = 4096;
 
+/**
+ * Names the response framing owns, refused in a `response_headers`
+ * allowlist. `host/dhost.c` refuses these at config load, where the
+ * conflict is a typo; allowing one would be a guest and a host arguing
+ * about the wire format at traffic time. `content-type` is here for a
+ * second reason: the reply already has a field for it.
+ */
+const HOST_OWNED_HEADERS = [
+  'content-length', 'connection', 'transfer-encoding', 'content-type',
+];
+
 /** What a connector returns. Mirrors `dh_call_status` on the C side. */
 const ok = (value) => ({ status: 'ok', value });
 const denied = (detail) => ({ status: 'denied', detail });
@@ -92,11 +103,15 @@ export function buildConnectors(description = {}, services = {}) {
       case 'js':
         connectors.set('js', jsConnector(services.invoke));
         break;
+      case 'rest':
+        connectors.set('rest', restConnector(spec === true ? {} : spec, services.fetch));
+        break;
       default:
         // An unknown key is a typo about to become a silent default. The C
         // host refuses one by name at parse time and so does this.
         throw new Error(
-          `unknown connector '${name}'; this host wires time, rng, crypto, sql, listen and js`);
+          `unknown connector '${name}'; this host wires time, rng, crypto, sql, listen, `
+          + 'rest and js');
     }
   }
   return { connectors, listener, scope };
@@ -340,6 +355,152 @@ export function jsConnector(invoke) {
 }
 
 /**
+ * `rest/get` and `rest/post` -- outbound HTTP, the browser's half.
+ *
+ * On the C side this capability is not a connector at all: it is a separate
+ * program the host execs, so `diluvium-host` links no TLS and opens no
+ * socket. A page cannot exec anything, and it already holds `fetch`, so
+ * here the same calls are answered in-process. The guest cannot tell:
+ * `rest/get` takes `{url, headers?, timeout_ms?}` and answers `{status,
+ * content_type, headers, body}` on both sides, with the same refusals for
+ * the same reasons.
+ *
+ * ## The grant, and why it is not optional
+ *
+ * Every other connector here reaches something the page already owns -- a
+ * clock, a vendored database, a button. This one reaches **the network, on
+ * the guest's initiative**, which is the line the Lab's no-external-
+ * requests rule draws and the first thing to cross it. So the deployment
+ * does not merely wire `rest`; it names where the guest may go:
+ *
+ *   rest = { allow = ["https://api.example.com"] }
+ *
+ * An empty or missing allowlist wires a connector that refuses everything
+ * and says so, rather than one that quietly reaches anywhere. A prefix
+ * match is deliberate over a host match: `https://host/v1/` grants a path,
+ * and a scheme is part of the grant because downgrading to `http://` is a
+ * different risk than the origin it names.
+ *
+ * The page is still subject to CORS, which the guest experiences as a
+ * failed call and which no amount of configuration here can lift. That is
+ * a real difference from the C plugin and is reported as an error rather
+ * than smoothed over: a program that works here and fails there, or the
+ * reverse, should be able to see why.
+ *
+ * Answers are **deferred** (`{status: 'pending'}` plus a promise): the
+ * swarm takes the call, keeps stepping every other instance, and delivers
+ * the reply when it lands. Same seam `doc/BUILD8.md` built for exactly
+ * this reason.
+ */
+export function restConnector(spec = {}, fetchImpl) {
+  const doFetch = fetchImpl ?? ((...a) => fetch(...a));
+  const allow = Array.isArray(spec.allow) ? spec.allow.map(String) : [];
+  const maxBody = Number.isInteger(spec.max_body) ? spec.max_body : 8 * 1024 * 1024;
+  const defaultMs = Number.isInteger(spec.timeout_ms) ? spec.timeout_ms : 15000;
+
+  return (call, args) => {
+    if (call !== 'rest/get' && call !== 'rest/post') {
+      return failed(`the rest connector answers 'rest/get' and 'rest/post'; '${call}' is neither`);
+    }
+    const url = args?.url;
+    if (typeof url !== 'string' || url === '') {
+      return failed("the call needs a 'url' string");
+    }
+    let u;
+    try { u = new URL(url); } catch { return failed('the url did not parse'); }
+    if (u.protocol !== 'http:' && u.protocol !== 'https:') {
+      return failed('the url must begin http:// or https://');
+    }
+    if (u.username || u.password) {
+      // The plugin's rule, and for the plugin's reason: a credential in a
+      // url ends up in logs and referrers. It goes in a header or nowhere.
+      return failed('credentials in a url are refused; send an Authorization header instead');
+    }
+    if (!allow.length) {
+      return denied('the rest connector is wired with no allowlist, so it reaches nothing; '
+        + 'name where this notebook may go: rest = { allow = ["https://host/path"] }');
+    }
+    if (!allow.some((prefix) => u.href.startsWith(prefix))) {
+      return denied(`'${u.href}' is outside this deployment's rest allowlist `
+        + `(${allow.join(', ')}); the grant names where a guest may go, and this is not it`);
+    }
+
+    const headers = {};
+    for (const [k, v] of Object.entries(args?.headers ?? {})) {
+      if (typeof v !== 'string') continue;
+      // Refused, never stripped: silently changing what was sent is worse
+      // than refusing to send it. The plugin says this in the same words.
+      if (/[\r\n]/.test(k) || /[\r\n]/.test(v) || k.includes(':')) {
+        return failed('a header name or value contained CR, LF or a colon; '
+          + 'that is refused rather than stripped');
+      }
+      const lower = k.toLowerCase();
+      // The three the fetch stack owns. A browser refuses them outright,
+      // so dropping them here is what makes the same program run on both
+      // hosts rather than throwing on one.
+      if (lower === 'host' || lower === 'content-length' || lower === 'connection') continue;
+      headers[k] = v;
+    }
+
+    const timeoutMs = (Number.isInteger(args?.timeout_ms) && args.timeout_ms > 0
+      && args.timeout_ms <= 120000) ? args.timeout_ms : defaultMs;
+
+    const promise = (async () => {
+      const ctl = new AbortController();
+      const timer = setTimeout(() => ctl.abort(), timeoutMs);
+      try {
+        const init = {
+          method: call === 'rest/post' ? 'POST' : 'GET',
+          headers,
+          signal: ctl.signal,
+          redirect: 'follow',
+        };
+        if (call === 'rest/post') {
+          init.body = args?.body instanceof Uint8Array
+            ? args.body
+            : new TextEncoder().encode(String(args?.body ?? ''));
+        }
+        const res = await doFetch(u.toString(), init);
+        const buf = new Uint8Array(await res.arrayBuffer());
+        if (buf.length > maxBody) {
+          return failed(`the response body is ${buf.length} bytes and this connector's `
+            + `bound is ${maxBody}`);
+        }
+        // The plugin's result bounds, so a guest reading `headers` sees the
+        // same shape from either host: lowercase names (fetch's Headers
+        // already are, repeats already joined), at most 32, and one past a
+        // bound dropped whole rather than clipped.
+        const out = {};
+        let n = 0;
+        for (const [k, v] of res.headers) {
+          if (n >= 32) break;
+          if (k.length > 64 || v.length > 4096) continue;
+          out[k] = v;
+          n++;
+        }
+        return ok({
+          status: res.status,
+          content_type: res.headers.get('content-type'),
+          headers: out,
+          body: buf,
+        });
+      } catch (err) {
+        const msg = String(err?.message ?? err);
+        if (err?.name === 'AbortError') return failed(`no answer within ${timeoutMs} ms`);
+        // A browser reports a CORS refusal as an opaque network failure, so
+        // the guess is named as a guess rather than asserted.
+        return failed(`${msg} -- in a page this is often CORS: the endpoint did not `
+          + 'allow this origin, which no configuration here can change');
+      } finally {
+        clearTimeout(timer);
+      }
+    })();
+
+    return { status: 'pending', promise };
+  };
+}
+
+/**
  * Inbound requests, without a socket.
  *
  * The C host binds a port, parses HTTP and pushes `{conn, method, path,
@@ -357,7 +518,8 @@ export function jsConnector(invoke) {
 export class Listener {
   constructor({ port = 8080, bind = '127.0.0.1', queue = 'http_in',
     reply_queue: replyQueue = 'http_out', max_body: maxBody = 65536,
-    deadline_ms: deadlineMs = 10000, headers = [] } = {}) {
+    deadline_ms: deadlineMs = 10000, headers = [],
+    response_headers: responseHeaders = [] } = {}) {
     this.port = port;
     this.bind = bind;
     this.queue = queue;
@@ -376,6 +538,24 @@ export class Listener {
         + `and this one names ${headers.length}`);
     }
     this.headers = headers.map((name) => String(name).toLowerCase());
+    // The reply side's allowlist, build10's. Same rules as the request
+    // side -- lowercase, bounded, empty by default -- plus one the request
+    // side has no need for: a name the response framing owns is refused
+    // here, at config, where it is still a typo.
+    if (!Array.isArray(responseHeaders)) {
+      throw new Error('connectors.listen.response_headers is an array of lowercase header names');
+    }
+    if (responseHeaders.length > MAX_HEADERS) {
+      throw new Error(`connectors.listen.response_headers allows up to ${MAX_HEADERS} names, `
+        + `and this one names ${responseHeaders.length}`);
+    }
+    this.responseHeaders = responseHeaders.map((name) => String(name).toLowerCase());
+    for (const name of this.responseHeaders) {
+      if (HOST_OWNED_HEADERS.includes(name)) {
+        throw new Error(`connectors.listen.response_headers may not name '${name}': the host `
+          + 'owns the response framing, and the media type is the reply\'s content_type field');
+      }
+    }
     this.bound = false;                  // a browser tab binds nothing, ever
     this._conn = 0;
     /** conn -> the request still waiting for its reply. */
@@ -451,8 +631,48 @@ export class Listener {
     exchange.status = message.status ?? null;
     exchange.body = message.body ?? null;
     exchange.contentType = message.content_type ?? null;
+    exchange.headers = this._responseHeaders(message.headers);
     exchange.ms = Date.now() - waiting.at;
     return exchange;
+  }
+
+  /**
+   * The allowlisted subset of a reply's `headers` map (build10).
+   *
+   * This direction **drops** where the request direction refuses, and the
+   * asymmetry is the point rather than an inconsistency. Inbound, a bad
+   * header is a lying *client* and refusing protects the guest: the C host
+   * answers 431. Outbound, a bad header is a lying *guest* and the party
+   * needing protection is the client on the far side of the load balancer,
+   * so `host/dhost_http.c` drops that header whole -- never truncated,
+   * never "cleaned" -- and answers the response anyway. Refusing the whole
+   * response there would hand a guest a way to turn its own bug into an
+   * outage.
+   *
+   * A control byte is disqualifying because on the C side these bytes are
+   * interpolated into the response head, where a CR or LF is header
+   * injection. There is no head here, but a guest must not be able to tell
+   * the two hosts apart, so the same values are dropped by the same rule.
+   * The emitted name is the allowlist's spelling, never the guest's.
+   */
+  _responseHeaders(headers) {
+    if (!this.responseHeaders.length) return undefined;
+    const out = {};
+    if (!headers || typeof headers !== 'object') return out;
+    const offered = new Map();
+    for (const [name, value] of Object.entries(headers)) {
+      offered.set(String(name).toLowerCase(), value);
+    }
+    for (const name of this.responseHeaders) {
+      if (!offered.has(name)) continue;
+      const value = offered.get(name);
+      if (typeof value !== 'string') continue;      // a map of strings, or nothing
+      if (value.length > MAX_HEADER_VALUE) continue; // dropped whole, not clipped
+      // eslint-disable-next-line no-control-regex
+      if (/[\u0000-\u001f\u007f]/.test(value)) continue;
+      out[name] = value;
+    }
+    return out;
   }
 
   /** Connections the program has not answered past the configured deadline. */

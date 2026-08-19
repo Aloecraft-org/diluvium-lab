@@ -43,6 +43,13 @@ import { readLayout, readCString, EXPECTED_ABI } from './instance.js';
 export const HOSTCALL_QUEUE = 'host/calls';
 export const HOSTREPLY_QUEUE = 'host/replies';
 
+/**
+ * `_answer`'s "taken, not answered". A sentinel object rather than null or
+ * undefined so it cannot be confused with a connector that returned
+ * nothing, which is a bug and must still produce a reply.
+ */
+const DEFERRED = Symbol('deferred hostcall');
+
 /** `dvs_status`, in dvs.h's order. */
 const DVS = { OK: 0, ERROR: 1, UNKNOWN: 2, DENIED: 3, LIMIT: 4, GONE: 5 };
 const DVS_NAMES = ['ok', 'error', 'unknown', 'denied', 'limit', 'gone'];
@@ -328,6 +335,21 @@ export class SwarmHost {
      * rather than a handle that could go stale into something else.
      */
     this.aliases = new Map();
+    /**
+     * Hostcalls taken but not yet answered, and answers that arrived with
+     * nowhere to put them yet. `doc/BUILD8.md`'s deferred seam: a
+     * connector that cannot answer now -- anything reaching the network --
+     * takes the call and answers later, and the swarm keeps stepping
+     * meanwhile rather than stalling every instance on one slow answer.
+     * The C host made this possible in build8 for exactly the same reason
+     * and left `exec` synchronous as the counterexample.
+     *
+     * `_inflight` is what is outstanding (diagnostics, and the guard
+     * against answering a dead instance); `_settled` is the delivery queue
+     * a later step drains.
+     */
+    this._inflight = new Map();
+    this._settled = [];
     this._steps = 0;
     this._seq = 0;
     this._waitset = 0;
@@ -910,6 +932,7 @@ export class SwarmHost {
    *   connector's write.
    */
   _pumpHostcalls() {
+    this._deliverSettled();
     for (const slot of this.slots.values()) {
       if (slot.gone) continue;
       const inst = this.exports.dvs_instance(this.sw, slot.id);
@@ -926,6 +949,12 @@ export class SwarmHost {
         if (raw === undefined) break;
         const reply = this._answer(slot.id, raw);
         this.exports.dv_queue_release(inst, calls);
+        // A deferred call is *taken*: the request is consumed so the queue
+        // cannot wedge behind it, and the answer arrives on a later step
+        // through `_settled`. Pushing nothing now is the whole point --
+        // the guest is parked on its reply queue and every other instance
+        // keeps running.
+        if (reply === DEFERRED) continue;
         if (replies) {
           const bytes = encode(reply);
           this.exports.dv_queue_push(inst, replies, ...this._inMemory(bytes));
@@ -935,6 +964,42 @@ export class SwarmHost {
         // wedge; the reply has nowhere to go, which is its own diagnostic.
       }
     }
+  }
+
+  /**
+   * Push the answers deferred connectors have finished producing.
+   *
+   * Kept separate from the drain loop above because its failure modes are
+   * different: the instance may have died or hibernated while the answer
+   * was in flight, and its reply queue may be full. A full queue is not a
+   * loss -- the answer stays in `_settled` and is offered again next step,
+   * which is the same backpressure the synchronous path gets by not
+   * draining a request it cannot answer.
+   */
+  _deliverSettled() {
+    if (!this._settled.length) return;
+    const held = [];
+    for (const entry of this._settled) {
+      const slot = this.slots.get(entry.id);
+      if (!slot || slot.gone) continue;  // died while we were asking: drop
+      const inst = this.exports.dvs_instance(this.sw, entry.id);
+      if (!inst) { held.push(entry); continue; }   // hibernated: wait for it
+      const replies = this._lookup(inst, HOSTREPLY_QUEUE);
+      if (!replies) continue;            // nowhere to hear it, as above
+      const info = this._readQueue(inst, replies);
+      if (info && info.capacity > 0 && info.length >= info.capacity) {
+        held.push(entry);
+        continue;
+      }
+      const bytes = encode(entry.reply);
+      this.exports.dv_queue_push(inst, replies, ...this._inMemory(bytes));
+    }
+    this._settled = held;
+  }
+
+  /** Hostcalls taken and not yet answered, for the panel and for tests. */
+  inflight() {
+    return [...this._inflight.values()].map(({ id, tok, call, at }) => ({ id, tok, call, at }));
   }
 
   /** One request, answered. Never throws: a connector's bug is an `error` reply. */
@@ -977,6 +1042,9 @@ export class SwarmHost {
 
     try {
       const answer = connector(call, request.args, id) ?? {};
+      // A connector that cannot answer now says so and hands back a
+      // promise. Everything after this point happens on a later step.
+      if (answer.status === 'pending') return this._defer(id, tok, call, answer);
       if (answer.status === 'ok') return { tok, status: 'ok', value: answer.value ?? null };
       return {
         tok,
@@ -986,6 +1054,40 @@ export class SwarmHost {
     } catch (err) {
       return { tok, status: 'error', detail: `the connector threw: ${err.message}` };
     }
+  }
+
+  /**
+   * Take a call a connector will answer later.
+   *
+   * The reply is built here rather than by the connector so a deferred
+   * answer and an immediate one are the same shape by construction: same
+   * echoed token, same status vocabulary, same "never dropped" rule. A
+   * promise that rejects is an `error` reply, because a connector's bug
+   * must reach the guest as an answer rather than as silence -- the guest
+   * is parked on that token.
+   */
+  _defer(id, tok, call, answer) {
+    const key = `${id}:${tok}`;
+    this._inflight.set(key, { id, tok, call, at: Date.now() });
+    const settle = (reply) => {
+      if (!this._inflight.has(key)) return;   // already settled or cancelled
+      this._inflight.delete(key);
+      this._settled.push({ id, tok, reply });
+    };
+    Promise.resolve(answer.promise).then(
+      (result) => {
+        const r = result ?? {};
+        settle(r.status === 'ok'
+          ? { tok, status: 'ok', value: r.value ?? null }
+          : {
+            tok,
+            status: r.status === 'denied' ? 'denied' : 'error',
+            detail: r.detail ?? 'the connector refused without saying why, which is its bug',
+          });
+      },
+      (err) => settle({ tok, status: 'error', detail: `the connector threw: ${err?.message ?? err}` }),
+    );
+    return DEFERRED;
   }
 
   /**

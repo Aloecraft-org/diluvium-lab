@@ -40,6 +40,7 @@ const ORDER = [
   'showing-things.ipynb',
   'sql.ipynb',
   'sqlite.ipynb',
+  'build10.ipynb',
   'browser-check.ipynb',
 ];
 
