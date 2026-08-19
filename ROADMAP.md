@@ -3372,3 +3372,41 @@ earlier had: the cell toolbar is revealed on hover, so a Run button that
 resolves but is not yet visible makes `click()` wait rather than fail.
 Hovering the cell first, as a reader would, took the whole file from 5.2
 minutes to 41 seconds.
+
+## Re-pinned to v5.5.1_build10
+
+The pin moved from build7 straight to build10; builds 8 and 9 were
+host-and-packaging releases whose guest-visible surface the Lab already
+spoke. The mechanical half was exactly what `scripts/fetch-runtime.sh`
+exists for — both modules fetched from the mirror, verified against the
+release's own checksums, `pinned.js` regenerated, the Lab version bumped
+so the stale-cache banner can tell the two builds apart, and a re-bake.
+The script's own default tag had quietly stayed at build5 through two
+re-pins, which is the kind of lie a default tells best; it now says
+build10 and will need saying again.
+
+`scripts/build-mirror.sh` learned to carry `diluvium_swarm_wasi.wasm`
+beside the kernel, with fetch-runtime's own discipline: a release without
+one is a fact, a listed one that will not verify is an error. Before
+this, the runtime dropdown could switch a page to a tag whose swarm
+module the mirror never had, and the instances panel would fail on a
+fetch the version switch had implied would work.
+
+What this re-pin deliberately does **not** do is catch the JS host up to
+build10's vocabulary, which is the same shape of work as the build7
+section above and belongs to its own pass:
+
+- the listener's reply may now carry allowlisted response headers
+  (`response_headers` in the listen block); `connectors.js` implements
+  the request side's allowlist and nothing on the reply path;
+- the `host` guest library grew `spawn`, `children` and `events` — the
+  lifecycle without the raw queue idiom — and no notebook shows it;
+- releases now ship an outbound-HTTP plugin whose results carry status,
+  content type, headers and body; the Lab wires no outbound connector at
+  all, and adding one is the first thing that would breach the "no
+  guest-initiated external requests" line, so it wants a visible per-
+  notebook grant rather than a quiet default.
+
+The build7 section's closing claim holds unchanged: a guest must not be
+able to tell two hosts apart, and each of the three items above is a
+place where a program written against the C host today could tell.
