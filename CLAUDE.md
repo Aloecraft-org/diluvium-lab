@@ -39,6 +39,18 @@ a commit.
   most sessions never open. A Lab with no network still runs cells, draws
   its own topology SVG and emits Mermaid *text*; the renderer only makes
   that text into a picture in the page. See ROADMAP.
+
+  *Amended again for the `rest` connector, and this one differs in kind.*
+  Both calls above are the **page's**, made because a person clicked
+  something. `rest/get` and `rest/post` are the **guest's**: a program
+  decides and the page carries it out. That is the line this constraint
+  draws, so crossing it is never a default — the connector is off until a
+  deployment wires it, and wiring it without an `allow` list yields a
+  connector that refuses everything and says so. The grant names where a
+  notebook may go (`rest = { allow = ["https://host/path"] }`), matched as
+  a prefix so the scheme and the path are part of what was granted.
+  Nothing at load, nothing automatic, and nothing a notebook can reach
+  that its own configuration did not name. See `src/kernel/connectors.js`.
 - **`.ipynb` is the storage format.** Not a bespoke one.
 - **Kernel messages are Jupyter-shaped**: `execute_request` /
   `execute_reply`, `stream`, `error`, `status`, `complete_request`,

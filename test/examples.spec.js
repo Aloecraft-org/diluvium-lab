@@ -136,7 +136,7 @@ test.describe('start here', () => {
 // which stops at the first error and would leave everything after a
 // deliberate one unchecked -- which in `hello.ipynb` is most of it.
 // Written as separate tests so a failure names the notebook.
-const IDS = ['hello', 'language', 'secure-functions', 'messaging', 'sandbox', 'swarm', 'showing-things', 'sql', 'sqlite', 'browser-check'];
+const IDS = ['hello', 'language', 'secure-functions', 'messaging', 'sandbox', 'swarm', 'showing-things', 'sql', 'sqlite', 'build10', 'browser-check'];
 
 const plan = (page) => page.evaluate(async () => {
   const { expectationOf } = await import('./src/notebook/model.js');

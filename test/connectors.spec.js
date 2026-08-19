@@ -116,4 +116,157 @@ test.describe('the other connectors', () => {
     expect(state.tooLong).toContain('431');
     expect(state.tooMany).toContain('up to 8');
   });
+
+  // build10's other half of the same idea. The rules are the request
+  // side's mirrored, with one deliberate asymmetry: this direction drops
+  // where that one refuses, because the party a bad header endangers here
+  // is the client rather than the guest, and a refused response would let
+  // a guest turn its own bug into an outage.
+  test('only allowlisted response headers survive a reply', async ({ page }) => {
+    await open(page);
+    const state = await page.evaluate(() => {
+      const { listener } = window.lab.buildConnectors({
+        listen: { port: 3, response_headers: ['Location', 'x-thing'] },
+      });
+      const bare = window.lab.buildConnectors({ listen: { port: 4 } }).listener;
+
+      const answer = (l, headers) => {
+        const { conn } = l.request({ path: '/x' });
+        return l.reply({ conn, status: 200, body: 'ok', content_type: 'text/plain', headers });
+      };
+
+      const good = answer(listener, {
+        Location: '/next',                  // guest's case, allowlist's spelling out
+        'x-thing': 'v1',
+        'x-evil': 'nope',                   // not allowlisted
+      });
+      const injected = answer(listener, { location: '/a\r\nEvil-Injected: 1' });
+      const huge = answer(listener, { location: 'z'.repeat(5000) });
+      const none = answer(listener, {});
+      const absent = answer(listener, undefined);
+      const unwired = answer(bare, { location: '/nope' });
+
+      let owned = null;
+      try {
+        window.lab.buildConnectors({
+          listen: { response_headers: ['location', 'content-length'] },
+        });
+      } catch (err) { owned = err.message; }
+
+      let tooMany = null;
+      try {
+        window.lab.buildConnectors({ listen: { response_headers: Array(9).fill('x') } });
+      } catch (err) { tooMany = err.message; }
+
+      return {
+        good: good.headers,
+        injected: injected.headers,
+        huge: huge.headers,
+        none: none.headers,
+        absent: absent.headers,
+        unwired: unwired.headers,
+        allowlist: listener.responseHeaders,
+        owned,
+        tooMany,
+      };
+    });
+    // The allowlist decides the spelling, so guest bytes never name a
+    // header, and a name it does not list never appears.
+    expect(state.allowlist).toEqual(['location', 'x-thing']);
+    expect(state.good).toEqual({ location: '/next', 'x-thing': 'v1' });
+    // A CRLF drops that header WHOLE -- not truncated, not sanitised --
+    // and the response still answers.
+    expect(state.injected).toEqual({});
+    expect(state.huge).toEqual({});
+    // Present-and-empty when the deployment allowlists anything, absent
+    // when it does not: the shape is config's decision, both directions.
+    expect(state.none).toEqual({});
+    expect(state.absent).toEqual({});
+    expect(state.unwired).toBeUndefined();
+    // A name the framing owns is a config error, where it is still a typo.
+    expect(state.owned).toContain('content-length');
+    expect(state.tooMany).toContain('up to 8');
+  });
+
+  // The outbound connector. Its refusals matter more than its successes:
+  // this is the only connector that reaches the network on the *guest's*
+  // initiative, so every path that should not leave the page is asserted
+  // here, with a stub fetch so the assertions are about the connector
+  // rather than about somebody's uptime.
+  test('the rest connector refuses everything outside its grant', async ({ page }) => {
+    await open(page);
+    const state = await page.evaluate(async () => {
+      const calls = [];
+      const stub = async (url, init) => {
+        calls.push({ url, method: init.method, headers: init.headers });
+        return new Response('hi', {
+          status: 201,
+          headers: { 'content-type': 'text/plain', 'x-rate': '9' },
+        });
+      };
+      const wired = (spec) => window.lab.buildConnectors(
+        { rest: spec }, { fetch: stub },
+      ).connectors.get('rest');
+
+      const granted = wired({ allow: ['https://api.example.com/v1/'] });
+      const ungranted = wired({});
+
+      const settle = async (answer) => (answer.status === 'pending'
+        ? answer.promise : answer);
+
+      const good = await settle(granted('rest/get',
+        { url: 'https://api.example.com/v1/thing', headers: { 'X-Tok': 'abc' } }));
+
+      return {
+        // the happy path, so the shape is pinned
+        good: {
+          status: good.status,
+          value: good.value && {
+            status: good.value.status,
+            content_type: good.value.content_type,
+            headers: good.value.headers,
+            body: new TextDecoder().decode(good.value.body),
+          },
+        },
+        deferred: granted('rest/get', { url: 'https://api.example.com/v1/x' }).status,
+        offAllowlist: (await settle(granted('rest/get',
+          { url: 'https://elsewhere.example/v1/x' }))),
+        noAllowlist: (await settle(ungranted('rest/get',
+          { url: 'https://api.example.com/v1/x' }))),
+        badScheme: (await settle(granted('rest/get', { url: 'file:///etc/passwd' }))),
+        credsInUrl: (await settle(granted('rest/get',
+          { url: 'https://u:p@api.example.com/v1/x' }))),
+        injected: (await settle(granted('rest/get',
+          { url: 'https://api.example.com/v1/x', headers: { 'X-Bad': 'a\r\nEvil: 1' } }))),
+        unknownCall: (await settle(granted('rest/delete', { url: 'https://api.example.com/v1/x' }))),
+        sent: calls,
+      };
+    });
+
+    // The answer is deferred -- the swarm takes the call and keeps going.
+    expect(state.deferred).toBe('pending');
+    // The result shape is the plugin's, header map included.
+    expect(state.good.status).toBe('ok');
+    expect(state.good.value.status).toBe(201);
+    expect(state.good.value.content_type).toContain('text/plain');
+    expect(state.good.value.headers['x-rate']).toBe('9');
+    expect(state.good.value.body).toBe('hi');
+
+    // Everything that must not leave the page.
+    expect(state.offAllowlist.status).toBe('denied');
+    expect(state.offAllowlist.detail).toContain('allowlist');
+    expect(state.noAllowlist.status).toBe('denied');
+    expect(state.noAllowlist.detail).toContain('reaches nothing');
+    expect(state.badScheme.detail).toContain('http://');
+    expect(state.credsInUrl.detail).toContain('Authorization header instead');
+    expect(state.injected.detail).toContain('refused rather than stripped');
+    expect(state.unknownCall.detail).toContain("'rest/delete' is neither");
+
+    // The property that matters: nothing outside the grant ever reached
+    // fetch. Only the two granted calls did (the happy path and the one
+    // that checked deferral), and the guest's header rode along.
+    expect(state.sent.every((c) => c.url.startsWith('https://api.example.com/v1/'))).toBe(true);
+    expect(state.sent[0].url).toBe('https://api.example.com/v1/thing');
+    expect(state.sent[0].headers['X-Tok']).toBe('abc');
+  });
 });

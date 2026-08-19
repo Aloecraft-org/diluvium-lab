@@ -19,6 +19,17 @@ test.beforeAll(() => {
   execFileSync(process.execPath, ['scripts/bake.mjs'], { cwd: ROOT, stdio: 'pipe' });
 });
 
+// A test that opens the baked page needs longer than Playwright's default
+// 30s, and saying so is not optional: the wait below asks for 60s, and
+// without this the *test* timeout ends the run at 30 while the selector is
+// still within its allowance -- an intent the file states and cannot
+// reach. It surfaces only where the page is slow to come up, which is a
+// CI runner rather than a developer's machine: 2.5 MB of single-file HTML,
+// a third of it base64 kernel, parsed from file:// with no server to
+// stream it. Nothing here is waiting on the network, so a generous
+// ceiling costs nothing when the page is quick.
+const BAKED_BOOT_MS = 90_000;
+
 async function openBaked(page) {
   const problems = [];
   page.on('pageerror', (err) => problems.push(`pageerror: ${err.message}`));
@@ -38,6 +49,7 @@ test('the baked file is one self-contained page', async () => {
 });
 
 test('it boots from file:// with the kernel inlined', async ({ page }) => {
+  test.setTimeout(BAKED_BOOT_MS);
   const { problems, requests } = await openBaked(page);
 
   await expect(page.locator('[data-kernel-status]')).toHaveText('idle');
@@ -50,6 +62,7 @@ test('it boots from file:// with the kernel inlined', async ({ page }) => {
 });
 
 test('cells run, echo and error correctly with no server', async ({ page }) => {
+  test.setTimeout(BAKED_BOOT_MS);
   await openBaked(page);
 
   // The first cell of the sample notebook is markdown, whose editor is
@@ -70,6 +83,7 @@ test('cells run, echo and error correctly with no server', async ({ page }) => {
 });
 
 test('the console works in the baked file too', async ({ page }) => {
+  test.setTimeout(BAKED_BOOT_MS);
   await openBaked(page);
   await page.locator('[data-console-input]').fill('("baked"):upper()');
   await page.locator('[data-console-input]').press('Enter');
@@ -77,6 +91,7 @@ test('the console works in the baked file too', async ({ page }) => {
 });
 
 test('restart works without a network round trip', async ({ page }) => {
+  test.setTimeout(BAKED_BOOT_MS);
   await openBaked(page);
   // The first cell of the sample notebook is markdown, whose editor is
   // hidden until it is being edited -- take the first code cell.
@@ -93,6 +108,7 @@ test('restart works without a network round trip', async ({ page }) => {
 });
 
 test('it runs in the page, and says so rather than offering a stop that does nothing', async ({ page }) => {
+  test.setTimeout(BAKED_BOOT_MS);
   await openBaked(page);
 
   // A file:// page has an opaque origin and browsers refuse to start a

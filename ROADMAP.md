@@ -3410,3 +3410,95 @@ section above and belongs to its own pass:
 The build7 section's closing claim holds unchanged: a guest must not be
 able to tell two hosts apart, and each of the three items above is a
 place where a program written against the C host today could tell.
+
+## Caught up to build10: the vocabulary
+
+The re-pin above moved the runtime; this moves the *host*. Same shape of
+work as the build7 section, and the same reason: `doc/Host.md`'s
+acceptance test is that a guest must not be able to tell two hosts apart,
+and after build10 there were three places where a program written
+against the C host could tell.
+
+### A reply may set headers
+
+The listener's reply grew a `headers` map, gated by a `response_headers`
+allowlist on the listen block -- lowercase names, up to eight, and the
+names the response framing owns (`content-length`, `connection`,
+`transfer-encoding`, `content-type`) refused at configuration, where the
+conflict is still a typo.
+
+The two directions are deliberately asymmetric, and it took writing them
+side by side to see why. Inbound, a bad header is a lying *client* and
+refusing protects the guest -- the C host answers 431 and this one
+throws. Outbound, a bad header is a lying *guest*, and the party at risk
+is the client: so that header is dropped **whole** -- never truncated,
+never "cleaned" -- and the response still answers. Refusing the whole
+response there would hand a guest a way to turn its own bug into an
+outage. A control byte disqualifies a value here even though a browser
+tab has no response head to inject into, because the rule that matters
+is the one a guest can observe, and it must be the same rule.
+
+### Hostcalls can be answered later
+
+`rest/get` reaches the network, and nothing reaching the network can
+answer inside the `_pumpHostcalls` that drained the request. So the host
+learned the seam build8 gave the C host for the same reason: a connector
+may return `{status: "pending"}` with a promise, the request is *taken*
+(consumed, so its queue cannot wedge behind it), and the answer is
+delivered by a later step through `_settled`.
+
+Three properties fell out of writing it rather than being designed in:
+
+- A deferred answer and an immediate one are built by the same code, so
+  the echoed token, the status vocabulary and the never-dropped rule
+  cannot drift apart.
+- A promise that *rejects* is an `error` reply, not silence. The guest is
+  parked on that token; a connector bug has to arrive as an answer.
+- An answer whose instance died is dropped, one whose instance is
+  hibernated waits, and one whose reply queue is full is offered again
+  next step -- which is the same backpressure the synchronous path gets
+  for free by not draining a request it cannot answer.
+
+The end-to-end test resolves its stub only after a macrotask, so a
+synchronous seam cannot pass it. It was verified failing against a
+deliberately broken `_defer` before it was kept.
+
+### Outbound HTTP, and the line it crosses
+
+Every other connector reaches something the page already owns. This one
+reaches the network **because a guest said so**, which is the line
+`CLAUDE.md`'s no-external-requests rule draws -- so the amendment is
+recorded there beside the Mermaid one rather than left as a surprise.
+
+The connector is off until wired, and wiring is not sufficient: without
+an `allow` list it refuses everything and says so, rather than reaching
+anywhere. The grant is a prefix (`https://host/path`), so the scheme and
+the path are part of what was granted. Refusals otherwise match the
+plugin's word for word -- a credential in a url, a header carrying CR or
+LF, a scheme that is not http(s) -- because those are the sentences a
+guest reads.
+
+Two differences from the C plugin are stated rather than smoothed over:
+a page is subject to CORS and no configuration here lifts it, and the
+`Host`/`Content-Length`/`Connection` headers are dropped rather than
+sent, because the fetch stack owns them. Both are reported to the guest
+in words that name the cause.
+
+### The lifecycle library needed no host work at all
+
+`host.spawn`, `host.children` and `host.events` are guest-side Lua
+riding inside the module, so they worked here the moment the pin moved.
+That is worth a test rather than a shrug: `test/swarm.spec.js` now spawns
+a child, counts the ledger and asserts that an over-reaching `caps` list
+is refused with the *swarm's* own sentence -- the library raising the
+host's refusal rather than inventing a second policy. `notebooks/build10.ipynb`
+shows the same supervisor `swarm.ipynb` writes by hand, written the short
+way, and the two side by side are the argument for the library.
+
+### Still not done
+
+The runtime dropdown does not yet warn that a notebook wiring `rest`
+needs build10 or newer; today an older pin simply denies the call, which
+is honest but late. And the listener composer shows a reply's headers on
+the exchange it completes, but there is no way to *drive* a response
+header from the panel -- the composer sends requests, not replies.

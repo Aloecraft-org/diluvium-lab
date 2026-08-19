@@ -192,6 +192,50 @@ return 0`;
     expect(denied).toBeTruthy();
     expect(String(denied.detail)).toContain('host:sql/exec');
   });
+
+  // build10's guest library grew `spawn`, `children` and `events` -- the
+  // lifecycle without the magic queue name, the raw op table, or the
+  // hand-rolled correlation the tests above still spell out on purpose.
+  //
+  // Nothing in this host was changed to make it work, and that is the
+  // assertion: the library is guest-side Lua riding in the module, so a
+  // supervisor written against the C host runs here unaltered. This test
+  // exists so that stops being luck.
+  test('the guest library spawns without the raw lifecycle idiom', async ({ page }) => {
+    await openKernel(page);
+    const report = await page.evaluate(async () => {
+      // No `system/lifecycle` anywhere in this program: the library owns
+      // that name, the op shape and the outcome wait.
+      const source = `
+local log = queue.declare('log', {capacity = 8, exported = true})
+local kid = host.spawn{ code = 'local a = 1', caps = {'queue:*'} }
+local kids = 0
+for _ in pairs(host.children()) do kids = kids + 1 end
+local ok, err = pcall(host.spawn, { code = 'local b = 2', caps = {'host:nope/*'} })
+queue.push(log, {id = kid.id, kids = kids,
+                 denied = (not ok) and tostring(err):find('denied') ~= nil})
+return 0`;
+      await window.lab.kernel.swarmStart(source, {
+        caps: ['lifecycle', 'queue:*'],
+        budget: { instructions: 50_000_000, memoryKb: 4096 },
+        connectors: {},
+      });
+      for (let i = 0; i < 40; i++) {
+        const r = await window.lab.kernel.swarmStep();
+        if (r.alive === 0) return r;
+      }
+      return window.lab.kernel.swarmSnapshot();
+    });
+
+    const answer = report.events.find((e) => e.event === 'message' && e.queue === 'log');
+    expect(answer, 'the supervisor should have logged its child').toBeTruthy();
+    // A real instance id from this host's own roster, not a fabricated one.
+    expect(answer.value.id).toBeGreaterThan(1);
+    expect(answer.value.kids).toBe(1);
+    // Attenuation is the swarm's, so the library's raise carries the
+    // swarm's own refusal rather than inventing a second policy.
+    expect(answer.value.denied).toBe(true);
+  });
 });
 
 test.describe('duty 2 — the drive loop', () => {
@@ -370,6 +414,74 @@ queue.push(log, {status = reply.status, detail = reply.detail})`), {
     const answer = report.events.find((e) => e.event === 'message' && e.queue === 'log');
     expect(answer.value.status).toBe('denied');
     expect(answer.value.detail).toContain('off by default');
+  });
+
+  // The deferred seam, against the real runtime.
+  //
+  // Every connector above answers within the same `_pumpHostcalls` that
+  // drained the request. Nothing reaching the network can: `fetch` settles
+  // on a later turn of the event loop, and the C host hit this first --
+  // build8 gave a connector the right to *take* a call and answer later,
+  // precisely so one slow answer does not stall every instance.
+  //
+  // The stub stands in for the endpoint, not for the machinery: the guest
+  // is a real program parked on `host/replies`, the request crosses the
+  // real queues, and the answer is delivered by a later `swarmStep`.
+  test('a connector may take a call now and answer on a later step', async ({ page }) => {
+    await openKernel(page);
+    const report = await page.evaluate(async () => {
+      // Stub only the endpoint under test and delegate everything else --
+      // the kernel fetches its own wasm module lazily, and a blanket stub
+      // hands the compiler the stub's body instead.
+      //
+      // It resolves only after a macrotask, so an answer *cannot* be
+      // produced inside the step that took the call. If the seam were
+      // synchronous this program would park forever and the assertions
+      // below would find no log message at all.
+      const realFetch = window.fetch.bind(window);
+      window.fetch = (url, init) => (String(url).startsWith('https://api.example.com/')
+        ? new Promise((resolve) => setTimeout(() => resolve(
+          new Response('pong', {
+            status: 200,
+            headers: { 'content-type': 'text/plain', 'x-seen': String(url) },
+          }),
+        ), 5))
+        : realFetch(url, init));
+
+      const source = `
+local calls   = queue.declare('host/calls',   {capacity = 4, exported = true, on_full = 'reject'})
+local replies = queue.declare('host/replies', {capacity = 4})
+local log     = queue.declare('log', {capacity = 8, exported = true})
+queue.push(calls, {tok = 9, call = 'rest/get', args = {url = 'https://api.example.com/v1/ping'}})
+local _, reply = queue.wait({replies}, 10000)
+queue.push(log, {tok = reply.tok, status = reply.status,
+                 code = reply.value and reply.value.status,
+                 body = reply.value and reply.value.body,
+                 ctype = reply.value and reply.value.content_type})
+return 0`;
+
+      await window.lab.kernel.swarmStart(source, {
+        caps: ['queue:*', 'host:rest/get'],
+        budget: { instructions: 50_000_000, memoryKb: 4096 },
+        connectors: { rest: { allow: ['https://api.example.com/'] } },
+      });
+      // Steps are separate awaits, so the event loop turns between them --
+      // which is the only reason a deferred answer can ever arrive.
+      for (let i = 0; i < 40; i++) {
+        const r = await window.lab.kernel.swarmStep();
+        if (r.alive === 0) return r;
+        await new Promise((r2) => setTimeout(r2, 2));
+      }
+      return window.lab.kernel.swarmSnapshot();
+    });
+
+    const answer = report.events.find((e) => e.event === 'message' && e.queue === 'log');
+    expect(answer, 'the guest should have been resumed with its answer').toBeTruthy();
+    expect(answer.value.tok).toBe(9);
+    expect(answer.value.status).toBe('ok');
+    expect(answer.value.code).toBe(200);
+    expect(answer.value.ctype).toContain('text/plain');
+    expect(answer.value.body).toBe('pong');
   });
 });
 
