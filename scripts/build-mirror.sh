@@ -27,6 +27,7 @@
 #
 #   <outdir>/releases.json
 #   <outdir>/<tag>/libdiluvium_wasi.wasm
+#   <outdir>/<tag>/diluvium_swarm_wasi.wasm   (when the release has one)
 #   <outdir>/<tag>/SHA256SUMS.txt
 #   <outdir>/<tag>/BUILDINFO.txt      (a checksum fallback)
 #
@@ -38,6 +39,7 @@ set -euo pipefail
 
 REPO="Aloecraft-org/diluvium"
 ARTIFACT="libdiluvium_wasi.wasm"
+SWARM_ARTIFACT="diluvium_swarm_wasi.wasm"
 OUT="${1:-mirror}"
 shift || true
 
@@ -146,6 +148,29 @@ for tag in "${TAGS[@]}"; do
     exit 1
   fi
   say "verified $actual"
+
+  # The swarm module, when the release has one -- the same discipline as
+  # fetch-runtime.sh: absence is a fact about the release and not fatal,
+  # but a listed artifact that will not verify is, because at that point
+  # something is wrong rather than merely old. Without this block the
+  # runtime dropdown could switch a page to a tag whose swarm module the
+  # mirror never carried, and the instances panel would fail on a fetch
+  # the version switch had implied would work.
+  if grep -q " \*\?$SWARM_ARTIFACT\$" "$dest/SHA256SUMS.txt"; then
+    say "fetching $SWARM_ARTIFACT"
+    curl -fsSL --retry 3 -o "$dest/$SWARM_ARTIFACT" "$base/$SWARM_ARTIFACT"
+    s_expected=$(grep " \*\?$SWARM_ARTIFACT\$" "$dest/SHA256SUMS.txt" | cut -d' ' -f1)
+    s_actual=$(sha256sum "$dest/$SWARM_ARTIFACT" | cut -d' ' -f1)
+    if [ "$s_expected" != "$s_actual" ]; then
+      echo "error: $tag swarm module checksum mismatch" >&2
+      echo "  expected $s_expected" >&2
+      echo "  actual   $s_actual" >&2
+      exit 1
+    fi
+    say "verified $s_actual"
+  else
+    say "no $SWARM_ARTIFACT in this release (fine)"
+  fi
 
   version=$(sed -n 's/^version *: *//p' "$dest/BUILDINFO.txt" 2>/dev/null | head -1)
   [ -z "$version" ] && version="${tag#v}"

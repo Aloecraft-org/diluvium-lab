@@ -38,7 +38,7 @@
 
 set -euo pipefail
 
-TAG="${1:-v5.5.1_build5}"
+TAG="${1:-v5.5.1_build10}"
 MIRROR="${DILUVIUM_RELEASE_BASE:-https://diluvium.aloecraft.org/release}"
 BASE="$MIRROR/$TAG"
 DEST="$(cd "$(dirname "$0")/.." && pwd)/vendor"
