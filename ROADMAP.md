@@ -3502,3 +3502,143 @@ needs build10 or newer; today an older pin simply denies the call, which
 is honest but late. And the listener composer shows a reply's headers on
 the exchange it completes, but there is no way to *drive* a response
 header from the panel -- the composer sends requests, not replies.
+
+## The move to DRT, and the artifact that stops mattering
+
+DRT — the Diluvium RunTime — is the Rust reimplementation of the two
+things diluvium is shedding: the swarm layer (`dvs.*`) and the generic
+host (`host/`). The language stays C and stays where it is; everything
+around a running program moves. That makes DRT the Lab's new reference
+host, and it makes one of the Lab's two artifacts temporary.
+
+The framing took a correction on the way in, and it is worth writing down
+because it is the thing that misleads. **The Lab never used
+`diluvium-host`.** It cannot — a page has no way to exec a C binary. What
+the Lab has is its own host, written to `doc/Host.md`'s acceptance test:
+a guest must not be able to tell two hosts apart. So the coupling was
+always a *specification* coupling — `sqlite.js` mirrors `dhost_sql.c`,
+`connectors.js` mirrors `dhost.c` and `dhost_http.c`, the config shape is
+`example.host.lua`'s — and the migration is that the document being
+mirrored changes. Not a port.
+
+### What has a deadline, and what turned out not to
+
+`diluvium_swarm_wasi.wasm` is `dvs.o` plus `dvs_shim.o`, and `swarm.js`
+calls sixteen `dvs_*` exports through it. SPEC.md §2 has diluvium delete
+`dvs.c` once DRT's swarm passes acceptance, and that artifact goes with
+it. So the instances panel has a clock on it.
+
+Two things about that clock, both checked rather than assumed. It has not
+started: acceptance is the ported capability suite, and
+`crates/drt/tests/README.md` shows one slice ported (`cap1_environment`)
+with the rest partial or absent. And build11 still publishes the module.
+
+The larger point is that the clock stops applying rather than being
+beaten. DRT's browser tier loads a kernel plus `drt-web`; the C swarm
+module is not in that picture at all. The Lab is not racing the deletion,
+it is stepping off the dependency — which is a different amount of hurry,
+and worth saying in those words.
+
+### The false green, found by trying to link it
+
+The claim that DRT could not run in a browser was too strong and did not
+survive contact. `drt-swarm --no-default-features` and the whole
+capability/hostcall/config stack compile *and link* to a real
+`wasm32-unknown-unknown` cdylib with nothing but a rustup target.
+
+What did not survive contact was the opposite build.
+`cargo build -p drt-swarm --target wasm32-unknown-unknown` with the C-core
+engine finished **green** and produced an x86-64 ELF object: `diluvium-sys`'
+build script shelled out to a bare `cc` with no `--target` and branched on
+`cfg!(target_os = ...)`, which in a build script describes the host. A
+library crate is never linked, so nothing looked at what came out. Forcing
+a cdylib link is what showed it — *"archive member 'onelua.o' is neither
+Wasm object file nor LLVM bitcode"*, then two missing libraries.
+
+Fixed upstream (diluvium PR #25). Every decision now reads `TARGET`, the
+object's magic bytes are checked against the target before archiving, and
+a wasm build with no wasi-sdk **refuses by name** instead of compiling a
+host object. Verified here afterwards: with `WASI_SDK_PATH` set, the core
+compiles to real wasm and a probe that actually crosses the FFI links a
+507 KB module with the interpreter inside, a tag section for exception
+handling, and 55 imports — all plain libc in `env`, no WASI at all.
+
+That last number is the one with consequences. Today's kernel arrives as
+45 `wasi_snapshot_preview1` imports and `wasi.js` answers them, with cell
+output as `fd_write`. A single-module browser build asks for `fopen`,
+`fprintf`, `snprintf`, `strtod`, `strftime` and fifty more, and has no
+`fd_write` at all. That is a different shim, not a ported one — which is
+why the bridged tier below is the one being built first.
+
+### Stage 1: the host bridge, before `drt-web` exists
+
+`doc/Browser.md` in `diluvium-drt` specifies the contract, and DRT owns it
+for the reason DRT owns the relay's wire format: whoever writes the trait
+writes the contract. `src/kernel/bridge.js` is the other half of it.
+
+The shape is two directions at one boundary. `drt-web` exports the swarm's
+operations to the page and imports the `Engine`/`Instance` operations plus
+`drive` from it — JS is necessarily the host in the middle, because two
+wasm modules cannot call each other in a browser. That is SPEC.md §4's
+named fallback rather than a workaround, and it means **the Lab's JS host
+is DRT's browser implementation**, not legacy awaiting deletion.
+
+Sixteen functions, not the fifteen the document's import block lists:
+`release` appears in its may-throw table and in `HostBridge` but was left
+out of the code block, and it is not optional — without it a swarm that
+hibernates and kills leaks the JS instance table for the page's lifetime.
+`drive` also takes two arguments rather than three; the caps handle is
+gone, because gating stays on the Rust side where `Swarm::holds` answers
+it. Both were fed back.
+
+Six `dv_` calls move from C into JavaScript here, because they were what
+`dvs.c` did on the far side of the wall: `dv_queue_push`, `dv_queue_pop`,
+`dv_resume`, `dv_waitset_get`, `dv_restore` and `dv_memory`. All six are
+already exported by the pinned kernel — all 28 `dv_*` are — which is the
+fact that let this be written and tested with no `drt-web` present and no
+new artifact.
+
+Three rules shape the file, each with a failure behind it:
+
+- **Throwing is part of the contract, and so is not throwing.** The
+  fallible imports throw and the shim routes by *which* one did:
+  `run`/`resume`/`load` become a program fault, the instance's fate;
+  `queueInfo`/`push`/`pop`/`snapshot` become an engine fault. The rest have
+  nowhere to put an exception and one thrown from them aborts the module,
+  so they catch everything and return a value. `drive` reports a fault as
+  `{faulted}` for the reason `swarm.js` already gives itself: unwinding a
+  wasm frame mid-step leaves the bookkeeping in a state nothing can
+  describe.
+- **A full queue is a value and an unknown queue is a throw**, because
+  `PushOutcome` has a variant for the first and not the second.
+- **Any allocation detaches every view**, so nothing is held across a call.
+
+`test/bridge.spec.js` drives all of it against the real kernel: a message
+round-trips through park/push/resume/pop, a snapshot of a parked instance
+restores into a fresh handle and continues, a stamped snapshot refuses the
+wrong stamp, `release` is idempotent, the must-not-throw set records
+faults instead of raising, and an exhausted budget arrives as a throw from
+`run` rather than as data.
+
+### Still not done
+
+The backend *branch* is not written. `bridgeCapable`/`bridgeProblems` sit
+beside `swarmCapable`/`swarmProblems` as the recognition seam
+`doc/Browser.md` names, but nothing chooses between them yet, because
+there is no second backend to choose — dispatch written today would be an
+arm that never runs. It lands with `drt-web`'s export layer, along with
+retargeting `swarm.js`'s sixteen calls and dropping the swarm-module
+fetch.
+
+`defaultDrive` advances an instance and nothing more. The real drive is
+the Lab's existing pump, and `doc/Browser.md` is explicit that it stays:
+the Lab takes `Swarm` for bookkeeping and keeps `_pumpHostcalls`/
+`_settled`, and does **not** take DRT's `PumpHost`/`Dispatcher`, which
+await connectors on the spot and cannot run on a browser main thread. That
+wiring is Stage 3.
+
+The connector divergences found against DRT are also untouched and belong
+to their own pass: the `sql` scope spells access `"read"` here and
+`"readonly"` there; DRT nests a connector's config under
+`ConnectorWiring`; DRT has `fs` and `ssh` and no `rest` at all, which is a
+gap on its side rather than this one.

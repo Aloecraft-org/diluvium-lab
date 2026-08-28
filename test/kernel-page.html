@@ -20,6 +20,7 @@ import { executeCollected } from '../src/kernel/kernel.js';
 import { luaLongString, parseRecord, makeNonce } from '../src/kernel/lua-harness.js';
 import { loadSqlite, SqliteScope, SqliteDatabase, stripLiterals, looksLikeSqlite } from '../src/kernel/sqlite.js';
 import { buildConnectors } from '../src/kernel/connectors.js';
+import { createBridge, bridgeCapable, bridgeProblems } from '../src/kernel/bridge.js';
 import { topologyOf, mermaidOf, layoutOf } from '../src/kernel/topology.js';
 import { encode, decode } from '../vendor/msgpack.js';
 import { sha256, hmacSha256, utf8Bytes, bytesToHex } from '../src/kernel/sha256.js';
@@ -48,6 +49,19 @@ window.lab = {
   stripLiterals,
   looksLikeSqlite,
   buildConnectors,
+  // DRT's browser tier: the JS half of `doc/Browser.md`'s host bridge,
+  // over the kernel this page already loaded. `drt-web` is not needed to
+  // exercise it -- the contract is what it speaks, and a spec can drive
+  // that side directly.
+  createBridge,
+  bridgeCapable,
+  bridgeProblems,
+  // The kernel's live module, which is what a bridge is built over. The
+  // same module runs the notebook's cells: instances are `dv_new` beside
+  // that state, not instead of it, which is the arrangement `drt-web`
+  // will have too.
+  moduleExports: () => kernel._instance.exports,
+  makeBridge: (options) => createBridge(kernel._instance.exports, options),
   topologyOf,
   mermaidOf,
   layoutOf,
