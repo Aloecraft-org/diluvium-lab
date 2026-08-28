@@ -64,6 +64,14 @@ jobs:
       - name: Check the bundled examples match notebooks/
         run: node scripts/bundle-examples.mjs --check
 
+      # The browser tier's JS half needs only TextEncoder, TextDecoder and
+      # WebAssembly, so it runs under plain `node --test` -- no browser, no
+      # dependency, and the whole file in under a second. Run before the
+      # Playwright suite: when the bridge is broken, this says so in a
+      # second rather than six minutes.
+      - name: Test the browser tier under Node
+        run: npm run test:node
+
       - name: Test
         run: npm test
         env:

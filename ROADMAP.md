@@ -3620,7 +3620,7 @@ wrong stamp, `release` is idempotent, the must-not-throw set records
 faults instead of raising, and an exhausted budget arrives as a throw from
 `run` rather than as data.
 
-### Still not done
+### Still not done — the branch part is done below
 
 The backend *branch* is not written. `bridgeCapable`/`bridgeProblems` sit
 beside `swarmCapable`/`swarmProblems` as the recognition seam
@@ -3629,6 +3629,10 @@ there is no second backend to choose — dispatch written today would be an
 arm that never runs. It lands with `drt-web`'s export layer, along with
 retargeting `swarm.js`'s sixteen calls and dropping the swarm-module
 fetch.
+
+*Superseded by the section below: a stand-in supplied the second arm, so
+the chooser is written and both arms are tested. The `swarm.js` retarget
+is still outstanding.*
 
 `defaultDrive` advances an instance and nothing more. The real drive is
 the Lab's existing pump, and `doc/Browser.md` is explicit that it stays:
@@ -3642,3 +3646,120 @@ to their own pass: the `sql` scope spells access `"read"` here and
 `"readonly"` there; DRT nests a connector's config under
 `ConnectorWiring`; DRT has `fs` and `ssh` and no `rest` at all, which is a
 gap on its side rather than this one.
+
+## A stand-in, a chooser, and a second runner
+
+The last section stopped short of the backend branch on the grounds that
+there was nothing to branch to. That was true and it was also solvable:
+DRT wrote a mock *bridge* in Rust so a real `Swarm` could be driven under
+`cargo test` without a browser, and the same trick works pointing the
+other way. `test/drt-web-mock.js` fakes the *swarm* in JavaScript so the
+Lab's real bridge, real kernel and real chooser can be driven with no
+wasm-bindgen module present.
+
+The suggestion that produced this was a Node backend, on the reasoning
+that a second environment would be a second datapoint. It is worth
+recording why that aimed slightly left, because the distinction is easy to
+lose: *where the bridge runs* (browser or Node) and *what the chooser
+picks between* (the C swarm layer or DRT) are different axes. A Node
+runner varies the first and says nothing about the second — both arms
+would still be `bridgeCapable`. What unblocks the chooser is something
+that answers `drtCapable`, and only a stand-in could do that before
+`drt-web` ships.
+
+### The stand-in, and what it refuses to pretend
+
+It presents `doc/Browser.md`'s export table over the Lab's real
+`createBridge`: every instance it makes is a genuine `dv_` instance, every
+step crosses the real boundary, and hibernate/wake round-trip through real
+`dv_snapshot` bytes. What it exercises is the plumbing.
+
+It is not a second swarm. Attenuation, provenance, hibernation policy, the
+delivery table, spawn rate limits and the bounded wake buffer are absent,
+because DRT's swarm does all of that and is differentially tested against
+`dvs.c` at exact fidelity — reimplementing any of it here would be
+re-deriving that work badly and then trusting the copy. Where it cannot
+answer faithfully it throws `MOCK_UNSUPPORTED` rather than inventing a
+plausible number: `holds(id, 'queue:work')` against a `queue:*` grant
+needs `drt-caps`' grammar, so it refuses, while an exact match needs no
+grammar and is answered. A mock that lies is worse than one that refuses.
+
+When `drt-web` lands the file is deleted and the specs point at the real
+module. If they need editing to do that, the file was wrong about the
+shape, which is the other thing it is for.
+
+### `dvs_instance` has no successor, and that is the interesting part
+
+`swarm.js` today calls `dvs_instance(sw, id)` and gets a **raw pointer**
+into the C swarm's struct, then calls `dv_queue_lookup` on it. That is how
+both the export drain and the hostcall pump reach a guest's queues.
+
+`drt-web` exports `ids()` — a roster, no pointer — and its export table
+says why: handing pointers to the CDN audience is precisely what it
+refuses. So the instance behind a swarm id is reachable only through the
+Lab's *own* bridge table. The Lab is on both sides of the boundary, and
+`handleFor(id)` is the join. This is a better arrangement than the one it
+replaces: the pump stops touching raw pointers into another language's
+structs.
+
+One catch, found by building it. The id-to-handle pairing is only revealed
+when `drive` is called, because the swarm mints the id *after* `load` has
+returned the handle. An instance spawned but not yet driven cannot be
+mapped, and a panel reading state between those two moments will not find
+it. Workable — the bridge records the pairing on first drive — but the
+clean fix is for `drt-web` to export the lookup it already has via
+`Instance::host_token`. Raised upstream.
+
+### The chooser
+
+`src/kernel/backend.js`. Two questions per backend rather than one, and
+that asymmetry is the browser tier's shape rather than an accident: DRT
+needs *both* a usable `drt-web` and a kernel this page can bridge to,
+because the swarm and the interpreter are separate modules there. The C
+backend needed one module carrying both, which is what made it a single
+question.
+
+DRT wins when both are available, as a `prefer` default rather than a
+hardcoded order — running one notebook against two backends is the
+comparison this project exists to make, and it is the same argument the
+version dropdown already won. When neither answers, both refusals are
+shown labelled, because which one matters depends on what the reader
+expected: someone on an old runtime wants the C layer's answer and someone
+mid-migration wants DRT's.
+
+### A second runner, which turned out to be nearly free
+
+The bridge needs `TextEncoder`, `TextDecoder` and `WebAssembly`; the WASI
+shim needs `performance`. That is the whole browser surface, so the
+browser tier's JS half runs under plain `node --test` unaltered — no
+jsdom, no shims, no dependency, `node:test` being built in. `npm run
+test:node` is nine tests in **under 400 ms**, against ~300 ms *per test*
+through Playwright, and CI runs it first: when the bridge is broken it
+says so in a second rather than six minutes.
+
+Two things it buys beyond speed. It proves the bridge has no accidental
+browser dependency, which matters because `drt-web` is aimed at a server
+tier as well as a page. And it is a second environment for one contract:
+`doc/Host.md`'s acceptance test is that a guest cannot tell two hosts
+apart, and the Lab could previously only demonstrate that against one.
+
+The Playwright suite keeps the arm Node cannot reach. The Node runner
+boots `libdiluvium_wasi.wasm`, which has `dv_` and no `dvs_*`; only a page
+fetches `diluvium_swarm_wasi.wasm` beside it, so "this page holds both
+backends" is asserted in `test/backend.spec.js` against the real C swarm
+module.
+
+*On TypeScript, since it came up:* it is not transparent here. The Lab has
+no build step by constraint, there is no `tsconfig.json`, and the typing
+in use is JSDoc — which gives editor types with nothing to compile.
+Adopting TS would be a constraint change rather than a commit.
+
+### Still not done
+
+The `swarm.js` retarget. Its sixteen `dvs_*` call sites still drive the C
+module; pointing them at `drt-web`'s exports — and at `handleFor` where
+`dvs_instance` used to be — is the remaining work, and it wants the real
+export layer rather than the stand-in, because that is the piece the
+stand-in is guessing at. Nothing in the app graph imports `bridge.js` or
+`backend.js` yet, which is why `stamp-imports` still reports 50 modules;
+it will need re-running when they do.

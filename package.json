@@ -6,6 +6,7 @@
   "scripts": {
     "start": "node scripts/serve.mjs",
     "test": "playwright test",
+    "test:node": "node --test test/node/*.test.mjs",
     "bake": "node scripts/bake.mjs",
     "stamp": "node scripts/stamp-imports.mjs",
     "bundle-examples": "node scripts/bundle-examples.mjs",

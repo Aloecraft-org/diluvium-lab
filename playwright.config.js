@@ -10,6 +10,12 @@ import { defineConfig, devices } from '@playwright/test';
 // because it wants a browser this image does not have.
 export default defineConfig({
   testDir: './test',
+  // `test/node/` is the other runner: the browser tier's JS half turns out
+  // to need only TextEncoder, TextDecoder and WebAssembly, so it runs under
+  // plain `node --test` in milliseconds instead of a page load apiece.
+  // Playwright's default testMatch would otherwise claim those files and
+  // fail on the first `import test from 'node:test'`.
+  testIgnore: '**/node/**',
   fullyParallel: true,
   forbidOnly: !!process.env.CI,
   retries: 0,

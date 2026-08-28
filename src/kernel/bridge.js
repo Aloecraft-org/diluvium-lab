@@ -151,6 +151,8 @@ export function createBridge(exports, options = {}) {
   /** handle -> the instance behind it. Handles are minted here and opaque
    * to Rust, which is what `doc/Browser.md` asks for. */
   const table = new Map();
+  /** swarm instance id -> handle, learned at `drive`. See `handleFor`. */
+  const byId = new Map();
   let nextHandle = 1;                 // 0 is never a handle, matching dv_queue_id
 
   // Re-derived on every use: see the note at the top of the file about
@@ -380,6 +382,10 @@ export function createBridge(exports, options = {}) {
       const entry = table.get(handle);
       if (!entry) return;
       table.delete(handle);
+      // The id index goes with it, or a killed instance's id would keep
+      // resolving to a handle whose memory has been freed -- which is the
+      // leak this call exists to prevent, wearing a second hat.
+      if (entry.id !== undefined) byId.delete(entry.id);
       exports.dv_free(entry.inst);
     }, undefined, 'release'),
 
@@ -563,6 +569,9 @@ export function createBridge(exports, options = {}) {
       try {
         const entry = table.get(handle);
         if (!entry) return { faulted: `no instance for handle ${handle}` };
+        // The only place the pairing is visible. See `handleFor` below.
+        byId.set(id, handle);
+        entry.id = id;
         return drive(id, handle, bridge, entry);
       } catch (err) {
         return { faulted: err?.message ?? String(err) };
@@ -570,6 +579,37 @@ export function createBridge(exports, options = {}) {
     },
 
     // --- Not part of the contract -------------------------------------
+
+    /**
+     * The handle behind a swarm instance id, or null.
+     *
+     * Not in `HostBridge`, and needed because of what DRT dropped on
+     * purpose. `swarm.js` today calls `dvs_instance(sw, id)` and gets a
+     * raw pointer into the C swarm's struct, then calls `dv_queue_lookup`
+     * on it -- that is how both the export drain and the hostcall pump
+     * reach a guest's queues. `drt-web` exports `ids()`, a roster, and no
+     * pointer at all, because handing pointers to a CDN audience is the
+     * thing its export table refuses. So the instance a swarm id refers to
+     * is reachable only through *this* table: the Lab is on both sides of
+     * the boundary, and this is the join.
+     *
+     * The catch, and it is worth knowing before it bites: the pairing is
+     * only revealed when `drive` is called, because the swarm mints the id
+     * after `load` has already returned the handle. An instance spawned
+     * but not yet driven cannot be mapped, and a panel that reads state
+     * between those two moments will not find it. `drt-web` could close
+     * this by exporting the id-to-token lookup it already has via
+     * `Instance::host_token`; raised upstream.
+     */
+    handleFor(id) {
+      const handle = byId.get(id);
+      return handle !== undefined && table.has(handle) ? handle : null;
+    },
+
+    /** The swarm id a handle was last driven as, or null. */
+    idFor(handle) {
+      return table.get(handle)?.id ?? null;
+    },
 
     /** Live handles, for assertions and for the panel. */
     get handles() { return [...table.keys()]; },
@@ -584,6 +624,7 @@ export function createBridge(exports, options = {}) {
         table.delete(handle);
         try { exports.dv_free(entry.inst); } catch { /* module already gone */ }
       }
+      byId.clear();
     },
   };
 

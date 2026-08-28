@@ -21,6 +21,10 @@ import { luaLongString, parseRecord, makeNonce } from '../src/kernel/lua-harness
 import { loadSqlite, SqliteScope, SqliteDatabase, stripLiterals, looksLikeSqlite } from '../src/kernel/sqlite.js';
 import { buildConnectors } from '../src/kernel/connectors.js';
 import { createBridge, bridgeCapable, bridgeProblems } from '../src/kernel/bridge.js';
+import {
+  selectBackend, drtCapable, drtProblems, backendProblems,
+} from '../src/kernel/backend.js';
+import { createMockDrtWeb } from './drt-web-mock.js';
 import { topologyOf, mermaidOf, layoutOf } from '../src/kernel/topology.js';
 import { encode, decode } from '../vendor/msgpack.js';
 import { sha256, hmacSha256, utf8Bytes, bytesToHex } from '../src/kernel/sha256.js';
@@ -62,6 +66,15 @@ window.lab = {
   // will have too.
   moduleExports: () => kernel._instance.exports,
   makeBridge: (options) => createBridge(kernel._instance.exports, options),
+  // The C swarm module, which only a page loads -- the Node runner has the
+  // kernel and no `dvs_*`, so the chooser's other arm is only assertable
+  // from here.
+  swarmExports: async () => (await kernel._swarmExports()),
+  selectBackend,
+  drtCapable,
+  drtProblems,
+  backendProblems,
+  createMockDrtWeb,
   topologyOf,
   mermaidOf,
   layoutOf,
