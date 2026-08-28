@@ -27,7 +27,9 @@ import {
 import { createMockDrtWeb } from './drt-web-mock.js';
 import { topologyOf, mermaidOf, layoutOf } from '../src/kernel/topology.js';
 import { encode, decode } from '../vendor/msgpack.js';
-import { sha256, hmacSha256, utf8Bytes, bytesToHex } from '../src/kernel/sha256.js';
+import {
+  sha256, hmacSha256, sha1, hmacSha1, base64std, utf8Bytes, bytesToHex,
+} from '../src/kernel/sha256.js';
 
 const kernel = new WasmKernel({
   wasmUrl: '../vendor/libdiluvium_wasi.wasm',
@@ -79,7 +81,10 @@ window.lab = {
   mermaidOf,
   layoutOf,
   msgpack: { encode, decode },
-  crypto: { sha256, hmacSha256, utf8: utf8Bytes, toHex: bytesToHex },
+  crypto: {
+    sha256, hmacSha256, sha1, hmacSha1, base64std,
+    utf8: utf8Bytes, toHex: bytesToHex,
+  },
 };
 
 kernel.start().then(

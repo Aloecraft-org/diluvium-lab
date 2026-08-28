@@ -35,7 +35,11 @@
 import { SqliteScope } from './sqlite.js';
 import {
   sha256, hmacSha256, utf8Bytes, bytesToHex, base64url, fromBase64url, equalBytes,
+  hmacSha1, base64std,
 } from './sha256.js';
+
+/** `TURN_USER_MAX` in `dhost_crypto.c`: the longest TURN username. */
+const TURN_USER_MAX = 256;
 
 /** The listener's header bounds. `DH_MAX_HDRS` and `HTTP_HDR_VALUE_MAX`. */
 const MAX_HEADERS = 8;
@@ -124,12 +128,18 @@ export function buildConnectors(description = {}, services = {}) {
  * queue shape wins: the answer arrives as a message, so it is in the log, so
  * a replay replays the same moment rather than the replayer's.
  */
-export function timeConnector(now = () => Date.now()) {
+export function timeConnector(now = () => Date.now(), monotonic = () => performance.now()) {
+  const started = monotonic();
   return (call) => {
-    if (call !== 'time') {
-      return failed(`the time connector answers 'time' and nothing else; '${call}' is not it`);
-    }
-    return ok(now());
+    if (call === 'time') return ok(now());
+    // Milliseconds, deliberately the same unit as `time`: `dhost.c` says
+    // two clocks in one connector answering in different units would be a
+    // bug factory, and DRT's `TimeConnector` repeats it. The epoch is this
+    // page's own -- good for intervals within a session, reset by a
+    // reload, never comparable to a persisted wall timestamp. Which is the
+    // point: intervals belong here, records belong on `time`.
+    if (call === 'time/monotonic') return ok(Math.round(monotonic() - started));
+    return failed(`the time connector answers 'time' and 'time/monotonic'; '${call}' is neither`);
   };
 }
 
@@ -239,10 +249,21 @@ export function sqlConnector(scope) {
 export function cryptoConnector({
   secret = 'diluvium-lab-development-secret',
   default_ttl: defaultTtl = 3600,
+  // `turn = {secret, ttl, uris}`. The C host also takes `secret_env` and
+  // `secret_file`; a page has neither an environment nor a filesystem, so
+  // those are absent here rather than accepted and ignored.
+  turn = null,
   now = () => Math.floor(Date.now() / 1000),
   random = (n) => crypto.getRandomValues(new Uint8Array(n)),
 } = {}) {
   const master = typeof secret === 'string' ? utf8Bytes(secret) : secret;
+  // Raw, not derived -- see `crypto/turn_credential` below for why this
+  // one call is the exception to the subkey rule.
+  const turnSecret = turn?.secret
+    ? (typeof turn.secret === 'string' ? utf8Bytes(turn.secret) : turn.secret)
+    : null;
+  const turnTtl = Number.isInteger(turn?.ttl) ? turn.ttl : 86400;
+  const turnUris = Array.isArray(turn?.uris) ? turn.uris.map(String) : [];
   const kHmac = hmacSha256(master, utf8Bytes('diluvium/crypto/hmac/v1'));
   const kJwt = hmacSha256(master, utf8Bytes('diluvium/crypto/jwt-hs256/v1'));
   // The one header this connector will sign or accept, pre-encoded so
@@ -321,9 +342,52 @@ export function cryptoConnector({
         if (claims.exp <= now()) return ok({ valid: false, reason: 'expired' });
         return ok({ valid: true, claims });
       }
+      /**
+       * coturn's `use-auth-secret` scheme: the username is
+       * `<expiry>:<user>` and the password is standard base64 of
+       * HMAC-SHA1 over it. The TURN server holds the *same* secret and
+       * recomputes the MAC, which is why this is the one call that signs
+       * under the raw configured secret rather than a derived subkey --
+       * a subkey would produce a MAC coturn cannot check.
+       *
+       * The host owns the expiry, exactly as `jwt_sign` owns `exp`: the
+       * call takes a ttl and never a timestamp, because the expiry sits
+       * in the username in cleartext and a guest that chose it would be
+       * one field away from a far-future credential.
+       */
+      case 'crypto/turn_credential': {
+        if (!turnSecret) {
+          return denied('this deployment configures no TURN shared secret '
+            + "(config.connectors.crypto.turn), so 'crypto/turn_credential' is not wired");
+        }
+        const user = args.user;
+        if (typeof user !== 'string') {
+          return failed('crypto/turn_credential: args.user must be a string');
+        }
+        if (user.length < 1 || utf8Bytes(user).length > TURN_USER_MAX || user.includes('\0')) {
+          return failed(`crypto/turn_credential: args.user must be 1..${TURN_USER_MAX} `
+            + 'bytes with no NUL');
+        }
+        // An out-of-range ttl falls back to the configured default rather
+        // than refusing, which is what the C host does with the same
+        // bounds -- a guest cannot lengthen its own credential past them.
+        const asked = args.ttl;
+        const ttl = Number.isInteger(asked) && asked > 0 && asked <= 315360000
+          ? asked : turnTtl;
+        const expires = now() + ttl;
+        const username = `${expires}:${user}`;
+        const password = base64std(hmacSha1(turnSecret, utf8Bytes(username)));
+        // The deployment's own uri list, verbatim: with it the reply is a
+        // complete ICE server entry and no program hard-codes where
+        // coturn lives.
+        return ok(turnUris.length
+          ? { username, password, expires, uris: turnUris }
+          : { username, password, expires });
+      }
       default:
         return failed(`the crypto connector answers crypto/random, crypto/hash, crypto/hmac, `
-          + `crypto/jwt_sign and crypto/jwt_verify; '${call}' is none of them`);
+          + `crypto/jwt_sign, crypto/jwt_verify and crypto/turn_credential; `
+          + `'${call}' is none of them`);
     }
   };
 }

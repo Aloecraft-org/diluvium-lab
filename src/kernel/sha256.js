@@ -151,3 +151,101 @@ export function equalBytes(a, b) {
   for (let i = 0; i < a.length; i++) diff |= a[i] ^ b[i];
   return diff === 0;
 }
+
+// ---------------------------------------------------------------------
+// SHA-1, and the one call that needs it.
+//
+// Here for exactly one reason: `crypto/turn_credential`. coturn's
+// `use-auth-secret` scheme fixes the primitive -- the TURN server
+// recomputes HMAC-SHA1 over the same username with the same shared secret,
+// so there is no choice to make. The C host says the same thing in
+// `dhost_crypto.c`: "HMAC-SHA1 because the scheme fixes it ... interop
+// leaves no choice anyway".
+//
+// **Do not reach for this for anything else.** SHA-1's collision breaks do
+// not apply to HMAC as used here, which is why the scheme is still sound,
+// but that is an argument about this one construction and not a licence to
+// hash with it. `crypto/hash` and `crypto/hmac` are SHA-256 and stay that
+// way; `GUARANTEES.md` upstream carries the same warning beside the same
+// call.
+//
+// FIPS 180-4 §6.1. Checked in `test/crypto.spec.js` against the published
+// vectors and against RFC 2202's HMAC-SHA1 cases, for the reason the
+// SHA-256 note above gives: a hash that agrees only with its own author is
+// worth nothing when the other end is coturn.
+
+const SHA1_BLOCK = 64;
+const SHA1_DIGEST = 20;
+
+const rotl = (x, n) => ((x << n) | (x >>> (32 - n))) >>> 0;
+
+/** @param {Uint8Array} bytes @returns {Uint8Array} 20 bytes */
+export function sha1(bytes) {
+  const h = new Uint32Array([0x67452301, 0xefcdab89, 0x98badcfe, 0x10325476, 0xc3d2e1f0]);
+  const bitLen = bytes.length * 8;
+  const withPad = new Uint8Array(((bytes.length + 9 + 63) >> 6) << 6);
+  withPad.set(bytes);
+  withPad[bytes.length] = 0x80;
+  // The length is 64 bits big-endian; JS bitwise is 32, so the high half
+  // is written from the float rather than shifted into existence.
+  new DataView(withPad.buffer).setUint32(withPad.length - 8, Math.floor(bitLen / 0x100000000));
+  new DataView(withPad.buffer).setUint32(withPad.length - 4, bitLen >>> 0);
+
+  const w = new Uint32Array(80);
+  const view = new DataView(withPad.buffer);
+  for (let off = 0; off < withPad.length; off += SHA1_BLOCK) {
+    for (let i = 0; i < 16; i++) w[i] = view.getUint32(off + i * 4);
+    for (let i = 16; i < 80; i++) w[i] = rotl(w[i - 3] ^ w[i - 8] ^ w[i - 14] ^ w[i - 16], 1);
+    let [a, b, c, d, e] = h;
+    for (let i = 0; i < 80; i++) {
+      let f;
+      let k;
+      if (i < 20) { f = (b & c) | (~b & d); k = 0x5a827999; }
+      else if (i < 40) { f = b ^ c ^ d; k = 0x6ed9eba1; }
+      else if (i < 60) { f = (b & c) | (b & d) | (c & d); k = 0x8f1bbcdc; }
+      else { f = b ^ c ^ d; k = 0xca62c1d6; }
+      const t = (rotl(a, 5) + (f >>> 0) + e + k + w[i]) >>> 0;
+      e = d; d = c; c = rotl(b, 30); b = a; a = t;
+    }
+    h[0] = (h[0] + a) >>> 0; h[1] = (h[1] + b) >>> 0; h[2] = (h[2] + c) >>> 0;
+    h[3] = (h[3] + d) >>> 0; h[4] = (h[4] + e) >>> 0;
+  }
+  const out = new Uint8Array(SHA1_DIGEST);
+  new DataView(out.buffer).setUint32(0, h[0]);
+  new DataView(out.buffer).setUint32(4, h[1]);
+  new DataView(out.buffer).setUint32(8, h[2]);
+  new DataView(out.buffer).setUint32(12, h[3]);
+  new DataView(out.buffer).setUint32(16, h[4]);
+  return out;
+}
+
+/** HMAC-SHA1, RFC 2104. See the warning above before using it. */
+export function hmacSha1(key, message) {
+  let k = key.length > SHA1_BLOCK ? sha1(key) : key;
+  if (k.length < SHA1_BLOCK) {
+    const padded = new Uint8Array(SHA1_BLOCK);
+    padded.set(k);
+    k = padded;
+  }
+  const inner = new Uint8Array(SHA1_BLOCK);
+  const outer = new Uint8Array(SHA1_BLOCK);
+  for (let i = 0; i < SHA1_BLOCK; i++) {
+    inner[i] = k[i] ^ 0x36;
+    outer[i] = k[i] ^ 0x5c;
+  }
+  return sha1(concat(outer, sha1(concat(inner, message))));
+}
+
+/**
+ * Standard base64, padded -- RFC 4648 §4, not the url-safe §5.
+ *
+ * `base64url` above is JWT's and is the one every other call here wants.
+ * This is coturn's: the TURN REST scheme puts a standard-alphabet, padded
+ * MAC in the password field, and a `-`/`_` there would simply not
+ * authenticate.
+ */
+export function base64std(bytes) {
+  let binary = '';
+  for (const b of bytes) binary += String.fromCharCode(b);
+  return btoa(binary);
+}

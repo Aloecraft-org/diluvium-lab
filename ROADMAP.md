@@ -3763,3 +3763,93 @@ export layer rather than the stand-in, because that is the piece the
 stand-in is guessing at. Nothing in the app graph imports `bridge.js` or
 `backend.js` yet, which is why `stamp-imports` still reports 50 modules;
 it will need re-running when they do.
+
+## Caught up to DRT's connectors — and one divergence that is not ours
+
+DRT v0.3.0 shipped the relay control plane, `drt repl` and CI across both
+feature profiles. It did **not** ship `drt-web`'s wasm-bindgen export
+layer: `crates/drt-web/` is still bridge, engine, host and four tests, and
+the release matrix is still three native targets. So Stage 3 waits, and
+this pass took the largest thing that does not.
+
+`crates/drt-web` does now build clean for `wasm32-unknown-unknown` and its
+four tests pass, which was worth confirming rather than assuming. One
+thing fell out of reading their mock bridge: it *creates* a queue on
+lookup and so never returns `None`, while a real bridge returns null for a
+queue a guest never declared. Checked the consumers — `pump.rs`,
+`swarm.rs`, `engine.rs` all destructure the `Option` — so the path is safe
+by construction even though their tests cannot reach it. No bug; recorded
+because the next person to read that mock will wonder.
+
+### The correction: `readonly` is DRT's divergence, not the Lab's
+
+An earlier survey listed the `sql` connector's access spelling as a Lab-
+versus-DRT divergence — the Lab says `"read"`, DRT says `"readonly"` — and
+left the impression the Lab was behind. Checking the C host settles it the
+other way. `host/dhost.c` refuses anything but `"read"` or `"readwrite"`,
+for `sql` and for `fs` alike. The Lab matches the C host; **DRT moved.**
+
+That matters because the fix is upstream, not here. A Lab that "caught up"
+to `readonly` would break against the C host and against every notebook
+already carrying `read`, in service of matching the newer of two
+references. Raised with DRT: either accept `read` as the alias the C host
+established, or record the rename as a deliberate break with a migration
+note. Not the Lab's to guess at.
+
+The general lesson is worth keeping: when the Lab and DRT disagree, the C
+host is the tiebreaker, because it is what both are trying to be
+indistinguishable from. Two references only stay consistent if something
+adjudicates.
+
+### The two the Lab really was behind on
+
+Both are places a program written against *either* host could tell the Lab
+apart, which is the thing `doc/Host.md` forbids.
+
+**`time/monotonic`.** The C host has answered it since build11 and DRT's
+`TimeConnector` answers it; the Lab's answered `time` "and nothing else".
+Now it answers both, in milliseconds — deliberately the same unit, because
+`dhost.c` says two clocks in one connector answering in different units is
+a bug factory. The epoch is the page's own: good for intervals within a
+session, reset by a reload, never comparable to a persisted wall
+timestamp. Intervals belong there, records belong on `time`. The refusal
+sentence is now the C host's word for word.
+
+**`crypto/turn_credential`.** The Lab answered five of the six crypto
+calls. The sixth is coturn's `use-auth-secret` scheme: username
+`<expiry>:<user>`, password standard base64 of HMAC-SHA1 over it.
+
+Three things about it are deliberate and each is tested rather than
+asserted in a comment. It signs under the **raw** configured secret, the
+one exception to the derived-subkey rule, because the TURN server holds
+the same secret and a subkey would produce a MAC it cannot check — the
+test recomputes the MAC the way coturn will and also proves the derived
+key does *not* match. The **host owns the expiry**: the call takes a ttl
+and never a timestamp, because the expiry sits in the username in
+cleartext and a guest that chose it would be one field away from a
+permanent credential; an out-of-range ttl falls back to the configured
+default, as the C host does. And the reply carries the deployment's `uris`
+when configured and omits the field otherwise, which is a difference a
+guest can see.
+
+This needed SHA-1, which the Lab did not have. It is in `sha256.js` behind
+a warning that says what it is for and what it is not: the collision
+breaks do not apply to HMAC as used here, interop leaves no choice, and
+`crypto/hash` and `crypto/hmac` stay SHA-256. Vectors are RFC 3174 and RFC
+2202 including the longer-than-block-size key case, in
+`test/node/digest.test.mjs` where they cost a millisecond instead of a
+page load. `base64std` is beside `base64url` because the TURN password
+field is the standard alphabet and a `-` there simply does not
+authenticate.
+
+### What is still a gap, and whose
+
+`fs` and `ssh` are DRT's and the C host's; a page has no filesystem and no
+socket, so their absence here is honest rather than a shortfall. `rng`,
+`js/invoke` and `rest` are the Lab's and have no DRT equivalent — `rest`
+in particular is a real gap on DRT's side, since the C host ships an
+outbound-HTTP plugin and DRT wires nothing. The connector config's nesting
+(`ConnectorWiring {backing?, scope?}` in DRT, flat here and in the C host)
+is the remaining structural difference and wants a decision rather than a
+guess, for the same reason `readonly` did: it changes what a stored
+notebook carries.
