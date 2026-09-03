@@ -746,7 +746,7 @@ only, on purpose: the Lab downloads a binary and executes it, so a query
 parameter that redirects where that binary comes from would turn any link
 into "run this wasm".
 
-The mirror at `diluvium.aloecraft.org/release/` carries `v5.4.7_release`
+The mirror at `software.aloecraft.org/releases/diluvium/` carries `v5.4.7_release`
 and `v5.5.1_build1`, both with the kernel artifact.
 
 ## Versions

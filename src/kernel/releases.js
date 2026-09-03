@@ -22,7 +22,7 @@ import { sha256Hex } from './digest.js';
  *
  * `/release/`, singular — that is the path the mirror actually serves.
  */
-export const DEFAULT_MIRROR = 'https://diluvium.aloecraft.org/release/';
+export const DEFAULT_MIRROR = 'https://software.aloecraft.org/releases/diluvium/';
 
 /** The artifact the Lab runs. Never the command module, never luac. */
 export const KERNEL_ARTIFACT = 'libdiluvium_wasi.wasm';
