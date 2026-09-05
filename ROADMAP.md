@@ -3502,3 +3502,41 @@ needs build10 or newer; today an older pin simply denies the call, which
 is honest but late. And the listener composer shows a reply's headers on
 the exchange it completes, but there is no way to *drive* a response
 header from the panel -- the composer sends requests, not replies.
+
+## One spelling per family: `rng` retired
+
+Found by reading this tree beside `diluvium-drt`'s, which is the first
+time anything has compared the two hosts (`doc/Lab.md` there records the
+whole reading). The `host` library the C core ships binds
+`host.crypto.random(nbytes?) -> hex string` and `host/dhost.c` answers
+`crypto/random`; this host answers it too, identically -- same argument,
+same default of 32, same 1..1024 range, same hex answer -- so a guest
+asking for entropy already ran unchanged on either.
+
+Beside it sat an `rng` connector answering `rng/int` and `rng/bytes`: a
+second name for a family the C host already binds, reachable only through
+`host.call` because nothing in the `host` library binds it. Nothing was
+broken by it. It is retired anyway, under a rule now written down in
+DRT's `doc/HostBaseline.md` -- **one spelling per family, and the library
+fixes which** -- because a call that lives in one host's connector table
+is portable by nobody's guarantee, and *"sorry, that's different in
+Lab"* is the failure both projects are shaped to avoid.
+
+Its own docstring gave the reason it existed: a sealed instance wanting
+unpredictability rather than `math.random` seeded identically in every
+instance. That reason is good and it is exactly what `crypto/random` is
+for, so nothing is lost.
+
+One thing found on the way out, and the argument for going rather than
+porting: `rng/int`'s only non-redundant feature was a *ranged* integer,
+and it was modulo-biased -- `min + (v % (max - min + 1))`. A second
+spelling had quietly become a second implementation, with a bug the first
+one does not have. If a ranged integer is wanted it belongs in
+`src/dhostlib.h` with rejection sampling, where both hosts inherit one
+correct version.
+
+`buildConnectors` names the retirement rather than leaving `rng: true` to
+the unknown-connector branch: a stored config that wires it gets the
+replacement in the sentence. `FROM_CELL` wires `crypto` where it wired
+`rng`, and the host-never-traps test provokes its refusal with
+`crypto/random {bytes = 0}` instead of an inverted range.

@@ -247,12 +247,12 @@ export const FROM_CELL = {
   config: {
     maxInstances: 32,
     spawnsPerStep: 4,
-    caps: ['lifecycle', 'queue:*', 'host:time', 'host:rng/int', 'host:rng/bytes',
+    caps: ['lifecycle', 'queue:*', 'host:time', 'host:crypto/random',
       'host:sql/query', 'host:sql/exec'],
     budget: { instructions: 500_000_000, memoryKb: 16384 },
     connectors: {
       time: true,
-      rng: true,
+      crypto: true,
       sql: { scope: 'lab', access: 'readwrite', max_result_rows: 1024 },
       listen: {
         port: 8080, queue: 'http_in', reply_queue: 'http_out',

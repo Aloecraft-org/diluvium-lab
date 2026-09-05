@@ -562,14 +562,14 @@ test.describe('the host never lets an exception into wasm', () => {
 local calls   = queue.declare('host/calls',   {capacity = 4, exported = true, on_full = 'reject'})
 local replies = queue.declare('host/replies', {capacity = 4})
 local log     = queue.declare('log', {capacity = 8, exported = true})
-queue.push(calls, {tok = 3, call = 'rng/int', args = {min = 5, max = 1}})
+queue.push(calls, {tok = 3, call = 'crypto/random', args = {bytes = 0}})
 local _, reply = queue.wait({replies})
 queue.push(log, {status = reply.status, detail = reply.detail})
 return 0`;
       await kernel.swarmStart(source, {
-        caps: ['queue:*', 'host:rng/int'],
+        caps: ['queue:*', 'host:crypto/random'],
         budget: { instructions: 20_000_000, memoryKb: 2048 },
-        connectors: { rng: true },
+        connectors: { crypto: true },
       });
       for (let i = 0; i < 20; i++) if ((await kernel.swarmStep()).alive === 0) break;
       return kernel.swarmSnapshot();

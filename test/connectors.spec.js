@@ -31,6 +31,19 @@ test.describe('the other connectors', () => {
     expect(error).toContain("unknown connector 'postgres'");
   });
 
+  test('the retired rng connector is refused with its replacement named', async ({ page }) => {
+    await open(page);
+    const error = await page.evaluate(() => {
+      try { window.lab.buildConnectors({ rng: true }); return null; }
+      catch (err) { return err.message; }
+    });
+    // A stored config naming `rng` wants the replacement, not "unknown
+    // connector 'rng'". `crypto/random` is the spelling `src/dhostlib.h`
+    // binds and the C host answers, so it is the one that travels.
+    expect(error).toContain('retired');
+    expect(error).toContain('crypto/random');
+  });
+
   test('the time connector answers `time` and nothing else', async ({ page }) => {
     await open(page);
     const answers = await page.evaluate(() => {

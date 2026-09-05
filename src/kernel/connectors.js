@@ -31,6 +31,16 @@
 //
 // Connectors are **all off by default**. A deployment names the ones it
 // wires, and a call to an unwired one is `denied` with a sentence saying so.
+//
+// ## One spelling per family
+//
+// A host may not answer a baseline family under a second name. `rng`
+// answered `rng/int` and `rng/bytes` here beside `crypto/random`, which is
+// what `src/dhostlib.h` binds and what `host/dhost.c` answers; it was
+// retired for that reason and the `rng` case below says so by name. The
+// reason it gave for existing -- a sealed instance wanting unpredictability
+// rather than `math.random` seeded identically everywhere -- is exactly
+// what `crypto/random` is for, and that one travels.
 
 import { SqliteScope } from './sqlite.js';
 import {
@@ -80,8 +90,17 @@ export function buildConnectors(description = {}, services = {}) {
         connectors.set('time', timeConnector(services.now));
         break;
       case 'rng':
-        connectors.set('rng', rngConnector(spec));
-        break;
+        // Retired. It answered `rng/int` and `rng/bytes` beside
+        // `crypto/random`, which is a second spelling of a family the C
+        // host already binds -- `host.crypto.random(nbytes?)` in
+        // `src/dhostlib.h` -- and a call reachable only through
+        // `host.call` is portable by nobody's guarantee. Named here rather
+        // than left to the `default` below, because a config that wires it
+        // wants the replacement, not "unknown connector 'rng'".
+        throw new Error(
+          "the rng connector was retired: use 'crypto' and call "
+          + "'crypto/random', which the C host answers too",
+        );
       case 'sql': {
         // The factory is loaded by whoever can await -- the kernel, before
         // a swarm starts. A configuration that wires `sql` without one is
@@ -110,7 +129,7 @@ export function buildConnectors(description = {}, services = {}) {
         // An unknown key is a typo about to become a silent default. The C
         // host refuses one by name at parse time and so does this.
         throw new Error(
-          `unknown connector '${name}'; this host wires time, rng, crypto, sql, listen, `
+          `unknown connector '${name}'; this host wires time, crypto, sql, listen, `
           + 'rest and js');
     }
   }
@@ -130,35 +149,6 @@ export function timeConnector(now = () => Date.now()) {
       return failed(`the time connector answers 'time' and nothing else; '${call}' is not it`);
     }
     return ok(now());
-  };
-}
-
-/**
- * `rng` -> a random integer, or bytes.
- *
- * Not in the C host's built-in set, and offered here because the alternative
- * in a sealed instance is `math.random` seeded identically in every
- * instance. A program that wants unpredictability should ask for it rather
- * than discover that it did not get any.
- */
-export function rngConnector(spec) {
-  const source = (spec && spec.source) || ((n) => crypto.getRandomValues(new Uint8Array(n)));
-  return (call, args) => {
-    if (call === 'rng' || call === 'rng/int') {
-      const bytes = source(6);
-      let v = 0;
-      for (const b of bytes) v = v * 256 + b;   // 48 bits: exact in a double
-      const max = Number.isInteger(args?.max) ? args.max : Number.MAX_SAFE_INTEGER;
-      const min = Number.isInteger(args?.min) ? args.min : 0;
-      if (max < min) return failed(`rng/int wants max >= min; got ${min}..${max}`);
-      return ok(min + (v % (max - min + 1)));
-    }
-    if (call === 'rng/bytes') {
-      const n = Number.isInteger(args?.n) ? args.n : 16;
-      if (n < 1 || n > 4096) return failed(`rng/bytes wants 1..4096 bytes; asked for ${n}`);
-      return ok(source(n));
-    }
-    return failed(`the rng connector answers 'rng/int' and 'rng/bytes'; '${call}' is neither`);
   };
 }
 
