@@ -109,6 +109,15 @@ export const CONTEXTUAL_CANDIDATES = [
   // which the shipped 5.5.1 does -- so it needs both probes to be safe,
   // and appears in the list above as well.
   ['global', 'global x = 1'],
+  // The proposals doc's contextual keywords. Each is still a legal
+  // variable name, so the identifier probe above cannot see any of them.
+  // `extends`, `static` and `super` are deliberately absent: they are
+  // special only inside a class body, and this tokenizer has no notion of
+  // being inside one, so it would be colouring them everywhere.
+  ['continue', 'while true do continue end'],
+  ['const', 'const X = 1'],
+  ['export', 'export function f() end'],
+  ['class', 'class C end'],
 ];
 
 /**
@@ -134,9 +143,21 @@ export const SYNTAX_CANDIDATES = [
   ['regex', 'return `x`'],
   ['separators', 'return 1_0'],
   ['binary', 'return 0b1'],
-  ['optional', 'local a = nil local b = a?.x local c = a ?? 1'],
+  // The proposals doc lists literal suffixes as shipped and doc/Guide.md
+  // says decimals do not exist yet. The probe is how that disagreement
+  // gets settled per build rather than argued about.
+  ['suffix', 'return 1.23d'],
+  ['optional', 'local a = nil local b = a?.x local c = a?[1] local d = a ?? 1'],
+  ['optional-call', 'local a = nil local b = a?:m() local c = a?(1)'],
   ['compound', 'local a = 1 a += 1'],
   ['secure', '~function __probe() end'],
+  ['spread', 'local a = {} local t = {...a}'],
+  ['lambda', 'local f = |x| x * 2'],
+  ['attribute', 'function __probe() <deterministic> end'],
+  // `@` is only an expression inside a class body, so the snippet has to
+  // carry one. A build with `class` and no `@` fails it and leaves `@`
+  // an operator, which is the right answer there.
+  ['at-self', 'class __C\n  function m() return @x end\nend'],
 ];
 
 const SEP = '\u0001';

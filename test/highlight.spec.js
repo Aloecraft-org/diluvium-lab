@@ -65,6 +65,16 @@ test.describe('the highlight reproduces the source exactly', () => {
     'n += 1 s ..= "x" k //= 2',
     'a = b?.c ?? d?[1]',
     '~function hidden(s) return s end',
+    'map(xs, |x| x * 2)',
+    'local thunk = || compute()',
+    'local m = a | b',
+    'function price(qty, rate) <deterministic> return qty * rate end',
+    'function deposit(amt) @balance += amt return @:self() end',
+    'local t = {...defaults, ...overrides}',
+    'local function g(...) return ... end',
+    'const RATE = 0.05d',
+    'name = users?[id]?:display()',
+    'xs[2:5]',
   ];
 
   for (const src of SAMPLES) {
@@ -511,9 +521,57 @@ test.describe('the forms past stock Lua, switched on', () => {
     expect(await oneOf(page, 'x = 1 _G', 'number')).toEqual(['1']);
   });
 
+  test('lambdas, and the bitwise or they have to be told apart from', async ({ page }) => {
+    await openLab(page);
+    // Both bars belong to the lambda; the parameters between are ordinary.
+    expect(await oneOf(page, 'map(xs, |x| x * 2)', 'lambda-bar')).toEqual(['|', '|']);
+    expect(await oneOf(page, 'sort(t, |a, b| a.score > b.score)', 'lambda-bar')).toEqual(['|', '|']);
+    expect(await oneOf(page, 'local thunk = || compute()', 'lambda-bar')).toEqual(['|', '|']);
+    // `a | b` has a name after the bar and no closing bar, and `f(x) | y`
+    // follows a `)`. Neither is a lambda and neither may be painted as one.
+    expect(await oneOf(page, 'local m = a | b', 'lambda-bar')).toEqual([]);
+    expect(await oneOf(page, 'local n = f(x) | y', 'lambda-bar')).toEqual([]);
+  });
+
+  test('a function attribute, and the comparison it must not swallow', async ({ page }) => {
+    await openLab(page);
+    expect(await oneOf(page, 'function price(q, r) <deterministic> return q end', 'attribute'))
+      .toEqual(['<deterministic>']);
+    // The attribute only follows a `)`, which is what the freeness
+    // argument rests on and what keeps this from being one.
+    expect(await oneOf(page, 'if a < b and c > d then end', 'attribute')).toEqual([]);
+    expect(await oneOf(page, 'x = a<b>c', 'attribute')).toEqual([]);
+  });
+
+  test('@ is self, and the name after it is still a field', async ({ page }) => {
+    await openLab(page);
+    const tokens = await tokensWithAll(page, 'function deposit(amt) @balance += amt end');
+    expect(tokens.filter((t) => t.type === 'self-sugar').map((t) => t.text)).toEqual(['@']);
+    expect(tokens.some((t) => t.type === 'ident' && t.text === 'balance')).toBe(true);
+    expect(await oneOf(page, 'return @:render()', 'self-sugar')).toEqual(['@']);
+  });
+
+  test('spread is told apart from vararg', async ({ page }) => {
+    await openLab(page);
+    expect(await oneOf(page, 'f(a, ...args)', 'spread')).toEqual(['...']);
+    // A constructor opens and then spreads; the operator run must not
+    // swallow `{...` whole.
+    expect(await oneOf(page, 'local t = {...defaults, ...overrides}', 'spread'))
+      .toEqual(['...', '...']);
+    // A bare `...` is the vararg it has always been.
+    expect(await oneOf(page, 'local function g(...) return ... end', 'spread')).toEqual([]);
+  });
+
+  test('a literal suffix belongs to the numeral', async ({ page }) => {
+    await openLab(page);
+    expect(await oneOf(page, 'const RATE = 0.05d', 'number')).toEqual(['0.05d']);
+    expect(await oneOf(page, 'x = 1.23d + 4', 'number')).toEqual(['1.23d', '4']);
+  });
+
   test('the safe-navigation family, compound assignment and ~function', async ({ page }) => {
     await openLab(page);
     expect(await oneOf(page, 'a = b?.c ?? d?[1]', 'null-safe')).toEqual(['?.', '??', '?[']);
+    expect(await oneOf(page, 'name = users?:display() or a?(1)', 'null-safe')).toEqual(['?:', '?(']);
     expect(await oneOf(page, 'n += 1 s ..= "x" k //= 2 m <<= 3', 'compound-assign'))
       .toEqual(['+=', '..=', '//=', '<<=']);
     expect(await oneOf(page, '~function hidden() end', 'secure')).toEqual(['~']);
@@ -546,14 +604,33 @@ test.describe('a form is dark until the build has it', () => {
     // are in it: `a?.b`, `n += 1` and `~function f() end` all compile.
     expect(syntax).toEqual(expect.arrayContaining(['optional', 'compound', 'secure']));
 
-    // These are not, and that is the point of the probe rather than a
-    // version check. Regex literals land in build13, and separators and
-    // `0b` are session A's Tier A work; each turns on here by the pin
-    // moving, with nothing in this repository edited. When one of them
+    // Everything else is not, and that is the point of the probe rather
+    // than a version check. Regex literals land in build13; the rest are
+    // session A's Tier A, B and C work. Each turns on here by the pin
+    // moving, with nothing in this repository edited. When one of these
     // starts failing, the pin moved -- move the name up a line.
-    expect(syntax).not.toContain('regex');
-    expect(syntax).not.toContain('separators');
-    expect(syntax).not.toContain('binary');
+    for (const form of ['regex', 'separators', 'binary', 'suffix', 'optional-call',
+      'spread', 'lambda', 'attribute', 'at-self']) {
+      expect(syntax, `${form} should not be in build10`).not.toContain(form);
+    }
+    // `?.` and `?[` are in this build and `?:` and `?(` are not, which is
+    // why they are two flags: one would paint a syntax error.
+    expect(syntax).toContain('optional');
+  });
+
+  test('the contextual keywords the proposals doc adds are not here yet', async ({ page }) => {
+    await openLab(page);
+    const keywords = await page.evaluate(() => window.lab.language.keywords);
+    // Each is still an ordinary identifier on build10, so it must read as
+    // one. These flip on with session A's Tier A, B and C milestones.
+    for (const word of ['continue', 'const', 'export', 'class']) {
+      expect(keywords, `${word} is not a build10 keyword`).not.toContain(word);
+      expect(await typesIn(page, `${word} = 1`, word)).toEqual(['ident']);
+    }
+    // The four this build does have are unaffected by the new probes.
+    for (const word of ['switch', 'defer', 'with', 'global']) {
+      expect(keywords).toContain(word);
+    }
   });
 
   test('a form this build lacks draws nothing in a cell', async ({ page }) => {

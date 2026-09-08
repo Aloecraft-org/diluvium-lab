@@ -3562,6 +3562,52 @@ that — which is why the separator is `::` in the first place.
 **The two name lists have to agree.** A form named `separators` in the
 probe list and `separator` in the tokenizer is a form that can never
 light up, and nothing anywhere would say so. A test compares the lists.
+### A second pass, once the specs arrived
+
+The first pass above was drafted without them: `diluvium-syntax-proposals.md`
+was committed in neither repository, so the forms came from the ones
+section 4 of the plan happens to name and from the language that had
+already shipped. Five forms were left undrafted on purpose, because a
+guessed notation buys a probe that either never fires or fires on the
+wrong thing.
+
+With the doc in hand they are drafted, and the shape of what is worth
+colouring turned out to be narrower than the form count suggests. Of the
+proposals doc's twenty-odd forms, most introduce no token at all.
+Destructuring is braces and identifiers; `if`-expressions are keywords
+that are already keywords; default parameters are an `=` in a place the
+parser cares about and the scanner does not. A tokenizer sees the ones
+that add a *character*, and those are now all here: lambdas, spread, the
+`@` of a class body, function attributes, literal suffixes, and the
+`?:`/`?(` half of the safe-navigation family.
+
+Two of them needed a rule rather than a pattern, and both rules come
+straight out of the freeness arguments the proposals doc makes for them.
+
+**`|` is a lambda only where an expression can begin.** Everywhere else
+it is bitwise or, and `a | b` must stay that. The test is the one a regex
+literal needs in other languages — look at what came before — plus a
+second, stronger one: the whole `|params|` shape has to match, and
+`a | b` has a name after the bar and no closing bar, so it never does.
+
+**An attribute only follows a `)`.** That is precisely the freeness claim
+in §4.6: after `)` a block begins and `<` cannot start a statement. Take
+the position away and `f(x) < b > c` is a function attribute, which it is
+not. The position is not decoration around the rule, it *is* the rule.
+
+The split that says the most about why this is probed rather than
+declared: `?.` and `?[` are in build10 and `?:` and `?(` are not, though
+§3.4 lists all four as one form. So they are two flags. One flag would
+paint `a?:m()` as safe navigation on a build where it is a syntax error,
+which is the failure this whole mechanism exists to avoid.
+
+And one disagreement the Lab declines to settle: §2 of the proposals doc
+lists literal suffixes as shipped, and `doc/Guide.md` says `1.23d`-style
+literals do not exist. `suffix` is a probe like every other form, it
+reports absent on build10, and which document is wrong is recorded in
+`doc/v0.6.0_session_c_coordination.md` for session A rather than guessed
+at here.
+
 ### What it weighs
 
 C1 asks for the web profile's size before the numeric work and after each
@@ -3575,9 +3621,13 @@ threshold yet; there is no build carrying it.
 ### Still not done
 
 C2 and C3 wait on other sessions by design — B4's cross-target examples
-do not exist, and the notebook C3 asks for needs A5's FFT. And the forms
-whose notation the plan names but does not spell out (`@` for `self`,
-`<deterministic>`, lambdas, destructuring, `__slice`) are not drafted:
-the syntax proposals doc is committed in neither repository, and a
-guessed notation buys a probe that either never fires or fires on the
-wrong thing.
+do not exist, and the notebook C3 asks for needs A5's FFT.
+
+Slicing (`xs[2:5]`) is the one form with a visible token that is still
+undrafted: telling its `:` from a method call's needs bracket depth,
+which this scanner does not track, and the colour it would add is small
+next to that. `extends`, `static` and `super` are left out for the
+opposite reason — they are ordinary identifiers outside a class body and
+the tokenizer cannot tell it is inside one. Both are recorded in
+`doc/v0.6.0_session_c_coordination.md` with the reasoning, rather than
+being quietly absent.
