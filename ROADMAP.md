@@ -3562,3 +3562,22 @@ that — which is why the separator is `::` in the first place.
 **The two name lists have to agree.** A form named `separators` in the
 probe list and `separator` in the tokenizer is a form that can never
 light up, and nothing anywhere would say so. A test compares the lists.
+### What it weighs
+
+C1 asks for the web profile's size before the numeric work and after each
+pin move, gzipped, in one table. `README.md` has the table and
+`scripts/size-ledger.mjs` prints the row, because a number nobody can
+re-take is a claim rather than a measurement. The baseline row is
+`v5.5.1_build10`, the last pin before a `numeric` feature exists, so the
+next row is what that feature costs. Nothing to flag against the 500 KB
+threshold yet; there is no build carrying it.
+
+### Still not done
+
+C2 and C3 wait on other sessions by design — B4's cross-target examples
+do not exist, and the notebook C3 asks for needs A5's FFT. And the forms
+whose notation the plan names but does not spell out (`@` for `self`,
+`<deterministic>`, lambdas, destructuring, `__slice`) are not drafted:
+the syntax proposals doc is committed in neither repository, and a
+guessed notation buys a probe that either never fires or fires on the
+wrong thing.
