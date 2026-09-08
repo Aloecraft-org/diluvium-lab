@@ -111,6 +111,34 @@ export const CONTEXTUAL_CANDIDATES = [
   ['global', 'global x = 1'],
 ];
 
+/**
+ * Syntax the highlighter has to *see* rather than words it can look up,
+ * each with a snippet that compiles if and only if the build has the form.
+ *
+ * The keyword probes above answer "is this word reserved". These answer
+ * "does this build have this notation", which is a different question and
+ * the only one that can be asked about a backtick. Every snippet is a
+ * syntax error in stock Lua -- that is the compatibility rule the forms
+ * are designed to, so it is also what makes the probe decisive -- and the
+ * list degrades the same safe way: a build without a form compiles
+ * nothing, and the form draws nothing.
+ *
+ * The names are `SYNTAX_FORMS` in `notebook/highlight.js`; a test asserts
+ * the two lists still say the same thing, because a name that matches
+ * nothing would be a form that silently never lights up.
+ *
+ * Nothing here is ever *run*: `load` compiles, and the probe reads the
+ * result rather than calling it.
+ */
+export const SYNTAX_CANDIDATES = [
+  ['regex', 'return `x`'],
+  ['separators', 'return 1_0'],
+  ['binary', 'return 0b1'],
+  ['optional', 'local a = nil local b = a?.x local c = a ?? 1'],
+  ['compound', 'local a = 1 a += 1'],
+  ['secure', '~function __probe() end'],
+];
+
 const SEP = '\u0001';
 
 export function makeNonce() {
@@ -877,8 +905,10 @@ ${emit(RECORD.BYTECODE, '__s')}
  */
 export function languageInfoChunk(candidates, nonce) {
   const list = candidates.map((w) => `"${w}"`).join(', ');
-  const contextual = CONTEXTUAL_CANDIDATES
-    .map(([word, snippet]) => `{ "${word}", ${luaLongString(snippet)} }`).join(', ');
+  const probe = (pairs) => pairs
+    .map(([name, snippet]) => `{ "${name}", ${luaLongString(snippet)} }`).join(', ');
+  const contextual = probe(CONTEXTUAL_CANDIDATES);
+  const forms = probe(SYNTAX_CANDIDATES);
   return `local __N = "${nonce}"
 ${DISPLAY_LUA}
 local __reserved, __seen = {}, {}
@@ -897,6 +927,12 @@ end
 for _, __p in ipairs({ ${contextual} }) do
   if load(__p[2], "=probe", "t") then __keyword(__p[1]) end
 end
+-- The same probe, asking about notation rather than words. A form the
+-- build does not have simply fails to compile and is left out.
+local __syntax = {}
+for _, __p in ipairs({ ${forms} }) do
+  if load(__p[2], "=probe", "t") then __syntax[#__syntax + 1] = __p[1] end
+end
 local __globals = {}
 for __k in pairs(_G) do
   -- The registry is the normal home for the Lab's own state; _G is the
@@ -909,6 +945,7 @@ end
 table.sort(__reserved)
 table.sort(__globals)
 local __s = _VERSION .. "\\1" .. table.concat(__reserved, " ") .. "\\1" .. table.concat(__globals, " ")
+  .. "\\1" .. table.concat(__syntax, " ")
 ${emit(RECORD.LANGUAGE, '__s')}
 `;
 }
