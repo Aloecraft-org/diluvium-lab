@@ -53,6 +53,28 @@ test.describe('the highlight reproduces the source exactly', () => {
     '$"just an fstring"',
     '$"unclosed {expr',
     'print("]]") --[[x]]',
+    // The 5.5 forms. These round trip whether or not the running build
+    // has them: a form the build lacks is scanned as the operators and
+    // identifiers it is there, and either way every character comes back.
+    '`(\\d{4})-(\\d{2})-(\\d{2})`',
+    '`a``b`',
+    'x = `unterminated\nprint(1)',
+    '$"total: ${amount::%.2f}"',
+    '$"[{qty::%-10s}]"',
+    'x = 1_000_000 + 0b1010',
+    'n += 1 s ..= "x" k //= 2',
+    'a = b?.c ?? d?[1]',
+    '~function hidden(s) return s end',
+    'map(xs, |x| x * 2)',
+    'local thunk = || compute()',
+    'local m = a | b',
+    'function price(qty, rate) <deterministic> return qty * rate end',
+    'function deposit(amt) @balance += amt return @:self() end',
+    'local t = {...defaults, ...overrides}',
+    'local function g(...) return ... end',
+    'const RATE = 0.05d',
+    'name = users?[id]?:display()',
+    'xs[2:5]',
   ];
 
   for (const src of SAMPLES) {
@@ -420,5 +442,223 @@ test.describe('the keyword set comes from the kernel', () => {
     expect(asName.result).toBe('1');
     expect(await page.evaluate(() => window.lab.language.keywords)).toContain('switch');
     expect(await typesIn(page, 'switch x do end', 'switch')).toEqual(['keyword']);
+  });
+});
+
+
+// ---------------------------------------------------------------------
+// The forms past stock Lua.
+//
+// Each one is behind a name the *running kernel* was asked to compile, so
+// these tests come in two halves: what the tokenizer does when a form is
+// switched on, and what the page does with the build it actually has.
+// The second half is the one that matters -- it is what stops a form
+// drafted ahead of the compiler from colouring source that will not run.
+// ---------------------------------------------------------------------
+
+/** Tokenize with every form this file knows switched on. */
+const tokensWithAll = (page, src) => page.evaluate(async (s) => {
+  const { tokenize, SYNTAX_FORMS } = await import('./src/notebook/highlight.js');
+  const options = { ...window.lab.language, syntax: SYNTAX_FORMS };
+  return tokenize(s, options).map((t) => ({ type: t.type, text: s.slice(t.start, t.end) }));
+}, src);
+
+const oneOf = async (page, src, type) =>
+  (await tokensWithAll(page, src)).filter((t) => t.type === type).map((t) => t.text);
+
+test.describe('the forms past stock Lua, switched on', () => {
+  test('a regex literal is one token, and a doubled backtick does not close it', async ({ page }) => {
+    await openLab(page);
+    expect(await oneOf(page, 'local ymd = `(\\d{4})-(\\d{2})`', 'regex'))
+      .toEqual(['`(\\d{4})-(\\d{2})`']);
+    expect(await oneOf(page, 'local t = `a``b`', 'regex')).toEqual(['`a``b`']);
+  });
+
+  test('an unterminated regex stops at the line rather than eating the file', async ({ page }) => {
+    await openLab(page);
+    const tokens = await tokensWithAll(page, 'x = `oops\nprint(1)');
+    expect(tokens.find((t) => t.type === 'regex').text).toBe('`oops');
+    // the next line is still code
+    expect(tokens.some((t) => t.type === 'builtin' && t.text === 'print')).toBe(true);
+  });
+
+  test('an apostrophe inside a regex is pattern, not the start of a string', async ({ page }) => {
+    await openLab(page);
+    // Without the literal this scans as a `'` opening a string that runs
+    // to the end of the line, which is the visible bug it fixes.
+    const tokens = await tokensWithAll(page, "x = `it's` print(1)");
+    expect(tokens.find((t) => t.type === 'regex').text).toBe("`it's`");
+    expect(tokens.some((t) => t.type === 'builtin' && t.text === 'print')).toBe(true);
+  });
+
+  test('a format spec is not code', async ({ page }) => {
+    await openLab(page);
+    // `%-10s` tokenized as Lua is an operator, a number and an
+    // identifier, and it is none of those -- it goes to string.format.
+    expect(await oneOf(page, '$"[{name::%-10s}]"', 'format-spec')).toEqual(['::%-10s']);
+    expect(await oneOf(page, '$"{pi::%.2f}"', 'format-spec')).toEqual(['::%.2f']);
+    // A single colon is still a method call, and stays code.
+    const method = await tokensWithAll(page, '$"{obj:name()}"');
+    expect(method.some((t) => t.type === 'format-spec')).toBe(false);
+    expect(method.some((t) => t.type === 'ident' && t.text === 'name')).toBe(true);
+  });
+
+  test('the dollar before an interpolation is literal text', async ({ page }) => {
+    await openLab(page);
+    // `$"total: ${t::%.2f}"` prints a dollar sign; only the `$"` opens.
+    const tokens = await tokensWithAll(page, '$"total: ${t::%.2f}"');
+    expect(tokens[0]).toEqual({ type: 'string-prefix', text: '$"' });
+    expect(tokens[1]).toEqual({ type: 'string', text: 'total: $' });
+  });
+
+  test('separators and binary literals are part of the number', async ({ page }) => {
+    await openLab(page);
+    expect(await oneOf(page, 'x = 1_000_000', 'number')).toEqual(['1_000_000']);
+    expect(await oneOf(page, 'x = 0b1010', 'number')).toEqual(['0b1010']);
+    expect(await oneOf(page, 'x = 0xFF_FF', 'number')).toEqual(['0xFF_FF']);
+    // The underscore has to sit between digits, or `x = 1` next to `_G`
+    // would be one token.
+    expect(await oneOf(page, 'x = 1 _G', 'number')).toEqual(['1']);
+  });
+
+  test('lambdas, and the bitwise or they have to be told apart from', async ({ page }) => {
+    await openLab(page);
+    // Both bars belong to the lambda; the parameters between are ordinary.
+    expect(await oneOf(page, 'map(xs, |x| x * 2)', 'lambda-bar')).toEqual(['|', '|']);
+    expect(await oneOf(page, 'sort(t, |a, b| a.score > b.score)', 'lambda-bar')).toEqual(['|', '|']);
+    expect(await oneOf(page, 'local thunk = || compute()', 'lambda-bar')).toEqual(['|', '|']);
+    // `a | b` has a name after the bar and no closing bar, and `f(x) | y`
+    // follows a `)`. Neither is a lambda and neither may be painted as one.
+    expect(await oneOf(page, 'local m = a | b', 'lambda-bar')).toEqual([]);
+    expect(await oneOf(page, 'local n = f(x) | y', 'lambda-bar')).toEqual([]);
+  });
+
+  test('a function attribute, and the comparison it must not swallow', async ({ page }) => {
+    await openLab(page);
+    expect(await oneOf(page, 'function price(q, r) <deterministic> return q end', 'attribute'))
+      .toEqual(['<deterministic>']);
+    // The attribute only follows a `)`, which is what the freeness
+    // argument rests on and what keeps this from being one.
+    expect(await oneOf(page, 'if a < b and c > d then end', 'attribute')).toEqual([]);
+    expect(await oneOf(page, 'x = a<b>c', 'attribute')).toEqual([]);
+  });
+
+  test('@ is self, and the name after it is still a field', async ({ page }) => {
+    await openLab(page);
+    const tokens = await tokensWithAll(page, 'function deposit(amt) @balance += amt end');
+    expect(tokens.filter((t) => t.type === 'self-sugar').map((t) => t.text)).toEqual(['@']);
+    expect(tokens.some((t) => t.type === 'ident' && t.text === 'balance')).toBe(true);
+    expect(await oneOf(page, 'return @:render()', 'self-sugar')).toEqual(['@']);
+  });
+
+  test('spread is told apart from vararg', async ({ page }) => {
+    await openLab(page);
+    expect(await oneOf(page, 'f(a, ...args)', 'spread')).toEqual(['...']);
+    // A constructor opens and then spreads; the operator run must not
+    // swallow `{...` whole.
+    expect(await oneOf(page, 'local t = {...defaults, ...overrides}', 'spread'))
+      .toEqual(['...', '...']);
+    // A bare `...` is the vararg it has always been.
+    expect(await oneOf(page, 'local function g(...) return ... end', 'spread')).toEqual([]);
+  });
+
+  test('a literal suffix belongs to the numeral', async ({ page }) => {
+    await openLab(page);
+    expect(await oneOf(page, 'const RATE = 0.05d', 'number')).toEqual(['0.05d']);
+    expect(await oneOf(page, 'x = 1.23d + 4', 'number')).toEqual(['1.23d', '4']);
+  });
+
+  test('the safe-navigation family, compound assignment and ~function', async ({ page }) => {
+    await openLab(page);
+    expect(await oneOf(page, 'a = b?.c ?? d?[1]', 'null-safe')).toEqual(['?.', '??', '?[']);
+    expect(await oneOf(page, 'name = users?:display() or a?(1)', 'null-safe')).toEqual(['?:', '?(']);
+    expect(await oneOf(page, 'n += 1 s ..= "x" k //= 2 m <<= 3', 'compound-assign'))
+      .toEqual(['+=', '..=', '//=', '<<=']);
+    expect(await oneOf(page, '~function hidden() end', 'secure')).toEqual(['~']);
+    // The same characters elsewhere are the operators they have always been.
+    expect(await oneOf(page, 'if a >= b and c ~= d then end', 'compound-assign')).toEqual([]);
+    expect(await oneOf(page, 'x = ~y', 'secure')).toEqual([]);
+  });
+});
+
+test.describe('a form is dark until the build has it', () => {
+  test('the probe names and the tokenizer names are the same list', async ({ page }) => {
+    await openLab(page);
+    // A name in one and not the other is a form that can never light up,
+    // and nothing else would say so.
+    const { probed, known } = await page.evaluate(async () => {
+      const [{ SYNTAX_CANDIDATES }, { SYNTAX_FORMS }] = await Promise.all([
+        import('./src/kernel/lua-harness.js'),
+        import('./src/notebook/highlight.js'),
+      ]);
+      return { probed: SYNTAX_CANDIDATES.map(([name]) => name), known: SYNTAX_FORMS };
+    });
+    expect([...probed].sort()).toEqual([...known].sort());
+  });
+
+  test('the running build reports the forms it actually parses', async ({ page }) => {
+    await openLab(page);
+    const syntax = await page.evaluate(() => window.lab.language.syntax);
+
+    // Measured against the pinned 5.5.1_build10, not assumed. These three
+    // are in it: `a?.b`, `n += 1` and `~function f() end` all compile.
+    expect(syntax).toEqual(expect.arrayContaining(['optional', 'compound', 'secure']));
+
+    // Everything else is not, and that is the point of the probe rather
+    // than a version check. Regex literals land in build13; the rest are
+    // session A's Tier A, B and C work. Each turns on here by the pin
+    // moving, with nothing in this repository edited. When one of these
+    // starts failing, the pin moved -- move the name up a line.
+    for (const form of ['regex', 'separators', 'binary', 'suffix', 'optional-call',
+      'spread', 'lambda', 'attribute', 'at-self']) {
+      expect(syntax, `${form} should not be in build10`).not.toContain(form);
+    }
+    // `?.` and `?[` are in this build and `?:` and `?(` are not, which is
+    // why they are two flags: one would paint a syntax error.
+    expect(syntax).toContain('optional');
+  });
+
+  test('the contextual keywords the proposals doc adds are not here yet', async ({ page }) => {
+    await openLab(page);
+    const keywords = await page.evaluate(() => window.lab.language.keywords);
+    // Each is still an ordinary identifier on build10, so it must read as
+    // one. These flip on with session A's Tier A, B and C milestones.
+    for (const word of ['continue', 'const', 'export', 'class']) {
+      expect(keywords, `${word} is not a build10 keyword`).not.toContain(word);
+      expect(await typesIn(page, `${word} = 1`, word)).toEqual(['ident']);
+    }
+    // The four this build does have are unaffected by the new probes.
+    for (const word of ['switch', 'defer', 'with', 'global']) {
+      expect(keywords).toContain(word);
+    }
+  });
+
+  test('a form this build lacks draws nothing in a cell', async ({ page }) => {
+    await openLab(page);
+    const cell = codeCell(page);
+    await cell.locator('[data-editor]').fill('local re = `\\d+`');
+    await expect(cell.locator('.editor-highlight')).toHaveText('local re = `\\d+`');
+    // build10 has no regex literal, so nothing may claim to be one.
+    await expect(cell.locator('.editor-highlight .tok-regex')).toHaveCount(0);
+    // and the forms it does have are painted
+    await cell.locator('[data-editor]').fill('count += 1');
+    await expect(cell.locator('.editor-highlight .tok-compound-assign')).toHaveText('+=');
+  });
+
+  test('every probe snippet round trips through the tokenizer', async ({ page }) => {
+    await openLab(page);
+    // A snippet the highlighter mangles is a form whose own probe would
+    // misalign the caret the moment the build grows it.
+    const bad = await page.evaluate(async () => {
+      const [{ SYNTAX_CANDIDATES }, { plainTextOf, SYNTAX_FORMS }] = await Promise.all([
+        import('./src/kernel/lua-harness.js'),
+        import('./src/notebook/highlight.js'),
+      ]);
+      const options = { ...window.lab.language, syntax: SYNTAX_FORMS };
+      return SYNTAX_CANDIDATES
+        .filter(([, snippet]) => plainTextOf(snippet, options) !== snippet)
+        .map(([name]) => name);
+    });
+    expect(bad).toEqual([]);
   });
 });

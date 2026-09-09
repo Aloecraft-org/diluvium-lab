@@ -941,6 +941,28 @@ DILUVIUM_RELEASE_BASE=https://github.com/Aloecraft-org/diluvium/releases/downloa
 Diluvium itself is never built here — the Lab consumes published release
 artifacts.
 
+## What it weighs
+
+The web profile's size, measured rather than remembered, so that a pin
+move which adds half a megabyte says so on the way in rather than on
+someone's phone. `node scripts/size-ledger.mjs` prints the row for the
+current pin; run `npm run bake` first or the last column has nothing to
+measure. Raw bytes / `gzip -9` bytes.
+
+| pin | kernel | swarm module | single-file build |
+|---|---|---|---|
+| `v5.5.1_build10` | 1,166,954 / 378,001 | 1,182,275 / 383,587 | 2,473,078 / 783,379 |
+
+That row is the baseline for the September numeric work: it is the last
+pin *before* a `numeric` feature exists, so the next row is what the
+feature costs. The threshold agreed with the other sessions is 500 KB
+gzipped on the kernel module — past that the number gets recorded and
+flagged rather than quietly absorbed, and which profile carries `numeric`
+is not this repository's call to make.
+
+`drt_web.tar.gz` is diluvium-drt's artifact and is not carried here; it
+gets a column when a pin brings one.
+
 ## Where this is going
 
 `ROADMAP.md` carries the staging, the decisions already made, and the

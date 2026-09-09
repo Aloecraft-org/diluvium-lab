@@ -25,7 +25,7 @@ import { SWARM_PROGRAMS, ALL_PROGRAMS, programById } from './notebook/swarm-prog
 import { renderMenuBar, renderDrawer, attachDropdown } from './notebook/menu.js';
 import { fetchNotebook, hostOf, describeOpenError, normaliseNotebookUrl } from './notebook/remote.js';
 import { EXAMPLES, exampleById } from './notebook/examples.js';
-import { FALLBACK_KEYWORDS, FALLBACK_GLOBALS } from './notebook/highlight.js';
+import { FALLBACK_KEYWORDS, FALLBACK_GLOBALS, FALLBACK_SYNTAX } from './notebook/highlight.js';
 import { RuntimeRegistry, PINNED } from './kernel/runtimes.js';
 import { LAB_VERSION, LAB_COMMIT } from './version.js';
 // `BUNDLED`, not `PINNED`: runtimes.js already exports a `PINNED` (the
@@ -140,7 +140,12 @@ export class App {
 
     // Filled in from the running kernel once it starts. Until then the
     // highlighter falls back to stock Lua 5.4, which is what 5.4.7 is.
-    this.language = { keywords: FALLBACK_KEYWORDS, globals: FALLBACK_GLOBALS, version: null };
+    this.language = {
+      keywords: FALLBACK_KEYWORDS,
+      globals: FALLBACK_GLOBALS,
+      syntax: FALLBACK_SYNTAX,
+      version: null,
+    };
     const languageInfo = () => this.language;
 
     this.view = new NotebookView(document_.querySelector('[data-cells]'), this.model, {

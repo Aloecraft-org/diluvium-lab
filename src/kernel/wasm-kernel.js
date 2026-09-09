@@ -887,11 +887,14 @@ export class WasmKernel extends Kernel {
     const run = this._runHarness(languageInfoChunk(KEYWORD_CANDIDATES, nonce), nonce);
     if (run.thrown) { this._die(run.thrown); return null; }
     if (!run.record || run.record.kind !== RECORD.LANGUAGE) return null;
-    const [version, keywords, globals] = splitPayload(run.record.payload);
+    const [version, keywords, globals, syntax] = splitPayload(run.record.payload);
     return {
       version,
       keywords: keywords ? keywords.split(' ') : [],
       globals: globals ? globals.split(' ') : [],
+      // The forms this build parses, from the probes rather than the tag:
+      // a Lab pointed at an older runtime highlights the older language.
+      syntax: syntax ? syntax.split(' ') : [],
     };
   }
 

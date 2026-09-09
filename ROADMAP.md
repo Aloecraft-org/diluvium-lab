@@ -3502,3 +3502,132 @@ needs build10 or newer; today an older pin simply denies the call, which
 is honest but late. And the listener composer shows a reply's headers on
 the exchange it completes, but there is no way to *drive* a response
 header from the panel -- the composer sends requests, not replies.
+
+## The 5.5 forms, coloured only where they parse
+
+`doc/Plan-2026-09.md` hands this repository section 6: colour the syntax
+the September language work adds, and colour *only* what has actually
+landed. The plan's answer to the second half is that this session reads
+session A's `## Status` and prunes the draft to it.
+
+That answer does not survive the runtime dropdown, which is a thing this
+Lab has and the homepage does not. The page can be pointed at build10 or
+at build13; "what has landed" is a different answer per page load, not a
+line in a document. And on the day this ran, A's `## Status` was empty —
+there is no `numeric-syntax` branch in diluvium yet — so a prose prune
+would have deleted the draft entirely and left the Lab colouring nothing
+it did not already colour.
+
+So the prune is a probe. `SYNTAX_CANDIDATES` in `kernel/lua-harness.js`
+carries one snippet per form, the kernel is asked to `load` each, and
+`options.syntax` in the tokenizer is the set that compiled. This is the
+same move `switch` already needed: a contextual keyword cannot be found
+by asking whether it is reserved, so a snippet is compiled that parses
+only if it is one. Every form here is designed to be a syntax error in
+stock Lua — that is principle 1 of the plan — which is exactly what makes
+the probe decisive rather than a guess.
+
+What the pinned build actually answers, measured rather than assumed:
+
+```
+optional  a?.b, a ?? b        yes
+compound  n += 1, s ..= "x"   yes
+secure    ~function f() end   yes
+regex     `\d+`               no -- landed in build13, pin is build10
+separators 1_000_000          no -- session A, Tier A
+binary    0b1010              no -- session A, Tier A
+```
+
+The last three draw nothing at all today, and turn on by the pin moving
+with nothing in this repository edited. `test/highlight.spec.js` asserts
+both halves: what each form tokenizes to when it is on, and that a cell
+holding `` local re = `\d+` `` has no `.tok-regex` in it on build10.
+
+Three things fell out of writing it.
+
+**A backtick was eating the line.** The plan says regex literals are
+"already there; check before touching them", and for the *homepage*
+grammar half of that is true. In the Lab, `$"..."` was there and
+backticks were not — so `` `it's` `` opened a Lua string at the
+apostrophe and painted the rest of the line as one. A form the tokenizer
+does not know is not neutral; it is wrong in whatever direction its
+characters happen to point.
+
+**A format spec is not code.** `$"{name::%-10s}"` hands everything after
+the `::` to `string.format`, and tokenized as Lua that tail is an
+operator, a number and an identifier. It is now its own token. The single
+`:` stays a method call, because `$"{obj:method()}"` has to keep meaning
+that — which is why the separator is `::` in the first place.
+
+**The two name lists have to agree.** A form named `separators` in the
+probe list and `separator` in the tokenizer is a form that can never
+light up, and nothing anywhere would say so. A test compares the lists.
+### A second pass, once the specs arrived
+
+The first pass above was drafted without them: `diluvium-syntax-proposals.md`
+was committed in neither repository, so the forms came from the ones
+section 4 of the plan happens to name and from the language that had
+already shipped. Five forms were left undrafted on purpose, because a
+guessed notation buys a probe that either never fires or fires on the
+wrong thing.
+
+With the doc in hand they are drafted, and the shape of what is worth
+colouring turned out to be narrower than the form count suggests. Of the
+proposals doc's twenty-odd forms, most introduce no token at all.
+Destructuring is braces and identifiers; `if`-expressions are keywords
+that are already keywords; default parameters are an `=` in a place the
+parser cares about and the scanner does not. A tokenizer sees the ones
+that add a *character*, and those are now all here: lambdas, spread, the
+`@` of a class body, function attributes, literal suffixes, and the
+`?:`/`?(` half of the safe-navigation family.
+
+Two of them needed a rule rather than a pattern, and both rules come
+straight out of the freeness arguments the proposals doc makes for them.
+
+**`|` is a lambda only where an expression can begin.** Everywhere else
+it is bitwise or, and `a | b` must stay that. The test is the one a regex
+literal needs in other languages — look at what came before — plus a
+second, stronger one: the whole `|params|` shape has to match, and
+`a | b` has a name after the bar and no closing bar, so it never does.
+
+**An attribute only follows a `)`.** That is precisely the freeness claim
+in §4.6: after `)` a block begins and `<` cannot start a statement. Take
+the position away and `f(x) < b > c` is a function attribute, which it is
+not. The position is not decoration around the rule, it *is* the rule.
+
+The split that says the most about why this is probed rather than
+declared: `?.` and `?[` are in build10 and `?:` and `?(` are not, though
+§3.4 lists all four as one form. So they are two flags. One flag would
+paint `a?:m()` as safe navigation on a build where it is a syntax error,
+which is the failure this whole mechanism exists to avoid.
+
+And one disagreement the Lab declines to settle: §2 of the proposals doc
+lists literal suffixes as shipped, and `doc/Guide.md` says `1.23d`-style
+literals do not exist. `suffix` is a probe like every other form, it
+reports absent on build10, and which document is wrong is recorded in
+`doc/v0.6.0_session_c_coordination.md` for session A rather than guessed
+at here.
+
+### What it weighs
+
+C1 asks for the web profile's size before the numeric work and after each
+pin move, gzipped, in one table. `README.md` has the table and
+`scripts/size-ledger.mjs` prints the row, because a number nobody can
+re-take is a claim rather than a measurement. The baseline row is
+`v5.5.1_build10`, the last pin before a `numeric` feature exists, so the
+next row is what that feature costs. Nothing to flag against the 500 KB
+threshold yet; there is no build carrying it.
+
+### Still not done
+
+C2 and C3 wait on other sessions by design — B4's cross-target examples
+do not exist, and the notebook C3 asks for needs A5's FFT.
+
+Slicing (`xs[2:5]`) is the one form with a visible token that is still
+undrafted: telling its `:` from a method call's needs bracket depth,
+which this scanner does not track, and the colour it would add is small
+next to that. `extends`, `static` and `super` are left out for the
+opposite reason — they are ordinary identifiers outside a class body and
+the tokenizer cannot tell it is inside one. Both are recorded in
+`doc/v0.6.0_session_c_coordination.md` with the reasoning, rather than
+being quietly absent.

@@ -109,6 +109,55 @@ export const CONTEXTUAL_CANDIDATES = [
   // which the shipped 5.5.1 does -- so it needs both probes to be safe,
   // and appears in the list above as well.
   ['global', 'global x = 1'],
+  // The proposals doc's contextual keywords. Each is still a legal
+  // variable name, so the identifier probe above cannot see any of them.
+  // `extends`, `static` and `super` are deliberately absent: they are
+  // special only inside a class body, and this tokenizer has no notion of
+  // being inside one, so it would be colouring them everywhere.
+  ['continue', 'while true do continue end'],
+  ['const', 'const X = 1'],
+  ['export', 'export function f() end'],
+  ['class', 'class C end'],
+];
+
+/**
+ * Syntax the highlighter has to *see* rather than words it can look up,
+ * each with a snippet that compiles if and only if the build has the form.
+ *
+ * The keyword probes above answer "is this word reserved". These answer
+ * "does this build have this notation", which is a different question and
+ * the only one that can be asked about a backtick. Every snippet is a
+ * syntax error in stock Lua -- that is the compatibility rule the forms
+ * are designed to, so it is also what makes the probe decisive -- and the
+ * list degrades the same safe way: a build without a form compiles
+ * nothing, and the form draws nothing.
+ *
+ * The names are `SYNTAX_FORMS` in `notebook/highlight.js`; a test asserts
+ * the two lists still say the same thing, because a name that matches
+ * nothing would be a form that silently never lights up.
+ *
+ * Nothing here is ever *run*: `load` compiles, and the probe reads the
+ * result rather than calling it.
+ */
+export const SYNTAX_CANDIDATES = [
+  ['regex', 'return `x`'],
+  ['separators', 'return 1_0'],
+  ['binary', 'return 0b1'],
+  // The proposals doc lists literal suffixes as shipped and doc/Guide.md
+  // says decimals do not exist yet. The probe is how that disagreement
+  // gets settled per build rather than argued about.
+  ['suffix', 'return 1.23d'],
+  ['optional', 'local a = nil local b = a?.x local c = a?[1] local d = a ?? 1'],
+  ['optional-call', 'local a = nil local b = a?:m() local c = a?(1)'],
+  ['compound', 'local a = 1 a += 1'],
+  ['secure', '~function __probe() end'],
+  ['spread', 'local a = {} local t = {...a}'],
+  ['lambda', 'local f = |x| x * 2'],
+  ['attribute', 'function __probe() <deterministic> end'],
+  // `@` is only an expression inside a class body, so the snippet has to
+  // carry one. A build with `class` and no `@` fails it and leaves `@`
+  // an operator, which is the right answer there.
+  ['at-self', 'class __C\n  function m() return @x end\nend'],
 ];
 
 const SEP = '\u0001';
@@ -877,8 +926,10 @@ ${emit(RECORD.BYTECODE, '__s')}
  */
 export function languageInfoChunk(candidates, nonce) {
   const list = candidates.map((w) => `"${w}"`).join(', ');
-  const contextual = CONTEXTUAL_CANDIDATES
-    .map(([word, snippet]) => `{ "${word}", ${luaLongString(snippet)} }`).join(', ');
+  const probe = (pairs) => pairs
+    .map(([name, snippet]) => `{ "${name}", ${luaLongString(snippet)} }`).join(', ');
+  const contextual = probe(CONTEXTUAL_CANDIDATES);
+  const forms = probe(SYNTAX_CANDIDATES);
   return `local __N = "${nonce}"
 ${DISPLAY_LUA}
 local __reserved, __seen = {}, {}
@@ -897,6 +948,12 @@ end
 for _, __p in ipairs({ ${contextual} }) do
   if load(__p[2], "=probe", "t") then __keyword(__p[1]) end
 end
+-- The same probe, asking about notation rather than words. A form the
+-- build does not have simply fails to compile and is left out.
+local __syntax = {}
+for _, __p in ipairs({ ${forms} }) do
+  if load(__p[2], "=probe", "t") then __syntax[#__syntax + 1] = __p[1] end
+end
 local __globals = {}
 for __k in pairs(_G) do
   -- The registry is the normal home for the Lab's own state; _G is the
@@ -909,6 +966,7 @@ end
 table.sort(__reserved)
 table.sort(__globals)
 local __s = _VERSION .. "\\1" .. table.concat(__reserved, " ") .. "\\1" .. table.concat(__globals, " ")
+  .. "\\1" .. table.concat(__syntax, " ")
 ${emit(RECORD.LANGUAGE, '__s')}
 `;
 }
