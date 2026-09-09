@@ -3631,3 +3631,85 @@ opposite reason — they are ordinary identifiers outside a class body and
 the tokenizer cannot tell it is inside one. Both are recorded in
 `doc/v0.6.0_session_c_coordination.md` with the reasoning, rather than
 being quietly absent.
+
+## Caught up to session A, which finished while this was open
+
+A ran its whole section — A0 through A6, sixteen commits on
+`numeric-syntax` — and its `## Status` speaks to this repository by name
+at three milestones: "all nine are landed and may be highlighted", "all
+six may be highlighted", and "`class`, `extends`, `static`, `super` and
+`@` may be highlighted".
+
+The first thing that did was **verify the probes without running them**.
+A's freeness corpus is now 25 files under `test/syntax/freeness/`, one
+per form, each a program that stock Lua refuses and Diluvium accepts —
+which is the same artifact as `SYNTAX_CANDIDATES` written from the other
+side. Diffing the two form by form is the check that was not available
+when this branch started, and it found the notations agree everywhere
+except two places where this repository was being needlessly narrow:
+
+- **`@` is not class-only.** The probe here wrapped it in a `class` body,
+  so it required two things to be true. A's `28-at-self.lua` reaches `@`
+  through an ordinary `function counter:bump()`, and the probe now does
+  the same.
+- **`class` was probed with an empty body**, which nothing in A's corpus
+  exercises. It has a field now, like A's does.
+
+Neither was wrong today, because `class` and `@` landed together. Both
+would have been wrong the moment they did not.
+
+The corpus also settles two things this branch had recorded as open. The
+`?:`/`?(` half of safe navigation has **no freeness file**, so splitting
+it from `?.`/`?[` into its own flag was right rather than fussy. And
+there is no literal-suffix file either, which is the proposals doc's §2
+losing its disagreement with `doc/Guide.md`: `1.23d` does not exist.
+
+### Slicing, and the method call underneath it
+
+`xs[2:5]` was the one landed form with a visible token that this branch
+had skipped, on the grounds that telling its colon from a method call's
+needs bracket depth. A landed it, so it is here — and the objection was
+the right one to have had, because the hard case is not depth:
+
+```lua
+local a = xs[2:4]          -- a slice
+local v = t[obj:method()]  -- ordinary Lua, and still is
+```
+
+Both colons sit directly inside `[ ]`. What separates them is what
+follows the name: a method call in index position is `:NAME` and then its
+arguments, and a slice bound is an expression or nothing. So `:g(` is a
+call and `:b]` is a slice, which is the same shape of judgement the
+parser makes and the one place in this file where a scanner is
+approximating one. The tests carry both, and `::` labels and the
+f-string's `::` format spec besides.
+
+### The two keywords that were already here
+
+`extends`, `static` and `super` were left out of the first pass because
+they are special only inside a class body and this tokenizer has no
+notion of being inside one. A's A6 asked for them by name, which tipped
+a trade this file had already made once for `switch`: a keyword that is
+not a reserved word cannot be recognised by position without a parser, so
+it is coloured everywhere or nowhere.
+
+Taking that trade meant giving `case` and `default` snippets too — they
+are exactly as contextual — and **that is where a real gap turned up**.
+Both are in build10. They have been in every build since `switch` landed,
+and the Lab was painting them as identifiers inside its own switch
+statements, because the only probe that can see a body-only keyword is
+one that compiles a body. The keyword count moves from 26 to 28, and the
+test that asserts it as a count rather than a spot check is the reason
+that showed up as a failure rather than as nothing at all.
+
+### Still dark, and correctly so
+
+None of this lights up. `numeric-syntax` is unmerged, the newest tag is
+still `v5.5.1_build13`, and this Lab consumes published release artifacts
+— so the pin stays at build10 and thirteen of the sixteen forms draw
+nothing. That is the mechanism working: the day a release carries A's
+work, the dropdown reaches it and the page colours it, with nothing here
+edited. `<deterministic>` will stay dark longer than the rest by A's own
+reasoning — the determinism verdict it would consult is specified and
+unbuilt, and "a marker asserting a property nothing checks reports a
+falsehood".

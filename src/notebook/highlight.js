@@ -64,12 +64,13 @@ export const FALLBACK_GLOBALS = [
  *   spread       `f(...args)`           spread, as against vararg `...`
  *   lambda       `|x| x * 2`            compact lambdas
  *   attribute    `function f() <pure>`  function attributes
- *   at-self      `@balance`, `@:m()`    `self` sugar inside a class
+ *   at-self      `@balance`, `@:m()`    `self` sugar in a method
+ *   slice        `xs[2:5]`, `xs[:n]`    slicing through `__slice`
  */
 export const SYNTAX_FORMS = [
   'regex', 'separators', 'binary', 'suffix',
   'optional', 'optional-call', 'compound', 'secure',
-  'spread', 'lambda', 'attribute', 'at-self',
+  'spread', 'lambda', 'attribute', 'at-self', 'slice',
 ];
 
 /** Nothing beyond stock Lua, until a build says otherwise. */
@@ -111,6 +112,10 @@ export function tokenize(src, options = {}) {
   const syntax = new Set(options.syntax ?? FALLBACK_SYNTAX);
   const separators = syntax.has('separators');
   const tokens = [];
+  // Open brackets, innermost last. Only the operator scan feeds this:
+  // strings, comments and long brackets are their own tokens and never
+  // reach it, so a `]` inside a comment cannot unbalance it.
+  const brackets = [];
   let i = 0;
 
   const push = (type, start, end) => {
@@ -281,6 +286,21 @@ export function tokenize(src, options = {}) {
     return j;
   }
 
+  /**
+   * Whether the `:` at `at` slices.
+   *
+   * Directly inside `[ ]` a colon is `xs[2:5]` and not a method call --
+   * except that `t[obj:method()]` is ordinary Lua and has to stay one.
+   * A method call in index position is `:NAME` followed by its arguments,
+   * and a slice bound is an expression or nothing, so the two are told
+   * apart by what follows the name: `(`, `{` or a quote makes it a call.
+   */
+  function sliceColonAt(at) {
+    if (!syntax.has('slice') || src[at] !== ':' || src[at + 1] === ':') return false;
+    if (brackets[brackets.length - 1] !== '[') return false;
+    return !/^:\s*[A-Za-z_]\w*\s*[({"']/.test(src.slice(at, at + 48));
+  }
+
   /** Whether a spread -- `...` then a name -- begins at `at`. */
   function spreadAt(at) {
     return syntax.has('spread')
@@ -440,6 +460,12 @@ export function tokenize(src, options = {}) {
       if (match) { push('compound-assign', i, i + match[0].length); i += match[0].length; continue; }
     }
 
+    if (c === ':' && sliceColonAt(i)) {
+      push('slice', i, i + 1);
+      i += 1;
+      continue;
+    }
+
     if (IDENT_START.test(c)) {
       let j = i;
       while (j < src.length && IDENT_PART.test(src[j])) j++;
@@ -457,10 +483,16 @@ export function tokenize(src, options = {}) {
 
     let j = i;
     while (j < src.length && /[-+*/%^#&~|<>=(){}\[\];:,.]/.test(src[j])) {
-      // `{...defaults}` opens a constructor and then spreads. Without
-      // this the run swallows `{...` whole and the spread never gets
-      // its own case above.
-      if (j > i && spreadAt(j)) break;
+      // `{...defaults}` opens a constructor and then spreads, and `xs[:n]`
+      // opens an index and then slices. Without these the run swallows
+      // `{...` and `[:` whole and neither case above is ever reached.
+      if (j > i && (spreadAt(j) || sliceColonAt(j))) break;
+      // The stack has to move with the scan rather than with the token:
+      // the `[` of `xs[:n]` is in this very run, and the `:` after it
+      // needs to know about it.
+      const ch = src[j];
+      if (ch === '[' || ch === '(' || ch === '{') brackets.push(ch);
+      else if (ch === ']' || ch === ')' || ch === '}') brackets.pop();
       j++;
     }
     push('operator', i, Math.max(j, i + 1));

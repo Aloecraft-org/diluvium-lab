@@ -208,8 +208,13 @@ test.describe('the worker is a real boundary', () => {
   test('the language probe still runs, so highlighting survives the move', async ({ page }) => {
     await openLab(page);
     const language = await page.evaluate(() => window.lab.language);
-    expect(language.keywords).toHaveLength(26);
+    // 28 on the pinned build; `test/highlight.spec.js` is where that
+    // number is explained and where it moves when a pin does.
+    expect(language.keywords).toHaveLength(28);
     expect(language.keywords).toContain('switch');
     expect(language.globals).toContain('print');
+    // The syntax probes cross the worker boundary too, and an empty list
+    // here would be a highlighter quietly falling back to stock Lua.
+    expect(language.syntax).toContain('compound');
   });
 });

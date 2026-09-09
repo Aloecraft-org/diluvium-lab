@@ -75,6 +75,8 @@ test.describe('the highlight reproduces the source exactly', () => {
     'const RATE = 0.05d',
     'name = users?[id]?:display()',
     'xs[2:5]',
+    'local a = xs[3:] local b = xs[:2]',
+    'local v = t[obj:method()]',
   ];
 
   for (const src of SAMPLES) {
@@ -401,14 +403,19 @@ test.describe('the keyword set comes from the kernel', () => {
     await openLab(page);
     const language = await page.evaluate(() => window.lab.language);
 
-    // The pinned 5.5.1 build: stock Lua's 22 reserved words plus the four
+    // The pinned 5.5.1 build: stock Lua's 22 reserved words plus six
     // contextual ones. Measured, not assumed -- and a count rather than a
     // spot check, because the failure this guards against is a probe that
     // quietly stops finding things.
+    //
+    // It was four until `case` and `default` got snippets of their own.
+    // They are as contextual as `switch` is and had been sitting in
+    // `switch x do case 1 then ... end` uncoloured, because the only
+    // probe that could see them is one that compiles a switch body.
     expect(language.keywords).toContain('local');
     expect(language.keywords).toContain('goto');
-    expect(language.keywords).toHaveLength(26);
-    for (const word of ['switch', 'defer', 'with', 'global']) {
+    expect(language.keywords).toHaveLength(28);
+    for (const word of ['switch', 'case', 'default', 'defer', 'with', 'global']) {
       expect(language.keywords, `${word} should be a 5.5 keyword`).toContain(word);
     }
     // A word nothing reserves stays an identifier, which is what stops
@@ -562,6 +569,21 @@ test.describe('the forms past stock Lua, switched on', () => {
     expect(await oneOf(page, 'local function g(...) return ... end', 'spread')).toEqual([]);
   });
 
+  test('a slice colon, and the method call it must not swallow', async ({ page }) => {
+    await openLab(page);
+    expect(await oneOf(page, 'local a = xs[2:4]', 'slice')).toEqual([':']);
+    expect(await oneOf(page, 'local b = xs[3:]', 'slice')).toEqual([':']);
+    expect(await oneOf(page, 'local c = xs[:2]', 'slice')).toEqual([':']);
+    // `t[obj:method()]` is ordinary Lua and stays a method call. This is
+    // the whole reason the test is not just "a colon inside brackets".
+    expect(await oneOf(page, 'local v = t[obj:method()]', 'slice')).toEqual([]);
+    expect(await oneOf(page, 'local w = t[f(a):g()]', 'slice')).toEqual([]);
+    // and a colon that is not in an index is untouched
+    expect(await oneOf(page, 'obj:method()', 'slice')).toEqual([]);
+    expect(await oneOf(page, 'goto done ::done::', 'slice')).toEqual([]);
+    expect(await oneOf(page, '$"{pi::%.2f}"', 'slice')).toEqual([]);
+  });
+
   test('a literal suffix belongs to the numeral', async ({ page }) => {
     await openLab(page);
     expect(await oneOf(page, 'const RATE = 0.05d', 'number')).toEqual(['0.05d']);
@@ -610,7 +632,7 @@ test.describe('a form is dark until the build has it', () => {
     // moving, with nothing in this repository edited. When one of these
     // starts failing, the pin moved -- move the name up a line.
     for (const form of ['regex', 'separators', 'binary', 'suffix', 'optional-call',
-      'spread', 'lambda', 'attribute', 'at-self']) {
+      'spread', 'lambda', 'attribute', 'at-self', 'slice']) {
       expect(syntax, `${form} should not be in build10`).not.toContain(form);
     }
     // `?.` and `?[` are in this build and `?:` and `?(` are not, which is
@@ -623,14 +645,18 @@ test.describe('a form is dark until the build has it', () => {
     const keywords = await page.evaluate(() => window.lab.language.keywords);
     // Each is still an ordinary identifier on build10, so it must read as
     // one. These flip on with session A's Tier A, B and C milestones.
-    for (const word of ['continue', 'const', 'export', 'class']) {
+    for (const word of ['continue', 'const', 'export', 'class',
+      'extends', 'static', 'super']) {
       expect(keywords, `${word} is not a build10 keyword`).not.toContain(word);
       expect(await typesIn(page, `${word} = 1`, word)).toEqual(['ident']);
     }
-    // The four this build does have are unaffected by the new probes.
-    for (const word of ['switch', 'defer', 'with', 'global']) {
+    // `case` and `default` are the exception, and they are why the whole
+    // class of body-only keywords was worth probing: they shipped with
+    // `switch` and the Lab had been painting them as identifiers.
+    for (const word of ['switch', 'case', 'default', 'defer', 'with', 'global']) {
       expect(keywords).toContain(word);
     }
+    expect(await typesIn(page, 'switch x do case 1 then end end', 'case')).toEqual(['keyword']);
   });
 
   test('a form this build lacks draws nothing in a cell', async ({ page }) => {

@@ -111,13 +111,22 @@ export const CONTEXTUAL_CANDIDATES = [
   ['global', 'global x = 1'],
   // The proposals doc's contextual keywords. Each is still a legal
   // variable name, so the identifier probe above cannot see any of them.
-  // `extends`, `static` and `super` are deliberately absent: they are
-  // special only inside a class body, and this tokenizer has no notion of
-  // being inside one, so it would be colouring them everywhere.
-  ['continue', 'while true do continue end'],
-  ['const', 'const X = 1'],
+  ['continue', 'for i = 1, 3 do if i == 2 then continue end end'],
+  ['const', 'const RATE = 1'],
   ['export', 'export function f() end'],
-  ['class', 'class C end'],
+  ['class', 'class C\n  x = 0\nend'],
+  // The words that are special only *inside* a construct. Colouring them
+  // means colouring them everywhere, which is the compromise this list
+  // already makes for `switch`: a keyword that is not a reserved word
+  // cannot be recognised by position in a scanner that has no parser.
+  // Session A's A6 status asks for these by name, which is what tipped
+  // the trade -- and a build without the construct fails the snippet and
+  // gets none of them.
+  ['extends', 'local P = {} class C extends P\n  x = 0\nend'],
+  ['static', 'class C\n  static function f() end\nend'],
+  ['super', 'class C\n  function new() super() end\nend'],
+  ['case', 'local x = 1 switch x do\n  case 1 then return "one"\n  default return "other"\nend'],
+  ['default', 'local x = 1 switch x do\n  case 1 then return "one"\n  default return "other"\nend'],
 ];
 
 /**
@@ -154,10 +163,11 @@ export const SYNTAX_CANDIDATES = [
   ['spread', 'local a = {} local t = {...a}'],
   ['lambda', 'local f = |x| x * 2'],
   ['attribute', 'function __probe() <deterministic> end'],
-  // `@` is only an expression inside a class body, so the snippet has to
-  // carry one. A build with `class` and no `@` fails it and leaves `@`
-  // an operator, which is the right answer there.
-  ['at-self', 'class __C\n  function m() return @x end\nend'],
+  // `@` is not class-only: A's own freeness corpus reaches it through an
+  // ordinary `function t:m()`, so the probe does too rather than dragging
+  // `class` in as a second thing that has to be true.
+  ['at-self', 'local t = { n = 0 } function t:bump() @n = @n + 1 return @n end'],
+  ['slice', 'local xs = {1, 2, 3} return xs[2:3], xs[2:], xs[:2]'],
 ];
 
 const SEP = '\u0001';
