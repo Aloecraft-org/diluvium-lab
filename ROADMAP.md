@@ -3780,9 +3780,20 @@ version: 0.14.0rc1     consistency -> "OK: the tree agrees with 0.14.0rc1"      
 The mandated spelling fails and the spelling §1 forbids passes. `validate`
 and `release-check` accept both, so it is `consistency` alone — the command
 the README puts in CI. `-dev.N` was never accepted in either spelling, so
-this blocks §7's whole dev-build tier before its first tag. One line, and
-the widened form was tested against every spelling in §1's table plus the
-legacy one:
+this blocks §7's whole dev-build tier before its first tag.
+
+It reaches diluvium too, and earlier than the renumber does: the regex
+takes `X.Y.Z` or a PEP-440-shaped candidate of it and nothing else, so
+`5.5.1_build14` — diluvium's newest entry today — fails it as surely as
+`0.14.0-rc.1` does. diluvium has no `TECHNO_CHANGELOG` block yet so the
+engine cannot run there at all, but the day it gains one is the day this
+fires, before `v0.15.0` exists to fix it. §10 puts diluvium first in the
+migration order; this is a reason that ordering matters rather than an
+argument against it.
+
+One line, and the widened form was tested against every spelling in §1's
+table plus the legacy one, then against all three committed changelogs —
+it rejects nothing the current regex accepts:
 
 ```python
 r"(\d+\.\d+\.\d+)(?:-(?:dev|alpha|beta|rc)\.\d+|(?:rc|a|b)\d+)?"
