@@ -3644,11 +3644,10 @@ being quietly absent.
 other projects carry. Revision 1 did not name the Lab. Revision 3 does, in
 five places, and settles the two things that were open here.
 
-**This release is `v0.13.0`, and it will be the Lab's first tag** — cut on
-merge, not from a branch, because a published tag is a fact other things
-point at and §1 says one is never respelled afterwards. `CHANGELOG.yaml`
-carries the entry as `unreleased` until then; flipping it to `tagged` with a
-date is part of cutting it. §1's table
+**This release is `v0.13.0`, and it is the Lab's first tag** — cut on the
+merge commit rather than from a branch, because a published tag is a fact
+other things point at and §1 says one is never respelled afterwards. The
+entry sat at `unreleased` until the tag existed. §1's table
 assigns it: every project's first conforming release is a minor bump from
 wherever it already was, and the Lab was at `0.12.0`. §1's stated reason —
 the first conforming release changes artifact filenames — does not apply
@@ -3852,13 +3851,12 @@ is there so that day is a failing expectation rather than a bug report.
 
 §11's stanza, with what this release closed struck through.
 
-- [ ] **Cut `v0.13.0` on merge**, and flip `CHANGELOG.yaml`'s entry from
-      `unreleased` to `tagged` with the date in the same commit
 
 - [x] ~~Version hand-typed in two places~~ — six, and now checked
 - [x] ~~`.technoproj`, and a greenfield `CHANGELOG.yaml`~~ — the engine is
       still §3's open question and is deliberately not vendored
-- [x] ~~Next release is `v0.13.0`~~
+- [x] ~~Next release is `v0.13.0`~~ — cut on the merge commit, entry
+      flipped to `tagged` in the release commit before it
 - [x] ~~Keep parsing `5.5.1_buildN`~~ — it always did; the new scheme's
       spellings are in the ordering table beside the old ones now
 - [ ] **`KERNEL_ARTIFACT` / `SWARM_ARTIFACT` when diluvium renames.** The one
