@@ -748,6 +748,12 @@ recompiling ~900 KB per restart is latency for nothing.
   A build that could name its own reserved words — a `diluvium.keywords`
   table, or any documented list — would turn the probe from guess-and-check
   into a lookup, and is the cheapest coupling available
+- **Which number diluvium renumbers to, and whether the Lab publishes
+  releases at all.** `doc/Alignment.md` is the Aloecraft-wide proposal and
+  is in the repository unedited; the Lab's answer to it — what already
+  conforms, what has to change, and the two things the document gets wrong
+  — is the section at the end of this file. The one item with someone
+  else's deadline on it is upstream artifact renames
 
 ### Stage 2, against the real mirror ✅ done
 
@@ -3631,3 +3637,157 @@ opposite reason — they are ordinary identifiers outside a class body and
 the tokenizer cannot tell it is inside one. Both are recorded in
 `doc/v0.6.0_session_c_coordination.md` with the reasoning, rather than
 being quietly absent.
+
+## The Aloecraft release conventions
+
+`doc/Alignment.md` is in the repository now, verbatim and unedited, so it
+stays diffable against the copies the other repositories will carry. It is
+still a proposal — its own status line says so — and nothing below has been
+applied.
+
+It names diluvium, diluvium-drt, dollup, aloelite and xtrshow. It does not
+name the Lab, and the Lab is in it twice anyway, once on each side of the
+release:
+
+- **As a consumer.** The version scheme in §1 and the artifact names in §4
+  are things this page *reads*: `src/kernel/releases.js` parses tags,
+  orders them for the dropdown, and fetches two artifacts by literal name.
+  A rename upstream is a broken download here, not a cosmetic change there.
+- **As a publisher.** `package.json` says `0.12.0`, no tag has ever been
+  cut, there is no `.technoproj`, no `CHANGELOG.yaml` and no release
+  workflow — only CI. That is xtrshow's position exactly, and it is the
+  reason the Lab has no release mirror entry.
+
+### Where the Lab already conforms, and why it does
+
+Not by luck. `src/version.js` argues for its own version line in the same
+terms §1 does — the Lab's number is the Lab's own, Diluvium's is a recorded
+fact in `vendor/pinned.js` — and it already forbids `0.2.0_rc1` in favour
+of `0.2.0-rc.1`, which is §1's dot rule reached independently. Beyond that:
+
+- `scripts/check-version.mjs` enforces semver on `LAB_VERSION` and rejects
+  the non-sorting spellings. `-dev.7` passes it today.
+- `parseVersion` was written to accept semver *before anything emitted it*,
+  precisely so the day upstream switches, nothing here changes. It does.
+  Measured, over the whole of §1's table:
+
+  ```
+  0.4.0-alpha.1 < 0.4.0-beta.2 < 0.4.0-rc.1 < 0.4.0     as §1 requires
+  0.4.0-dev.104 > 0.4.0-dev.2                            the dot rule holds
+  5.5.1_build10 > 5.5.1_build2                           legacy still right
+  ```
+
+- `SHA256SUMS.txt`, with the extension, is what `fetch-runtime.sh` and
+  `MirrorSource` both already look for — §6 costs this repository nothing.
+- BUILDINFO is already read as the authority over the filename, which is
+  §4's "the name is a handle, not a specification" implemented rather than
+  agreed with.
+
+### Two things the document is wrong or silent about, measured here
+
+**`-dev.<n>` does not sort below `-alpha.1` in SemVer.** §1 claims all five
+spellings "order correctly in both ecosystems". They order correctly in PEP
+440 — `packaging` confirms `0.4.0.dev7 < 0.4.0a1 < 0.4.0b2 < 0.4.0rc1 <
+0.4.0`. SemVer §11.4.3 compares alphanumeric identifiers lexically, so the
+kind words sort `alpha < beta < dev < rc` and a dev build lands *between*
+beta and rc:
+
+```
+0.4.0-dev.7  >  0.4.0-alpha.1     in SemVer, and in this dropdown
+0.4.0.dev7   <  0.4.0a1           in PEP 440
+```
+
+Nothing in §9 depends on it — the dot rule and the `-b<n>` rule both hold —
+and §7 keeps dev builds out of the mirror, so the collision is rare. But
+the Lab is where SemVer ordering is actually implemented, and a document
+that marks two rules **Verified** should not carry an unverified third.
+
+**The renumber inverts the dropdown, and §8 does not say which number to
+pick.** diluvium's checklist says `5.5.1_build14` → "a version diluvium
+owns" and stops there. This page sorts newest-first by core version, so any
+number *below* 5.5.1 puts every new release underneath every legacy tag,
+forever:
+
+```
+v5.5.1_build14 -> v5.5.1_build10 -> v5.4.7_release -> v0.7.0-dev.3 -> v0.6.1-rc.1 -> v0.6.0
+```
+
+That is the real ordering of a plausible post-alignment mirror, measured.
+The newest build is last in the list. Two ways out, and only one of them is
+free: diluvium takes a core above 5.5.1 (`6.0.0`), or this repository grows
+an epoch rule that says the `_buildN` tags are a closed era that sorts
+below everything. The first costs a conversation, the second costs code and
+a permanent special case in a comparator that is currently just SemVer. It
+should be the first, and it has to be decided *before* the tag is cut,
+because a published tag cannot be renamed without breaking its checksums,
+the mirror, `vendor/PINNED_TAG` and the committed bytecode fixtures.
+
+**Also, §4 credits the Lab with a `latest/` dependency it does not have.**
+"dollup's `install.sh` and diluvium-lab's channel default both depend on
+that." The Lab has no channel default and resolves no `latest/` path: it
+reads `releases.json`, and `MirrorSource.list` records `index.latest` into
+a field nothing consumes. What the Lab actually cannot do without is
+`releases.json` itself — a browser cannot enumerate a static directory, so
+the index is the only way the dropdown learns a tag exists. §4's argument
+for keeping versions out of filenames is right; the Lab is not the evidence
+for it, and the mirror must keep publishing an index whatever §4 settles.
+
+### What has to change here
+
+Written in §8's format, so it can be lifted into the document as its
+`### diluvium-lab` stanza once the Lab is admitted to it.
+
+- [ ] Gains a `.technoproj`, `CHANGELOG.yaml` and the shared engine. The
+      Lab's bespoke invariant for `script/checks.py` already exists and is
+      already enforced: `scripts/check-version.mjs`, which is the
+      four-way agreement between `package.json`, `src/version.js`,
+      `index.html`'s meta tag and its inline stale-scripts check. Porting
+      it is not mechanical the way the others are — §3's `stamps` field
+      covers a file, a pattern and a spelling, and this is one value in
+      four places plus an import map stamped with it.
+- [ ] **Tag `v0.12.0`.** `package.json` has said `0.12.0` for some time and
+      no tag exists. This is dollup's drift item with the two sides swapped.
+- [ ] **It has no release workflow** — the same finding as xtrshow, with a
+      difference: the Lab has an artifact. `npm run bake` already emits a
+      self-contained `dist/diluvium-lab.html`, and it is already CI-built
+      and integrity-checked on every push. What is missing is publishing
+      it with a `BUILDINFO.txt` and a `SHA256SUMS.txt` beside it.
+- [ ] Decide the artifact name. §4's grammar is
+      `<project>[_<component>]_<os>_<arch>`, and a single HTML page has no
+      platform — it is a web leaf like `drt_web.tar.gz`. `diluvium_lab_…`
+      is the one spelling to refuse: `_` is the field separator, so it
+      reads as project `diluvium`, component `lab`, which is a different
+      project's artifact.
+- [ ] `BUILDINFO.txt` for the Lab records the pinned runtime — `tag`,
+      `commit` and `sha256` from `vendor/pinned.js` — beside §5's five
+      lines. That is §1's "recorded, not encoded" applied to the one
+      upstream coupling this repository has, and the About panel already
+      shows exactly these fields.
+- [ ] Reconcile the mirror URL. `src/kernel/releases.js` moved to
+      `software.aloecraft.org/releases/diluvium/` and
+      `scripts/fetch-runtime.sh` still defaults to
+      `diluvium.aloecraft.org/release`. Two hosts, one pin, and the script
+      is the one that writes `vendor/pinned.js`.
+
+### The consumer-side risk, which is the part with a deadline
+
+Everything above is the Lab's own housekeeping and can happen whenever.
+The following breaks the page on someone else's schedule:
+
+**Artifact renames.** `KERNEL_ARTIFACT` and `SWARM_ARTIFACT` are literals,
+and the same two names are hard-coded in `scripts/fetch-runtime.sh`,
+recorded in `vendor/pinned.js`, written into `vendor/SHA256SUMS.txt` and
+asserted in `test/fixtures/releases-mirror.json`. diluvium's checklist
+renames `diluvium_linux_static_x86_64` and its `_compiler`, `_host` and
+`_rest_plugin` siblings — none of which the Lab touches. It does not
+mention `libdiluvium_wasi.wasm`, whose `lib` prefix is not in §4's grammar
+at all, nor `libdiluvium_musl_x86_64.a`, which puts libc where the grammar
+wants arch. If those get tidied in the same pass, the Lab stops being able
+to fetch a runtime, and the failure is a 404 mid-dropdown rather than
+anything CI would catch — CI never touches the mirror.
+
+The cheap insurance is to say out loud that `libdiluvium_wasi.wasm` and
+`diluvium_swarm_wasi.wasm` are out of scope for the rename, and to have the
+mirror keep serving the old names for tags already published. The
+expensive alternative is teaching `MirrorSource` a per-tag artifact map,
+which is a real feature and not worth it for a rename nobody has proposed.
