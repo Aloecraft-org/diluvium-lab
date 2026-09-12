@@ -3742,11 +3742,12 @@ engine is vendored here — `technoproj sync` and `technoproj-changelog` are
 commands, not files to copy, and the Lab's `.technoproj` was written to be
 read by them.
 
-It was checked against them rather than against the shape in the document.
-The Lab's declaration passes: `validate` OK, and `consistency` OK with all
-six stamps matching the tree. Two things had to be corrected first, and two
-defects in technoproj v0.1.0 turned up behind them. Being first through the
-door is how you find these; none is the Lab's to fix.
+It was checked against them rather than against the shape in the document,
+and against a *current* checkout — the second time round, which is a story
+below. The Lab's declaration passes: `validate` OK, and `consistency` OK
+with all six stamps matching the tree. Two things this section had wrong
+about `stamps` are corrected below, two defects it reported turned out to
+be already fixed, and one is real and open.
 
 **Corrected here: `stamps` is stronger than §3 describes.** The engine runs
 each `find` with `re.findall` and requires *every* match to agree, not the
@@ -3763,54 +3764,26 @@ engine takes them from the declaration, which is §3's thesis working on
 first contact — as does `diluvium` and `diluvium_build` passing untouched,
 because the Lab records that fact under the names DRT already uses.
 
-**Defect: `consistency` rejects the spelling §1 mandates.** This is the one
-worth acting on. `technoproj/changelog.py` gates on
+**Two defects reported here were already fixed, and this section had them
+wrong.** It described a stale checkout. technoproj's own issue #1 found both
+before the Lab did — `consistency` rejecting the tag-body spelling, and no
+`stamps` spelling meaning the tag body — and commit `2751965`, which is the
+`v0.1.0` tag, fixed them by moving the spelling rules into
+`technoproj/version.py`. The clone this repository measured against was
+`d0f5382`, one commit earlier, so everything it reported about those two was
+true of code that had already been replaced. Against current technoproj:
 
-```python
-m = re.fullmatch(r"(\d+\.\d+\.\d+)(?:(?:rc|a|b)\d+)?", version)
+```
+respell("0.14.0-rc.1", "semver")  -> 0.14.0-rc.1     the tag body, as §1 says
+respell("0.14.0-rc.1", "base")    -> 0.14.0
+respell("0.14.0-rc.1", "pep440")  -> 0.14.0rc1
 ```
 
-which predates the scheme. Measured, on an otherwise identical tree:
-
-```
-version: 0.14.0-rc.1   consistency -> "version is not X.Y.Z or a candidate of it"   exit 1
-version: 0.14.0rc1     consistency -> "OK: the tree agrees with 0.14.0rc1"          exit 0
-```
-
-The mandated spelling fails and the spelling §1 forbids passes. `validate`
-and `release-check` accept both, so it is `consistency` alone — the command
-the README puts in CI. `-dev.N` was never accepted in either spelling, so
-this blocks §7's whole dev-build tier before its first tag.
-
-It reaches diluvium too, and earlier than the renumber does: the regex
-takes `X.Y.Z` or a PEP-440-shaped candidate of it and nothing else, so
-`5.5.1_build14` — diluvium's newest entry today — fails it as surely as
-`0.14.0-rc.1` does. diluvium has no `TECHNO_CHANGELOG` block yet so the
-engine cannot run there at all, but the day it gains one is the day this
-fires, before `v0.15.0` exists to fix it. §10 puts diluvium first in the
-migration order; this is a reason that ordering matters rather than an
-argument against it.
-
-One line, and the widened form was tested against every spelling in §1's
-table plus the legacy one, then against all three committed changelogs —
-it rejects nothing the current regex accepts:
-
-```python
-r"(\d+\.\d+\.\d+)(?:-(?:dev|alpha|beta|rc)\.\d+|(?:rc|a|b)\d+)?"
-```
-
-**Defect: no `stamps` spelling means "the tag body".** Behind that regex,
-with the engine patched locally to get past it: `semver` and `base` both
-resolve to the base `X.Y.Z` with the prerelease stripped, and the only
-spelling yielding `0.14.0-rc.1` is the one called `pep440` — which by §1 is
-the *derived* spelling and would be `0.14.0rc1`. §1's own table says
-`Cargo.toml` holds the tag body, so this lands on DRT too: its example
-declaration pairs `"spelling": "base"` with a `(\d+\.\d+\.\d+)` pattern
-that cannot match `0.5.0-rc.10` at all. Every file the Lab stamps holds the
-tag body, because `LAB_VERSION` is what the stale-scripts banner compares.
-The declaration here says `semver` — the honest intent — and records that a
-prerelease needs either the engine to grow a tag-body spelling or `pep440`
-as a stopgap.
+That is §1's table exactly, and it is why the `spelling: "semver"` in
+`.technoproj` is right rather than aspirational — the note beside those
+stamps has been corrected too. The lesson worth keeping is the cheap one:
+this repository cloned a reference tree once and then measured against it
+for an hour. Re-fetch before reporting a defect in someone else's code.
 
 **Blocking, and not the Lab's to solve: `latest` cannot be satisfied before
 you publish.** Exactly one entry must carry `latest: true`, and that entry

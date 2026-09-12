@@ -91,17 +91,15 @@
       "other. It had already drifted: the lock sat at 0.11.0 through the",
       "whole of 0.12.0 and nothing noticed.",
       "",
-      "`spelling` is `semver` here and that is a statement of intent rather",
-      "than a working value for a prerelease. Measured against technoproj",
-      "v0.1.0: `semver` and `base` both resolve to the base X.Y.Z with the",
-      "prerelease stripped, and the only spelling that yields the tag body",
-      "`0.14.0-rc.1` is the one named `pep440` -- which per ALIGNMENT §1 is",
-      "the derived spelling and would be `0.14.0rc1`. Every file stamped",
-      "here holds the tag body, because LAB_VERSION is what the stale-scripts",
-      "banner compares. So on the Lab's first prerelease these four stamps",
-      "want 0.14.0 and the tree says 0.14.0-rc.1, until the engine grows a",
-      "tag-body spelling. See ROADMAP; `pep440` is the stopgap if it is",
-      "needed before then."
+      "`spelling` is `semver`, which technoproj resolves to the tag body --",
+      "`0.14.0-rc.1` during a prerelease, not the base `0.14.0`. That is what",
+      "every file stamped here holds, because LAB_VERSION is what the",
+      "stale-scripts banner compares. `base` gives X.Y.Z and `pep440` gives",
+      "`0.14.0rc1`, neither of which this repository has a file for.",
+      "",
+      "An earlier revision of this note claimed semver stripped the",
+      "prerelease. It did, in technoproj d0f5382, which is the commit this",
+      "repository had cloned; 2751965 fixed it before anyone here looked."
     ]
   },
 
