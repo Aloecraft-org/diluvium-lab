@@ -3644,7 +3644,11 @@ being quietly absent.
 other projects carry. Revision 1 did not name the Lab. Revision 3 does, in
 five places, and settles the two things that were open here.
 
-**This release is `v0.13.0`, and it is the Lab's first tag.** §1's table
+**This release is `v0.13.0`, and it will be the Lab's first tag** — cut on
+merge, not from a branch, because a published tag is a fact other things
+point at and §1 says one is never respelled afterwards. `CHANGELOG.yaml`
+carries the entry as `unreleased` until then; flipping it to `tagged` with a
+date is part of cutting it. §1's table
 assigns it: every project's first conforming release is a minor bump from
 wherever it already was, and the Lab was at `0.12.0`. §1's stated reason —
 the first conforming release changes artifact filenames — does not apply
@@ -3800,9 +3804,10 @@ as a stopgap.
 
 **Blocking, and not the Lab's to solve: `latest` cannot be satisfied before
 you publish.** Exactly one entry must carry `latest: true`, and that entry
-must be `status: released`. The Lab is `tagged` — there is a tag and no
-release workflow. `latest_requires` is declarable and does relax the
-`mirror` half; the `status` half is hardcoded:
+must be `status: released`. The Lab will be `tagged` at best — there is no
+release workflow, so the tag is the whole of the release.
+`latest_requires` is declarable and does relax the `mirror` half; the
+`status` half is hardcoded:
 
 ```python
 for key in CFG["latest_requires"]:      # declarable, and dropping "mirror" works
@@ -3846,6 +3851,9 @@ is there so that day is a failing expectation rather than a bug report.
 ### What is left here
 
 §11's stanza, with what this release closed struck through.
+
+- [ ] **Cut `v0.13.0` on merge**, and flip `CHANGELOG.yaml`'s entry from
+      `unreleased` to `tagged` with the date in the same commit
 
 - [x] ~~Version hand-typed in two places~~ — six, and now checked
 - [x] ~~`.technoproj`, and a greenfield `CHANGELOG.yaml`~~ — the engine is

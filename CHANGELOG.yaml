@@ -27,9 +27,16 @@
 #   date          ISO date published; null when unreleased.
 #   status        released | unreleased | tagged
 #                 `tagged` means the tag exists but no GitHub release was
-#                 published for it. That is where 0.13.0 sits: the Lab has
+#                 published for it, which is where 0.13.0 lands: the Lab has
 #                 no release workflow yet (doc/Alignment.md §11), so the tag
 #                 is the whole of the release.
+#
+#                 It is `unreleased` until then, because v0.13.0 is cut on
+#                 merge and an entry claiming a tag nobody can fetch is the
+#                 file lying about itself. Flipping it to `tagged` with a
+#                 date is part of cutting the tag -- the same edit
+#                 technoproj's `release-check` tells you to make, one status
+#                 short of it.
 #   stable        A real release rather than a candidate. This field is the
 #                 truth; GitHub's `prerelease` flag is derived from it.
 #   latest        Optional. Exactly one entry carries `latest: true`; that is
@@ -97,8 +104,8 @@ repo: Aloecraft-org/diluvium-lab
 releases:
   - version: 0.13.0
     tag: v0.13.0
-    date: 2026-09-12
-    status: tagged
+    date: null
+    status: unreleased
     stable: true
     mirror: false
     diluvium: 7dfe1d590488df950d8ccffd108b321b8c872844
@@ -205,7 +212,8 @@ releases:
       - |
         **`technoproj-changelog validate` fails on this repository**, for one
         reason: no entry carries `latest: true`, and the rule that would let
-        one wants `status: released`. The Lab is `tagged`. Recorded rather
+        one wants `status: released`. This entry is `unreleased` and becomes
+        `tagged`. Recorded rather
         than papered over -- see ROADMAP, and note this meets every project
         in Alignment §11 that has no release workflow yet.
       - |
