@@ -548,6 +548,15 @@ test.describe('version ordering across the format change', () => {
     ['5.5.1-rc.10', '5.5.1-rc.9', 'semver numeric identifiers too'],
     ['5.5.1-build.2', '5.5.1_build1', 'the new shape against the old'],
     ['5.10.0', '5.9.0', 'ten is after nine'],
+    // doc/Alignment.md §1's scheme, which diluvium takes at v0.15.0. The
+    // Lab has to rank these beside the `_buildN` tags above for as long as
+    // both are on the mirror, which is forever -- a published tag is not
+    // renamed (Alignment §1, §12.2).
+    ['0.15.0', '0.15.0-rc.1', 'a release outranks its candidate'],
+    ['0.15.0-rc.1', '0.15.0-beta.2', 'rc after beta'],
+    ['0.15.0-beta.2', '0.15.0-alpha.1', 'beta after alpha'],
+    ['0.15.0-dev.10', '0.15.0-dev.2', 'the dot makes 10 a number, not a word'],
+    ['0.16.0-dev.1', '0.15.0', 'the release segment dominates the suffix'],
   ];
 
   test('the comparator puts every pair the right way round', async ({ page }) => {
@@ -580,6 +589,32 @@ test.describe('version ordering across the format change', () => {
       return compareVersions('1.4.0+lua.5.5.1', '1.4.0+lua.5.4.7') === 0;
     });
     expect(ignored).toBe(true);
+  });
+
+  // Recorded, not endorsed.
+  //
+  // doc/Alignment.md §1 settles diluvium's next version at v0.15.0, and §10
+  // says the Lab "needs no new code" for it. That is true of parsing and
+  // false of ordering: this comparator sorts by core version first, as
+  // semver requires, so every legacy `5.5.1_buildN` tag outranks every
+  // release of the new line and the dropdown -- which is newest-first --
+  // puts diluvium's actual newest build at the bottom, under tags from
+  // before the renumber.
+  //
+  // Nothing here is wrong as semver. The dropdown is wrong as a dropdown.
+  // This test states the behaviour so the day v0.15.0 is cut it is a
+  // failing expectation to update rather than a surprise, and so the claim
+  // in ROADMAP is measured rather than argued. The fix, when it is wanted,
+  // is an era rule: the `_buildN` tags are a closed set that sorts below
+  // everything, which is a special case this comparator does not have today.
+  test('after the renumber, the legacy era still outranks the new line', async ({ page }) => {
+    await openLab(page);
+    const order = await page.evaluate(async () => {
+      const { compareVersions } = await import('./src/kernel/releases.js');
+      return ['v5.4.7_release', 'v5.5.1_build14', 'v0.15.0', 'v0.16.0-rc.1']
+        .sort((a, b) => compareVersions(b, a));
+    });
+    expect(order).toEqual(['v5.5.1_build14', 'v5.4.7_release', 'v0.16.0-rc.1', 'v0.15.0']);
   });
 
   test('the dropdown is newest first, whatever order the mirror wrote', async ({ page }) => {
