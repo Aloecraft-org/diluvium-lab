@@ -748,6 +748,11 @@ recompiling ~900 KB per restart is latency for nothing.
   A build that could name its own reserved words — a `diluvium.keywords`
   table, or any documented list — would turn the probe from guess-and-check
   into a lookup, and is the cheapest coupling available
+- **When diluvium renames its artifacts, and whether the Lab publishes
+  releases.** `doc/Alignment.md` revision 3 is in the repository and the
+  Lab is named in it; what it settles, what it still has wrong, and what
+  this repository closed at v0.13.0 is the section at the end of this file.
+  The one item with someone else's deadline on it is the artifact rename
 
 ### Stage 2, against the real mirror ✅ done
 
@@ -3631,3 +3636,266 @@ opposite reason — they are ordinary identifiers outside a class body and
 the tokenizer cannot tell it is inside one. Both are recorded in
 `doc/v0.6.0_session_c_coordination.md` with the reasoning, rather than
 being quietly absent.
+
+## The Aloecraft release conventions, adopted as far as one repository can
+
+`doc/Alignment.md` is the org-wide versioning and release proposal, revision
+3, in the repository verbatim so it stays diffable against the copies the
+other projects carry. Revision 1 did not name the Lab. Revision 3 does, in
+five places, and settles the two things that were open here.
+
+**This release is `v0.13.0`, and it is the Lab's first tag** — cut on the
+merge commit rather than from a branch, because a published tag is a fact
+other things point at and §1 says one is never respelled afterwards. The
+entry sat at `unreleased` until the tag existed. §1's table
+assigns it: every project's first conforming release is a minor bump from
+wherever it already was, and the Lab was at `0.12.0`. §1's stated reason —
+the first conforming release changes artifact filenames — does not apply
+here, because the Lab publishes no artifacts. The rule is followed anyway.
+"Nobody restarts and nobody synchronises" is worth more than a per-repository
+argument about whether one particular bump earned its digit, and a scheme
+that survives only where its rationale holds is not a scheme.
+
+### What landed
+
+`.technoproj`, `CHANGELOG.yaml`, and one number in place of six.
+
+No engine. §3's shared `changelog.py` is explicitly unlocated, and vendoring
+a fourth copy of a tool whose whole problem is that it was copied twice is
+the drift §3 exists to end. What is here instead is the declaration the
+engine will read — `TECHNO_CHANGELOG`, written to §3's shape — and
+`scripts/check-version.mjs` grown from checking three places to checking all
+of them. Checking is not generating and is a step later than the engine
+would act, but it needs no tool the Lab does not have and it catches the
+same drift.
+
+**It caught some immediately.** `package-lock.json` names this package twice
+and both copies sat at `0.11.0` for the whole of `0.12.0`. There is a commit
+in this history called "Sync package-lock version field with package.json";
+it drifted again at the very next bump. Nobody was careless — the file is
+not one a person edits and the old check did not look at it. That is the
+argument for §3's `stamps` in one sentence, and the version was hand-typed
+in six places rather than the two §11 credits the Lab with:
+
+```
+.technoproj  package.json  package-lock.json (x2)  src/version.js
+index.html (meta)  index.html (inline EXPECTED)  + 50 stamped import URLs
+```
+
+Two of those `stamps` cannot express as specified, and both are recorded in
+`.technoproj` beside the entries: one file with two locations that must
+agree (one pattern, first match, so the second is a local check), and the
+import map, which is a generated field rather than a location — a `stamps`
+entry would check one of the fifty.
+
+### What revision 3 still has wrong about the Lab, measured
+
+Three of these were reported against revision 1 and did not make it in. They
+are restated because §4 and §10 now build rules on top of them.
+
+**The Lab does not resolve artifacts against `latest/`.** §4 says it does,
+twice, and the second is load-bearing: the new artifact-rename protocol uses
+the Lab as its worked example and says "it resolves them against `latest/`".
+It does not. `MirrorSource` fetches `<base>/<tag>/<artifact>` — the tag
+directory, explicitly, never the symlink — and `list()` records
+`index.latest` into a field nothing reads. There is no channel default.
+
+The protocol §4 states is right and the Lab does need it; the mechanism is
+wrong, and it matters because it names the wrong thing as the breakage
+surface. What the Lab cannot do without is **`releases.json`**: a browser
+cannot enumerate a static directory, so the index is the only way the
+dropdown learns a tag exists. A mirror that dropped the index would break
+the Lab whatever `latest/` did.
+
+**Nothing in `src/` reasons about `5.5.1_buildN` strings.** §10 says
+`src/app.js` and `src/kernel/kernel.js` both do, and that the Lab therefore
+"breaks on two axes". Every occurrence in either file is a comment. Every
+occurrence anywhere in `src/` is a comment or a human-readable error message
+naming which build first had a feature — and each of those is thrown *after*
+a capability probe, never after a version comparison:
+
+```js
+if (!instanceCapable(exports)) {
+  throw new Error('this build has no `dv_` instance ABI; it needs Diluvium 5.5.1_build3 or newer');
+}
+```
+
+That is §1's "compatibility is checked by name, never by digits" already
+implemented, and the Lab implements it completely: no version digit anywhere
+decides whether a feature exists. The Lab breaks on **one** axis, artifact
+filenames, and §4's protocol covers it.
+
+**`-dev.<n>` does not sort below `-alpha.1` in SemVer.** §1 still says the
+ordering "is correct in both ecosystems" above a line that is PEP 440's.
+`packaging` agrees with the PEP 440 line; SemVer §11.4.3 compares
+alphanumeric identifiers lexically, so the kind words sort `alpha < beta <
+dev < rc` and a dev build lands between beta and rc. §12 does not depend on
+it and §7 keeps dev builds off the mirror, so the collision is rare — but
+the Lab is where SemVer ordering is implemented, and a document that marks
+three rules **Verified** should not carry an unverified fourth.
+
+### The engine exists, and the Lab is the first repository through it
+
+§3 says the shared location is "not yet decided". It is:
+`Aloecraft-org/technoproj`, `pip install`-able and pinned by tag. So no
+engine is vendored here — `technoproj sync` and `technoproj-changelog` are
+commands, not files to copy, and the Lab's `.technoproj` was written to be
+read by them.
+
+It was checked against them rather than against the shape in the document.
+The Lab's declaration passes: `validate` OK, and `consistency` OK with all
+six stamps matching the tree. Two things had to be corrected first, and two
+defects in technoproj v0.1.0 turned up behind them. Being first through the
+door is how you find these; none is the Lab's to fix.
+
+**Corrected here: `stamps` is stronger than §3 describes.** The engine runs
+each `find` with `re.findall` and requires *every* match to agree, not the
+first. So the import map is one stamp covering all fifty stamped module
+URLs — the thing this section previously said `stamps` could not express.
+What genuinely does not fit is `package-lock.json`, which names the package
+at two-space indent and again at six, where every dependency's version also
+lives; one pattern cannot take the second without also demanding that
+`@playwright/test` be `0.13.0`. That copy stays in `check-version.mjs`.
+
+**Corrected here: `nbformat` is fine.** DRT's forked copy rejects it as an
+unknown key, because the forks hardcode their key sets. The consolidated
+engine takes them from the declaration, which is §3's thesis working on
+first contact — as does `diluvium` and `diluvium_build` passing untouched,
+because the Lab records that fact under the names DRT already uses.
+
+**Defect: `consistency` rejects the spelling §1 mandates.** This is the one
+worth acting on. `technoproj/changelog.py` gates on
+
+```python
+m = re.fullmatch(r"(\d+\.\d+\.\d+)(?:(?:rc|a|b)\d+)?", version)
+```
+
+which predates the scheme. Measured, on an otherwise identical tree:
+
+```
+version: 0.14.0-rc.1   consistency -> "version is not X.Y.Z or a candidate of it"   exit 1
+version: 0.14.0rc1     consistency -> "OK: the tree agrees with 0.14.0rc1"          exit 0
+```
+
+The mandated spelling fails and the spelling §1 forbids passes. `validate`
+and `release-check` accept both, so it is `consistency` alone — the command
+the README puts in CI. `-dev.N` was never accepted in either spelling, so
+this blocks §7's whole dev-build tier before its first tag.
+
+It reaches diluvium too, and earlier than the renumber does: the regex
+takes `X.Y.Z` or a PEP-440-shaped candidate of it and nothing else, so
+`5.5.1_build14` — diluvium's newest entry today — fails it as surely as
+`0.14.0-rc.1` does. diluvium has no `TECHNO_CHANGELOG` block yet so the
+engine cannot run there at all, but the day it gains one is the day this
+fires, before `v0.15.0` exists to fix it. §10 puts diluvium first in the
+migration order; this is a reason that ordering matters rather than an
+argument against it.
+
+One line, and the widened form was tested against every spelling in §1's
+table plus the legacy one, then against all three committed changelogs —
+it rejects nothing the current regex accepts:
+
+```python
+r"(\d+\.\d+\.\d+)(?:-(?:dev|alpha|beta|rc)\.\d+|(?:rc|a|b)\d+)?"
+```
+
+**Defect: no `stamps` spelling means "the tag body".** Behind that regex,
+with the engine patched locally to get past it: `semver` and `base` both
+resolve to the base `X.Y.Z` with the prerelease stripped, and the only
+spelling yielding `0.14.0-rc.1` is the one called `pep440` — which by §1 is
+the *derived* spelling and would be `0.14.0rc1`. §1's own table says
+`Cargo.toml` holds the tag body, so this lands on DRT too: its example
+declaration pairs `"spelling": "base"` with a `(\d+\.\d+\.\d+)` pattern
+that cannot match `0.5.0-rc.10` at all. Every file the Lab stamps holds the
+tag body, because `LAB_VERSION` is what the stale-scripts banner compares.
+The declaration here says `semver` — the honest intent — and records that a
+prerelease needs either the engine to grow a tag-body spelling or `pep440`
+as a stopgap.
+
+**Blocking, and not the Lab's to solve: `latest` cannot be satisfied before
+you publish.** Exactly one entry must carry `latest: true`, and that entry
+must be `status: released`. The Lab will be `tagged` at best — there is no
+release workflow, so the tag is the whole of the release.
+`latest_requires` is declarable and does relax the `mirror` half; the
+`status` half is hardcoded:
+
+```python
+for key in CFG["latest_requires"]:      # declarable, and dropping "mirror" works
+    ...
+if r.get("status") != "released":       # not declarable
+```
+
+So `validate`, `consistency` and `release-check` all fail on this repository
+for one reason, and satisfying it means writing two false statements into
+the file the schema calls the source of truth. This file carries no `latest`
+and says so in its own header. Either the Lab publishes a GitHub release for
+`v0.13.0`, or `latest` becomes reachable for a `tagged` entry. That is a
+decision for whoever owns technoproj, and it will meet every repository in
+§11 that has no release workflow — which is three of them.
+
+### The era inversion is now scheduled rather than hypothetical
+
+Revision 1 left diluvium's next number open and this section asked which it
+would be, because the answer decides whether the Lab needs code. §1 answers:
+`v0.15.0`. §10 says the Lab "needs no new code" for it.
+
+That is true of parsing and false of ordering. `compareVersions` sorts by
+core version first, as semver requires, so `5.5.1_build14 > 0.15.0` and every
+legacy tag outranks every release of the new line. The dropdown is
+newest-first, so diluvium's newest build lands at the bottom, under tags
+from before the renumber. Measured, and now locked into
+`test/versions.spec.js` as a passing test that states the behaviour rather
+than a comment claiming it:
+
+```
+v5.5.1_build14  ->  v5.4.7_release  ->  v0.16.0-rc.1  ->  v0.15.0
+```
+
+Nothing there is wrong as semver. It is wrong as a dropdown. The fix is an
+era rule — the `_buildN` tags are a closed set that sorts below everything —
+and it is a permanent special case in a comparator that is otherwise just
+semver, which is why it is not written yet: it should be written when
+`v0.15.0` exists, against the real tag, not in anticipation of it. The test
+is there so that day is a failing expectation rather than a bug report.
+
+### What is left here
+
+§11's stanza, with what this release closed struck through.
+
+
+- [x] ~~Version hand-typed in two places~~ — six, and now checked
+- [x] ~~`.technoproj`, and a greenfield `CHANGELOG.yaml`~~ — the engine is
+      still §3's open question and is deliberately not vendored
+- [x] ~~Next release is `v0.13.0`~~ — cut on the merge commit, entry
+      flipped to `tagged` in the release commit before it
+- [x] ~~Keep parsing `5.5.1_buildN`~~ — it always did; the new scheme's
+      spellings are in the ordering table beside the old ones now
+- [ ] **`KERNEL_ARTIFACT` / `SWARM_ARTIFACT` when diluvium renames.** The one
+      item with someone else's deadline. Both are literals here and the same
+      two names are hard-coded in `scripts/fetch-runtime.sh`, recorded in
+      `vendor/pinned.js`, written into `vendor/SHA256SUMS.txt` and asserted
+      in `test/fixtures/releases-mirror.json`. §4's protocol — both names for
+      one release, consumers move, old name dropped — is what makes that
+      survivable, and §12.4 makes it non-negotiable. Note that neither
+      `libdiluvium_wasi.wasm` nor `libdiluvium_musl_x86_64.a` fits §4's
+      grammar (the `lib` prefix is not a field; the second puts libc where
+      arch belongs), so both are candidates for a tidy nobody has proposed.
+- [ ] **Mirrored, or not.** No release workflow, and now one tag. The bake
+      already produces a self-contained `dist/diluvium-lab.html` and CI
+      already integrity-checks it on every push, so what is missing is
+      publishing it with a `BUILDINFO.txt` and a `SHA256SUMS.txt` beside it —
+      and deciding the artifact name, where §4's grammar has no slot for a
+      single platform-independent file. `diluvium_lab_…` is the one spelling
+      to refuse: `_` is the field separator, so it reads as project
+      `diluvium`, component `lab`.
+- [ ] **`scripts/fetch-runtime.sh` still defaults to the old mirror host.**
+      §11 credits the Lab with `DEFAULT_MIRROR` already moved, and it has —
+      in `src/kernel/releases.js`. The script that writes `vendor/pinned.js`
+      still points at `diluvium.aloecraft.org/release`. Two hosts, one pin.
+
+Already conforming, and worth saying because §11 says it too: `SHA256SUMS.txt`
+with the extension is what both the script and `MirrorSource` already look
+for; BUILDINFO is already read as the authority over the filename; and §9's
+tag-matches-the-tree gate is now enforced on every push rather than at
+release time, because `check-version.mjs` compares `CHANGELOG.yaml`'s newest
+entry and its tag against the tree.

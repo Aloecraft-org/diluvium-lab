@@ -1,0 +1,229 @@
+# Diluvium Lab changelog -- the source of truth for release notes.
+#
+# This file, not the GitHub release body, is what a release page and the
+# release mirror are generated from. Edit it here; everything downstream is
+# derived.
+#
+# Ported from diluvium's and DRT's CHANGELOG.yaml on purpose -- same shape,
+# same tool, same CLI -- per doc/Alignment.md §3. What differs is only which
+# compatibility facts this project records, and those are declared in
+# `.technoproj`'s TECHNO_CHANGELOG block rather than written into the tool.
+#
+# The tool is `Aloecraft-org/technoproj`, pip-installed and pinned by tag,
+# so nothing is vendored here. This file and that declaration were checked
+# against it: `validate` and `consistency` both pass, the latter with all six
+# stamps matching the tree, once the `latest` rule below is set aside.
+#
+# Shape follows keepachangelog.com 1.1.0, with the six standard sections kept
+# under their own names so the mapping to Markdown is mechanical. Bullets are
+# ordinary strings; any may be a `|` block when the detail earns it, in which
+# case the first line is the headline.
+#
+#   version       Lab version, without the leading `v`.
+#   tag           Git tag. Explicit rather than derived, even though the Lab
+#                 -- unlike diluvium, which also carries upstream Lua's tags
+#                 -- could derive it safely. A derived tag is one fewer place
+#                 this file can be caught lying.
+#   date          ISO date published; null when unreleased.
+#   status        released | unreleased | tagged
+#                 `tagged` means the tag exists but no GitHub release was
+#                 published for it, which is where 0.13.0 lands: the Lab has
+#                 no release workflow yet (doc/Alignment.md §11), so the tag
+#                 is the whole of the release.
+#
+#                 It sat at `unreleased` until the tag was cut, because an
+#                 entry claiming a tag nobody can fetch is the file lying
+#                 about itself. This commit is the flip -- the same edit
+#                 technoproj's `release-check` tells you to make when
+#                 publishing, one status short of it.
+#   stable        A real release rather than a candidate. This field is the
+#                 truth; GitHub's `prerelease` flag is derived from it.
+#   latest        Optional. Exactly one entry carries `latest: true`; that is
+#                 what a `latest/` path resolves to. NO ENTRY CARRIES IT YET
+#                 and technoproj v0.1.0 rejects this file for that --
+#                 deliberately, and see ROADMAP. The rule wants the latest
+#                 entry to be `mirror: true` (declarable away with
+#                 `latest_requires`, and this repo does not) and
+#                 `status: released` (hardcoded). The Lab is `tagged`: there
+#                 is a tag and no release workflow. Satisfying the rule means
+#                 writing two false statements into the file the schema calls
+#                 the source of truth.
+#   mirror        Whether the release mirror should carry it. False until the
+#                 Lab has a mirror entry to be carried by.
+#
+# The compatibility facts, which are the Lab's version of diluvium's
+# `lua_base` and DRT's `dv_abi`. The rule doc/Alignment.md §1 states is that
+# an upstream version is recorded as a fact and never encoded in your own
+# version number, so:
+#
+#   diluvium        The diluvium git revision this build BUNDLES in vendor/.
+#                   The Lab versions independently of diluvium; this records
+#                   the coupling rather than encoding it. Deliberately the
+#                   same key name DRT uses for the same fact, so one `facts`
+#                   declaration in the shared engine serves both.
+#   diluvium_build  The N in 5.5.1_buildN, beside the revision. The revision
+#                   is exact but unordered -- two of them cannot be asked
+#                   which is newer -- and a range needs a number.
+#
+#                   Neither bounds what the Lab can RUN. The runtime dropdown
+#                   fetches and verifies any build the mirror carries, which
+#                   is the reason the Lab's own version could never have
+#                   named one of them.
+#   nbformat        The .ipynb format version written and read. A notebook
+#                   saved here has to open in Jupyter, so this is a
+#                   compatibility fact checked by name like any other, and a
+#                   change to it is a hard break belonging in `upgrading`.
+#
+#   summary       Prose block heading the release.
+#   upgrading     Optional. Anything a user must do to move to it.
+#   known_issues  Optional. Problems present in this version, recorded
+#                 against the version they affect rather than only against
+#                 the one that fixes them.
+#   added / changed / deprecated / removed / fixed / security
+#                 The keepachangelog sections. Omit what is empty.
+#
+# 0.1.0 through 0.12.0 are not below. They were `package.json` bumps between
+# 2026-08-08 and 2026-08-19 and none of them was ever tagged or published, so
+# there is no release for an entry to describe -- inventing fourteen of them
+# would make this file's first act a fabrication. ROADMAP.md is their record
+# and is organised by the work rather than by the number, which is what
+# anyone looking for them actually wants.
+#
+# 0.13.0 rather than 0.12.0 because doc/Alignment.md §1 says so: every
+# project's first conforming release is a minor bump from wherever it already
+# was, and the Lab was already at 0.12.0. Alignment.md §1's own reason -- the
+# first conforming release changes artifact filenames -- does not apply here,
+# since the Lab publishes no artifacts yet; the rule holds anyway, because
+# "nobody restarts and nobody synchronises" is worth more than a per-repo
+# argument about whether this particular bump earned its digit.
+
+schema: 1
+repo: Aloecraft-org/diluvium-lab
+
+releases:
+  - version: 0.13.0
+    tag: v0.13.0
+    date: 2026-09-12
+    status: tagged
+    stable: true
+    mirror: false
+    diluvium: 7dfe1d590488df950d8ccffd108b321b8c872844
+    diluvium_build: 10
+    nbformat: "4.5"
+    summary: |
+      **The first tagged release, and the first conforming one.** The Lab has
+      run cells since 0.1.0 and has had a version number the whole time; what
+      it has never had is a tag. doc/Alignment.md is the org-wide proposal
+      that says so, and this release adopts the parts of it a repository can
+      adopt alone: `.technoproj` as the declared version source, this file,
+      and a check that holds the six places naming the version to one number.
+
+      What 0.13.0 carries over 0.11.0 is the catch-up to two runtimes and a
+      pass over everything the catch-up touched. The bundled kernel moved
+      5.5.1_build6 -> build7 -> build10, and the page learned the vocabulary
+      each of those added: a scope on the `sql` connector, the `host` guest
+      library, allowlisted request headers, reply headers, a deferred
+      hostcall seam, and outbound HTTP behind a grant that is off until a
+      deployment names where a notebook may go.
+
+      Beside that, real SQLite behind the `sql` connector in place of the
+      hand-written engine; a swarm the page can draw the shape of; Mermaid
+      fetched once and kept; and the chrome pass -- three rows, menus,
+      structural undo, read-only, a pinnable theme, and the layout truths a
+      set of live drives at every width turned up.
+
+      Minor rather than patch: the guest-visible surface grew a connector
+      that can leave the page, and `.ipynb` files written here carry
+      outputs from libraries 0.11.0 had no renderer for.
+    upgrading: |
+      - **Nothing to do.** Notebooks written by any earlier version open
+        unchanged; nbformat is still 4.5 and no key changed meaning.
+      - **The `rest` connector is off unless a deployment wires it.** It is
+        the one thing in the Lab a guest program can use to reach the
+        network, so it stays off by default and an `allow` list is required
+        to make it answer anything. See `src/kernel/connectors.js`.
+      - **A runtime older than 5.5.1_build5 has no swarm panel**, and one
+        older than build3 has no instance ABI. Both are stated by the page
+        rather than discovered as a failure.
+    added:
+      - |
+        **Outbound HTTP, behind a grant.** `rest/get` and `rest/post` are
+        the first calls a *guest program* can make that leave the page --
+        every other network call the Lab makes is the page's own, made
+        because a person clicked something. The connector refuses everything
+        until a deployment names prefixes in an `allow` list, and a
+        connector wired with no list is one that refuses everything and says
+        so rather than one that permits everything.
+      - |
+        **Real SQLite behind the `sql` connector.** The hand-written engine
+        it replaces answered a useful subset and misled about the rest.
+      - |
+        **The shape of a swarm, drawn.** A topology SVG the page renders
+        itself, plus Mermaid *text* for anywhere else. The Mermaid renderer
+        is fetched once from a CDN, checksum-pinned before the bytes run and
+        kept in IndexedDB -- a menu item and no other path to it.
+      - |
+        **Syntax colouring for the 5.5 forms, probed rather than assumed.**
+        Lambdas, spread, class-body `@`, function attributes, literal
+        suffixes and safe navigation. Each form is a separate probe against
+        the running kernel, so a build that does not parse one does not get
+        it coloured -- `?.` and `?[` are in build10 and `?:` and `?(` are
+        not, which one flag would have painted wrong.
+      - |
+        **A size ledger.** `scripts/size-ledger.mjs` prints the gzipped
+        weight of the web profile, so a pin move that costs half a megabyte
+        says so instead of being noticed later.
+      - |
+        **`.technoproj`**, the declared version source (Alignment §2), with a
+        `TECHNO_CHANGELOG` block written for the shared engine of §3 that
+        does not exist yet. No engine is vendored here on purpose: a fourth
+        copy of `changelog.py` is the drift §3 exists to end.
+      - |
+        **This file**, checked against `Aloecraft-org/technoproj` rather than
+        against the shape in the document, and `scripts/check-version.mjs`
+        grown to hold six places to one number -- `.technoproj`, `package.json`,
+        `package-lock.json` (twice), `src/version.js`, `index.html`'s meta
+        tag and inline check, the 50 stamped import URLs, and this file's
+        newest entry and its tag. That last pair is Alignment §9's
+        tag-matches-the-tree gate, which the Lab now passes on every push
+        rather than at release time.
+      - |
+        **`doc/Alignment.md`**, revision 3, verbatim -- and the Lab's answer
+        to it in ROADMAP.
+    changed:
+      - |
+        **The bundled runtime is 5.5.1_build10**, up from build6, with the
+        swarm module `diluvium_swarm_wasi.wasm` mirrored beside it.
+      - |
+        **The runtime mirror moved** to
+        `https://software.aloecraft.org/releases/diluvium/`.
+      - |
+        The chosen runtime is remembered across a reload, and is only put
+        back without a network request when its bytes are still cached.
+    fixed:
+      - |
+        Three panel tests that raced their own UI, and two that raced the
+        swarm's. All five were real ordering bugs in what the page promised
+        rather than flaky assertions.
+      - |
+        A dropdown's options were unreadable in dark mode.
+    known_issues:
+      - |
+        **`technoproj-changelog validate` fails on this repository**, for one
+        reason: no entry carries `latest: true`, and the rule that would let
+        one wants `status: released`. This entry is `tagged`: there is a tag
+        and no release workflow behind it. Recorded rather
+        than papered over -- see ROADMAP, and note this meets every project
+        in Alignment §11 that has no release workflow yet.
+      - |
+        **`scripts/fetch-runtime.sh` still defaults to the old mirror host**
+        (`diluvium.aloecraft.org/release`) while the page uses
+        `software.aloecraft.org/releases/diluvium/`. Two hosts, one pin, and
+        the script is the one that writes `vendor/pinned.js`. Recorded here
+        against the version it affects rather than only against the one that
+        fixes it.
+      - |
+        **Slicing (`xs[2:5]`) is not coloured**, and neither are `extends`,
+        `static` or `super`. The first needs bracket-depth tracking this
+        scanner does not do; the others are ordinary identifiers outside a
+        class body and it cannot tell it is inside one.

@@ -1,0 +1,115 @@
+{
+  "_comment": [
+    "The only version numbers a human edits, per doc/Alignment.md §2.",
+    "",
+    "Nothing derives from this file yet: the shared changelog engine is §3's",
+    "item and its location is explicitly open, so vendoring a fourth copy of",
+    "changelog.py here would be the exact drift §3 exists to end. What does",
+    "read it today is scripts/check-version.mjs, which holds this file, ",
+    "package.json, src/version.js and index.html's two copies to one number.",
+    "",
+    "TECHNO_CHANGELOG is written for the engine that does not exist yet, in",
+    "the shape §3 specifies, so adopting it is a delete-the-comment change."
+  ],
+
+  "TECHNO_VERSION": {
+    "major": 0,
+    "minor": 13,
+    "patch": 0,
+    "pre": null
+  },
+
+  "TECHNO_CHANGELOG": {
+    "project": "Diluvium Lab",
+    "intro_extra": "\nThe Lab versions independently of Diluvium. The coupling is RECORDED,\nnot required: every entry names the Diluvium revision the page bundles\nin `vendor/`, so \"which Diluvium is inside\" is a fact you read off the\nrelease rather than a tag-naming convention. The Lab also *runs* builds\nit does not bundle, chosen from the release mirror at run time, so its\nown version could never have named one of them.\n",
+
+    "facts": [
+      {
+        "id": "dil",
+        "keys": ["diluvium", "diluvium_build"],
+        "fmt": "diluvium `{diluvium!s:.12}` (build{diluvium_build})"
+      },
+      {
+        "id": "dil",
+        "keys": ["diluvium"],
+        "fmt": "diluvium `{diluvium!s:.12}`"
+      },
+      {
+        "id": "nbformat",
+        "keys": ["nbformat"],
+        "fmt": "nbformat {nbformat}"
+      }
+    ],
+
+    "tag_rule": "exact",
+    "required": ["version", "tag", "status", "stable", "mirror", "summary"],
+    "emit_json": true,
+
+    "stamps": [
+      {
+        "file": "package.json",
+        "find": "\"version\":\\s*\"([0-9A-Za-z.+-]+)\"",
+        "spelling": "semver"
+      },
+      {
+        "file": "src/version.js",
+        "find": "export const LAB_VERSION = '([0-9A-Za-z.+-]+)'",
+        "spelling": "semver"
+      },
+      {
+        "file": "index.html",
+        "find": "<meta name=\"diluvium-lab-build\" content=\"([0-9A-Za-z.+-]+)\"",
+        "spelling": "semver"
+      },
+      {
+        "file": "index.html",
+        "find": "var EXPECTED = '([0-9A-Za-z.+-]+)'",
+        "spelling": "semver"
+      },
+      {
+        "file": "package-lock.json",
+        "find": "^  \"version\": \"([0-9A-Za-z.+-]+)\"",
+        "spelling": "semver"
+      },
+      {
+        "file": "index.html",
+        "find": "\\?v=([0-9A-Za-z.+-]+)\"",
+        "spelling": "semver"
+      }
+    ],
+
+    "_stamps_note": [
+      "The engine runs each `find` with re.findall and requires EVERY match",
+      "to agree, so the import map is one stamp covering all 50 stamped",
+      "module URLs rather than something stamps cannot express.",
+      "",
+      "package-lock.json names this package twice: the top-level `version`",
+      "at two-space indent, and packages[\"\"].version at six -- where every",
+      "dependency's version also lives. One pattern cannot select the second",
+      "without also demanding that @playwright/test be 0.13.0, so the stamp",
+      "takes the top-level copy and scripts/check-version.mjs takes the",
+      "other. It had already drifted: the lock sat at 0.11.0 through the",
+      "whole of 0.12.0 and nothing noticed.",
+      "",
+      "`spelling` is `semver` here and that is a statement of intent rather",
+      "than a working value for a prerelease. Measured against technoproj",
+      "v0.1.0: `semver` and `base` both resolve to the base X.Y.Z with the",
+      "prerelease stripped, and the only spelling that yields the tag body",
+      "`0.14.0-rc.1` is the one named `pep440` -- which per ALIGNMENT §1 is",
+      "the derived spelling and would be `0.14.0rc1`. Every file stamped",
+      "here holds the tag body, because LAB_VERSION is what the stale-scripts",
+      "banner compares. So on the Lab's first prerelease these four stamps",
+      "want 0.14.0 and the tree says 0.14.0-rc.1, until the engine grows a",
+      "tag-body spelling. See ROADMAP; `pep440` is the stopgap if it is",
+      "needed before then."
+    ]
+  },
+
+  "TECHNO_INIT_DIRS": [
+    ".nogit",
+    ".dump",
+    "scripts"
+  ],
+
+  "TECHNO_COPYRIGHT": "Copyright Michael Godfrey [2026] | aloecraft.org [michael@aloecraft.org]"
+}
