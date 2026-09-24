@@ -3920,3 +3920,15 @@ v0.15.0 was cut and the test went on passing for twelve days, pinning the
 bug it was meant to announce. The lesson is narrow and worth keeping: a test
 of the code cannot notice a change in the world. What noticed was looking
 at the real index, which is what the new fixture now pins.
+
+### The index lost its word for prerelease
+
+Beyond the ordering, and found by the same measurement: the index is
+generated from diluvium's changelog now (`"source": "changelog"`), and it
+no longer carries GitHub's `prerelease` flag. It carries `stable`, which
+that changelog calls the truth. `MirrorSource.list` read only `prerelease`,
+so every entry showed as a release -- including v5.5.1_build4, the one
+`stable: false` build, which the index itself names `latest_prerelease`.
+That is the exact failure an earlier section fixed on purpose ("a
+prerelease sat in the dropdown looking exactly like a release"), undone by
+a schema change nobody here saw. Both spellings are read now.

@@ -138,7 +138,13 @@ export class MirrorSource extends ReleaseSource {
         tag: r.tag,
         version: versionOf(r),
         published: r.published_at ?? r.published ?? null,
-        prerelease: r.prerelease === true,
+        // Two spellings of one fact. The index used to carry GitHub's
+        // `prerelease` flag; generated from diluvium's changelog, as it now
+        // is, it carries `stable` instead -- which that changelog calls the
+        // truth, and GitHub's flag is derived from. Reading only the old
+        // spelling showed every build as a release, including
+        // v5.5.1_build4, the one the index itself names `latest_prerelease`.
+        prerelease: r.prerelease === true || r.stable === false,
         // Kept so fetchKernel can cross-check the index against the
         // release's own checksum files rather than trusting either alone.
         assets: assetChecksums(r.assets),

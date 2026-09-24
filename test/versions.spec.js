@@ -503,6 +503,24 @@ test.describe('the index after the renumber', () => {
     expect(problems).toEqual([]);
   });
 
+  test('a build the changelog marks not stable says prerelease', async ({ page }) => {
+    // The index no longer has a `prerelease` field at all -- it is
+    // generated from diluvium's changelog, whose word is `stable` -- and
+    // reading only the old field labelled every entry a release. Exactly
+    // one entry here is `stable: false`, and the index agrees, naming it
+    // `latest_prerelease`.
+    expect(RENUMBERED.releases.filter((r) => r.stable === false).map((r) => r.tag))
+      .toEqual([RENUMBERED.latest_prerelease]);
+    expect(RENUMBERED.releases.some((r) => 'prerelease' in r)).toBe(false);
+
+    await stubMirror(page, { releases: RENUMBERED.releases });
+    await openLab(page);
+    await checkVersions(page);
+    const label = (tag) => select(page).locator(`option[value="${tag}"]`);
+    await expect(label('v5.5.1_build4')).toHaveText('5.5.1_build4 (prerelease)');
+    await expect(label('v0.17.1')).toHaveText('0.17.1');
+  });
+
   test('is the same order the index was published in', async ({ page }) => {
     // An independent check on the comparator: the index is written newest
     // first by publish date, which the comparator never sees. Agreeing
