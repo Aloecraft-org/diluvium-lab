@@ -6,7 +6,7 @@
 // not replace this one.
 
 import { Kernel, STATUS } from './kernel.js';
-import { instanceCapable, runInstance } from './instance.js';
+import { instanceCapable, instanceProblems, runInstance } from './instance.js';
 import { createWasi, unshimmedImports, HARD_MAX_BYTES } from './wasi.js';
 import { SwarmHost, swarmImports, swarmProblems, swarmCapable, ensureStack } from './swarm.js';
 import { buildConnectors } from './connectors.js';
@@ -485,10 +485,9 @@ export class WasmKernel extends Kernel {
    */
   async runInstance(code, options = {}) {
     this._requireAlive();
-    if (!instanceCapable(this._instance.exports)) {
-      throw new Error(
-        'this build cannot run sandboxed instances: it exports no `dv_` ABI at version 1. '
-        + 'Diluvium 5.5.1_build3 was the first that does.');
+    const problems = instanceProblems(this._instance.exports);
+    if (problems.length) {
+      throw new Error(`this build cannot run sandboxed instances: ${problems.join('; ')}`);
     }
     this._setStatus(STATUS.BUSY);
     try {

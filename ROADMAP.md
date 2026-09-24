@@ -3932,3 +3932,43 @@ so every entry showed as a release -- including v5.5.1_build4, the one
 That is the exact failure an earlier section fixed on purpose ("a
 prerelease sat in the dropdown looking exactly like a release"), undone by
 a schema change nobody here saw. Both spellings are read now.
+
+### What an ABI-2 build could and could not do, and now says
+
+Putting v0.17.1 at the top of the list raised the question the ordering
+alone could not answer: does it work when someone picks it? diluvium moved
+its core to dv ABI 2 at v0.16.0, and this Lab's instance tier and swarm
+host are written against 1. Measured against the real v0.17.1 artifacts in
+the real page:
+
+- **Cells** ran. `pcall` caught, `queue` and `msgpack` were there. The kernel
+  is not what moved.
+- **The sandbox** button was still offered, and pressing it said the build
+  had no `dv_` ABI and needed "5.5.1_build3 or newer" -- advice to upgrade,
+  given to a build already newer than the Lab.
+- **The swarm** did nothing. Start, then "No swarm is running", and no
+  error anywhere.
+
+Three causes, none of them about ABI 2 as such.
+
+`swarmCapable` checked the core's ABI and `swarmProblems` did not. They
+were written side by side and drifted, so on a dv-ABI-2 core under a
+swarm layer still at ABI 1 the module was *not capable* with *no problems*.
+`_swarmExports` gates on the problems, so Start went ahead and the core
+refused underneath. Each "capable" is now derived from its "problems", so
+they cannot disagree again, and the core's ABI is one shared function,
+`coreAbiProblems`, with words for which way the mismatch runs.
+
+The sandbox's hide rule lost on specificity to the quiet-toolbar reveal --
+the capability attribute was already `false`. It takes the extra `.cell
+.cell-tools` the read-only rules took for the same reason.
+
+None of the three had a test, because the only build this Lab bundles can
+do everything. The predicates are now tested over the real bundled
+modules' export surfaces with only the ABI answer varied, and the
+stylesheet with the attribute set as the app sets it.
+
+**Running instances and swarms on ABI 2 is not done** and is not a small
+change. ABI 2 adds `dv_features`, `dv_build` and `dv_array_adopt`, and a
+host built against ABI 1 is refused by `dv_new` by design. That is the
+re-pin to 0.17.1, which is its own piece of work.

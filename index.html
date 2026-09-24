@@ -894,6 +894,11 @@
      Only 5.5.1_build3 and later do, and switching runtimes changes the
      answer -- so this is driven from a body attribute rather than decided
      when the cell was built. */
+  /* The extra .cell .cell-tools is specificity, as read-only has it: the
+     quiet-toolbar reveal (.cell[data-selected] .cell-tools [data-quiet])
+     out-ranked the plain rule, so on a build that cannot run instances
+     the button came back on any hovered, focused or selected cell. */
+  body:not([data-instances="true"]) .cell .cell-tools [data-action="sandbox"],
   body:not([data-instances="true"]) [data-action="sandbox"] { display: none; }
 
   dialog[data-open-url] input {

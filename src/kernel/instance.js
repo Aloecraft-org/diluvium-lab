@@ -46,18 +46,57 @@ const REQUIRED = [
   'dv_queue_lookup', 'dv_queue_state',
 ];
 
-/** Can this module drive `exports` as an instance host? */
+/**
+ * Can this module drive `exports` as an instance host?
+ *
+ * Derived from `instanceProblems` rather than written beside it. The swarm
+ * layer had the two written separately, and they drifted: its "capable"
+ * checked the core's ABI and its "problems" did not, so a build could be
+ * not capable with nothing wrong, and failed with nothing to say.
+ */
 export function instanceCapable(exports) {
-  if (!exports) return false;
-  if (!REQUIRED.every((name) => typeof exports[name] === 'function')) return false;
-  // A future ABI break is a refusal, not a best effort: these are raw
-  // pointers into another language's structs, and guessing is how a host
-  // corrupts a heap rather than how it copes.
-  try {
-    return exports.dv_abi_version() === EXPECTED_ABI;
-  } catch {
-    return false;
+  return instanceProblems(exports).length === 0;
+}
+
+/**
+ * Why `exports` cannot host instances, as sentences; empty when it can.
+ *
+ * Too old and too new are different advice. The one message this replaced
+ * gave the first to both: a build speaking dv ABI 2 was told it had no
+ * `dv_` ABI and needed "5.5.1_build3 or newer", which says "upgrade" to
+ * someone whose build is already past the Lab.
+ */
+export function instanceProblems(exports) {
+  if (!exports) return ['there is no module loaded'];
+  if (typeof exports.dv_abi_version !== 'function') {
+    return ['this build has no `dv_` instance ABI; Diluvium 5.5.1_build3 was the first to export one'];
   }
+  const missing = REQUIRED.filter((name) => typeof exports[name] !== 'function');
+  if (missing.length) return [`this build is missing ${missing.join(', ')}`];
+  return coreAbiProblems(exports);
+}
+
+/**
+ * The core's `dv_` ABI, in words that say which way a mismatch runs.
+ *
+ * A future ABI is a refusal, not a best effort: these are raw pointers
+ * into another language's structs, and guessing is how a host corrupts a
+ * heap rather than how it copes. Shared with the swarm layer, which sits
+ * on the same core and so owes the same answer.
+ */
+export function coreAbiProblems(exports) {
+  let abi;
+  try {
+    abi = exports.dv_abi_version();
+  } catch (err) {
+    return [`asking for the dv ABI version threw: ${err.message}`];
+  }
+  if (abi === EXPECTED_ABI) return [];
+  if (abi > EXPECTED_ABI) {
+    return [`this build speaks dv ABI ${abi}, newer than the ABI ${EXPECTED_ABI} this Lab is `
+      + 'written against. Its cells run; instances and swarms wait for the Lab to learn it'];
+  }
+  return [`this build speaks dv ABI ${abi}; this Lab is written against ABI ${EXPECTED_ABI}`];
 }
 
 /** `dv_layout` as a named object. */
@@ -124,9 +163,8 @@ export function runInstance(exports, drain, code, options = {}) {
     name = 'sandbox',
   } = options;
 
-  if (!instanceCapable(exports)) {
-    throw new Error('this build has no `dv_` instance ABI; it needs Diluvium 5.5.1_build3 or newer');
-  }
+  const problems = instanceProblems(exports);
+  if (problems.length) throw new Error(problems.join('; '));
   const layout = readLayout(exports);
   const owned = [];
   const alloc = (bytes) => {
