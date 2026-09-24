@@ -3975,3 +3975,68 @@ re-pin to 0.17.1, which is its own piece of work.
 
 Released as **v0.13.1**, fixes only. The bundled runtime is unchanged, at
 5.5.1_build10.
+
+## Pinned to diluvium v0.17.1, the core DRT 0.8.0 runs
+
+DRT's v0.8.0-dev.6 is a dev build -- two Linux binaries, no wasm, no web
+profile -- so there was nothing in it for the Lab to load. What it does
+carry is a BUILDINFO line naming the core it embeds: `diluvium: d8497b0`,
+v0.17.1, dv ABI 2. The Lab now bundles exactly that revision, fetched from
+diluvium's own release rather than from DRT's, so the two run one core.
+
+### The ABI port was one line, and knowing that took reading the header
+
+diluvium 0.16.0 moved `dv_abi` to 2 and says a host built against 1 is
+refused by `dv_new`. Before touching anything, `dv.h` was diffed across the
+bump: 185 lines added and exactly one removed, the version define. The new
+surface -- `dv_features`, `dv_build`, `dv_array_adopt`, `dv_numeric_*` -- is
+nothing the Lab calls, and `dv_config` is byte for byte unchanged. So the
+binding speaks 1 and 2, and writes the running build's own ABI into the
+config's `abi` field rather than a constant. The Lua-era builds in the
+dropdown keep their instances and swarms; the new ones gain them. A third
+ABI is still refused, because guessing is what the number exists to stop.
+
+The whole existing suite for instances and swarms -- real budgets, real
+runaway loops, real swarms spawning and messaging -- passed on the new pin
+with that change and nothing else.
+
+### What the new core changed that the Lab had built on
+
+- **`tostring` of a table is `table: #42`**, a creation number where it was
+  an address. The beginner nudge matched only `table: 0x...` and simply
+  stopped appearing. It matches both now, and a test pins the spelling that
+  is *not* bundled, since that is the one that would rot unnoticed.
+- **Fourteen syntax forms.** The highlighter asks the running kernel what it
+  parses, so it needed no edit; the tests that recorded build10's answers
+  did, and said so ("when one of these starts failing, the pin moved"). Each
+  new answer was checked by compiling it on this build with a snippet unlike
+  the probe's own, so the tests agree with the kernel rather than with the
+  probe. Regex literals, separators, `0b`, spread, lambdas and `@name` light
+  up; `continue`, `const`, `export` and `class` join the keywords as
+  contextual words (`class = 1` still compiles); suffixes, `?:`/`?(` and
+  function attributes stay dark.
+- **The worker test pinned the keyword count too**, so one pin move broke
+  two tests for one fact. It now checks that both probe passes ran across
+  the boundary, and leaves the count to the highlighter's test.
+
+### The numeric tier did not come with it
+
+diluvium's changelog says the `numeric` feature is on in release builds.
+v0.17.1's `libdiluvium_wasi.wasm` answers `dv_features()` with `regex`,
+`json`, `msgpack` and `snapshot`, and so does its swarm module; the numeric
+tier appears to ship in `diluvium_browser.wasm`, which is a different
+embedding entirely (`dl_eval` and friends, no `dv_` ABI, no sandbox). The
+Lab does not build diluvium, so this waits on a release whose WASI kernel
+carries the feature -- an upstream ask, recorded in the changelog rather
+than worked around. README's size row says the same: its +26 KB gzipped is
+the rest of 0.15 to 0.17, not the numeric tier's cost.
+
+### Also
+
+`scripts/fetch-runtime.sh` now reads the mirror host from the page and its
+default tag from `vendor/PINNED_TAG`. Its own copy of the host was the old
+one, which answered for the tags it already had and 404'd for everything
+after the move -- v0.17.1 included -- so the known issue carried since
+0.13.0 became a blocker the moment a pin needed a new tag. A bare run now
+re-fetches and re-verifies the current pin; it reproduced build10 byte for
+byte before this move.

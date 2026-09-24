@@ -129,8 +129,23 @@ test.describe('tables show their contents', () => {
     // Redefining print would teach something that stops being true in the
     // terminal. The nudge points at the echo instead.
     const cell = await runInCell(page, 'print({1,2})');
-    await expect(cell.locator('[data-output-type="stream"] pre')).toContainText('table: 0x');
+    // An address on the Lua-era builds, a creation number from diluvium
+    // 0.16.0. Either is what print does, and either gets the nudge.
+    await expect(cell.locator('[data-output-type="stream"] pre')).toHaveText(/table: (0x[0-9a-f]+|#\d+)/);
     await expect(cell.locator('[data-tip]')).toContainText('on a line by itself');
+  });
+
+  test('the nudge knows both ways a table prints', async ({ page }) => {
+    await openLab(page);
+    // Pinned separately from whichever build is bundled, because only one
+    // spelling can be exercised through a real print at a time -- and the
+    // spelling that is not bundled is the one that would rot unnoticed.
+    const tips = await page.evaluate(async () => {
+      const { tipForOutput } = await import('./src/notebook/hints.js');
+      return ['table: 0x1f2e0', 'table: #42', 'function: #7', 'a table: of contents']
+        .map((text) => tipForOutput(text) !== null);
+    });
+    expect(tips).toEqual([true, true, false, false]);
   });
 
   test('rendering never breaks a cell that otherwise ran', async ({ page }) => {

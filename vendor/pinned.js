@@ -5,17 +5,17 @@
 // which matters because this is the first thing a bug report should carry.
 
 export const BUNDLED = {
-  tag: 'v5.5.1_build10',
-  version: '5.5.1_build10',
-  commit: '7dfe1d590488df950d8ccffd108b321b8c872844',
-  built: '2026-08-18T23:38:03Z',
-  sha256: '561cd2f01bdae37b0f0d0b8ce979cbcf9b74fc5a0ed0aeccf918c20cd750ba0a',
+  tag: 'v0.17.1',
+  version: '0.17.1',
+  commit: 'd8497b0dd917548c3e2bfa88ed539a6f527ba369',
+  built: '2026-09-20T00:45:31Z',
+  sha256: 'ef376390f1886164e83f8d0eb7421be0c160fe44ec09ac449633be7d20068758',
   artifact: 'libdiluvium_wasi.wasm',
   // The swarm build, when this release has one: the same objects plus
   // dvs.o and dvs_shim.o. `null` means this tag does not publish it, and
   // the page reads that as "no swarm panel on this runtime" rather than
   // as an error. New in v5.5.1_build5.
-  swarm: { artifact: 'diluvium_swarm_wasi.wasm', sha256: 'ee602717a892773f979a5354e4527aba04fd3440f4f8303b8c4b0f80e698f12b' },
+  swarm: { artifact: 'diluvium_swarm_wasi.wasm', sha256: '7d83e2019890a662669ad2a1b3e4dd14f2dd044affbc18b5c8985cbe736685f5' },
   // From changelog.json, where upstream states it. `null` means this
   // script could not ask -- not that the build is fine.
   stable: true,

@@ -513,12 +513,19 @@ test.describe('the index after the renumber', () => {
       .toEqual([RENUMBERED.latest_prerelease]);
     expect(RENUMBERED.releases.some((r) => 'prerelease' in r)).toBe(false);
 
+    // The stable entry checked is the newest one that is not the bundled
+    // build, which the list leaves out in favour of `pinned`. This named
+    // v0.17.1 outright, and the pin moving onto v0.17.1 is what broke it --
+    // the same trap the dropdown test above steps around, stepped into.
+    const { BUNDLED } = await import('../vendor/pinned.js');
+    const stable = RENUMBERED.releases.find((r) => r.stable && r.tag !== BUNDLED.tag);
+
     await stubMirror(page, { releases: RENUMBERED.releases });
     await openLab(page);
     await checkVersions(page);
     const label = (tag) => select(page).locator(`option[value="${tag}"]`);
     await expect(label('v5.5.1_build4')).toHaveText('5.5.1_build4 (prerelease)');
-    await expect(label('v0.17.1')).toHaveText('0.17.1');
+    await expect(label(stable.tag)).toHaveText(stable.version);
   });
 
   test('is the same order the index was published in', async ({ page }) => {

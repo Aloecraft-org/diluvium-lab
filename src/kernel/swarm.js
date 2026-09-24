@@ -127,7 +127,9 @@ export function swarmProblems(exports) {
     return [`asking for the swarm ABI version threw: ${err.message}`];
   }
   // The swarm layer sits on the same `dv_` core, which has an ABI of its
-  // own, and v0.16.0 moved it while leaving the swarm layer's at 1.
+  // own: v0.16.0 moved it to 2 while leaving the swarm layer's at 1. The
+  // layer builds its own configs, compiled against its own `dv.h`, so the
+  // core's ABI only has to be one this host speaks.
   return coreAbiProblems(exports);
 }
 

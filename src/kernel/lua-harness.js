@@ -199,9 +199,10 @@ function emit(kind, payloadExpr) {
 }
 
 /**
- * Show a table's contents instead of its address.
+ * Show a table's contents instead of its identity.
  *
- * `tostring({1, 2, 3})` is `table: 0x1f2e0`, which is the moment a language
+ * `tostring({1, 2, 3})` is `table: #42` -- `table: 0x1f2e0` on the Lua-era
+ * builds, which printed the address -- and either is the moment a language
  * starts to feel hostile to someone learning it. This renders the value
  * instead, and it runs inside Lua because that is the only place the value
  * exists -- the host only ever sees a string.

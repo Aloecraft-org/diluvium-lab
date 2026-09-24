@@ -149,12 +149,18 @@ export function hintFor(message) {
 /**
  * A nudge for output that is technically correct and useless to read.
  *
- * `print(t)` writes `table: 0x1f2e0`, because that is what Lua's print
- * does and the notebook does not redefine it. The echo *does* render
+ * `print(t)` writes `table: 0x1f2e0` on the Lua-era builds and `table: #42`
+ * from diluvium 0.16.0, which prints a table's creation number instead of
+ * its address. Both are what Lua's print does -- the notebook does not
+ * redefine it -- and both tell a reader nothing. The echo *does* render
  * tables, so the fix is one the reader can act on immediately.
+ *
+ * This matched only the address, and diluvium's change did not break it
+ * loudly: the tip simply never appeared again. So both spellings are here,
+ * and the test prints a table on whichever build is bundled.
  */
 export function tipForOutput(text) {
-  if (typeof text === 'string' && /\btable: 0x[0-9a-f]+/.test(text)) {
+  if (typeof text === 'string' && /\btable: (?:0x[0-9a-f]+|#\d+)/.test(text)) {
     return 'Tip: put the table on a line by itself, with no `print`, to see what is inside it.';
   }
   return null;

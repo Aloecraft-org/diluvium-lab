@@ -208,7 +208,14 @@ test.describe('the worker is a real boundary', () => {
   test('the language probe still runs, so highlighting survives the move', async ({ page }) => {
     await openLab(page);
     const language = await page.evaluate(() => window.lab.language);
-    expect(language.keywords).toHaveLength(26);
+    // Both passes of the probe ran across the boundary: stock Lua's
+    // reserved words from the first, a contextual one from the second.
+    // The exact count is highlight.spec.js's to pin, and moves with the
+    // pin; this used to pin it as well, so a pin move broke both.
+    const STOCK = ['and', 'break', 'do', 'else', 'elseif', 'end', 'false', 'for', 'function',
+      'goto', 'if', 'in', 'local', 'nil', 'not', 'or', 'repeat', 'return', 'then', 'true',
+      'until', 'while'];
+    expect(language.keywords).toEqual(expect.arrayContaining(STOCK));
     expect(language.keywords).toContain('switch');
     expect(language.globals).toContain('print');
   });

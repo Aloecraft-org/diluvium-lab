@@ -581,10 +581,11 @@ return 0`;
   });
 });
 
-// The swarm half of the same question. The case that mattered is a swarm
-// layer at ABI 1 over a core at dv ABI 2, which is every build from
-// v0.16.0: the layer's own check passed, the core refused underneath, and
-// Start returned to "No swarm is running" with nothing said.
+// The swarm half of the same question. The case that mattered was a swarm
+// layer at ABI 1 over a core at an ABI this host did not speak -- which,
+// before the host learned 2, was every build from v0.16.0: the layer's own
+// check passed, the core refused underneath, and Start returned to "No
+// swarm is running" with nothing said. Core 3 stands in for that now.
 test.describe('a swarm module the Lab cannot drive', () => {
   test('gives a reason whenever it is not capable, including a dv-ABI-2 core', async ({ page }) => {
     await openKernel(page);
@@ -598,6 +599,7 @@ test.describe('a swarm module the Lab cannot drive', () => {
       return Object.entries({
         'layer 1, core 1': surface(1, 1),
         'layer 1, core 2': surface(1, 2),
+        'layer 1, core 3': surface(1, 3),
         'layer 2, core 1': surface(2, 1),
         'no swarm layer': noSwarmLayer,
       }).map(([name, ex]) => ({ name, capable: swarmCapable(ex), problems: swarmProblems(ex) }));
@@ -605,6 +607,7 @@ test.describe('a swarm module the Lab cannot drive', () => {
     for (const c of cases) expect(c.capable, c.name).toBe(c.problems.length === 0);
     const byName = Object.fromEntries(cases.map((c) => [c.name, c]));
     expect(byName['layer 1, core 1'].capable).toBe(true);
-    expect(byName['layer 1, core 2'].problems.join(' ')).toContain('dv ABI 2');
+    expect(byName['layer 1, core 2'].capable).toBe(true);
+    expect(byName['layer 1, core 3'].problems.join(' ')).toContain('dv ABI 3');
   });
 });

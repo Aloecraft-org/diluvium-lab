@@ -32,8 +32,24 @@ export const LAYOUT_SLOTS = [
 /** Refuse precompiled chunks; accept source only. `DV_FLAG_TEXT_ONLY`. */
 export const FLAG_TEXT_ONLY = 0x1;
 
-/** The ABI this binding was written against. */
-export const EXPECTED_ABI = 1;
+/**
+ * The `dv_` ABIs this binding speaks.
+ *
+ * 2 added `dv_features`, `dv_build`, `dv_array_adopt` and the
+ * `dv_numeric_*` block, and changed nothing that was already there: between
+ * the last ABI-1 build (v5.5.1_build14) and v0.17.1, diluvium's `dv.h`
+ * gained 185 lines and lost exactly one, the version define, and
+ * `dv_config` is byte for byte the same. This binding calls none of the new
+ * surface, so it holds a build of either ABI the same way, and declares to
+ * `dv_new` whichever the running build reports -- which is what keeps the
+ * sandbox and the swarm on the older builds in the runtime dropdown as well
+ * as bringing them to the new ones.
+ *
+ * A third is not assumed to be like these two. An ABI bump exists to
+ * refuse a wrapper that does not know the surface it is holding, and a
+ * binding that guessed would be exactly that wrapper.
+ */
+export const SUPPORTED_ABIS = Object.freeze([1, 2]);
 
 /**
  * The calls this needs. Deliberately not every `dv_` export: a build
@@ -91,12 +107,13 @@ export function coreAbiProblems(exports) {
   } catch (err) {
     return [`asking for the dv ABI version threw: ${err.message}`];
   }
-  if (abi === EXPECTED_ABI) return [];
-  if (abi > EXPECTED_ABI) {
-    return [`this build speaks dv ABI ${abi}, newer than the ABI ${EXPECTED_ABI} this Lab is `
-      + 'written against. Its cells run; instances and swarms wait for the Lab to learn it'];
+  if (SUPPORTED_ABIS.includes(abi)) return [];
+  const speaks = SUPPORTED_ABIS.join(' and ');
+  if (abi > Math.max(...SUPPORTED_ABIS)) {
+    return [`this build speaks dv ABI ${abi}, newer than this Lab, which speaks ${speaks}. `
+      + 'Its cells run; instances and swarms wait for the Lab to learn it'];
   }
-  return [`this build speaks dv ABI ${abi}; this Lab is written against ABI ${EXPECTED_ABI}`];
+  return [`this build speaks dv ABI ${abi}; this Lab speaks ${speaks}`];
 }
 
 /** `dv_layout` as a named object. */
@@ -192,7 +209,10 @@ export function runInstance(exports, drain, code, options = {}) {
       config = alloc(layout.CONFIG_SIZE);
       new Uint8Array(exports.memory.buffer).fill(0, config, config + layout.CONFIG_SIZE);
       const view = new DataView(exports.memory.buffer);
-      view.setUint32(config + layout.CONFIG_ABI, EXPECTED_ABI, true);
+      // The build's own ABI, which `instanceProblems` has already checked
+      // is one this binding speaks. `dv_new` refuses a config declaring
+      // any other, which is the point of declaring it.
+      view.setUint32(config + layout.CONFIG_ABI, exports.dv_abi_version(), true);
       view.setUint32(config + layout.CONFIG_FLAGS, FLAG_TEXT_ONLY, true);
     }
 

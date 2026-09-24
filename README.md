@@ -952,10 +952,18 @@ measure. Raw bytes / `gzip -9` bytes.
 | pin | kernel | swarm module | single-file build |
 |---|---|---|---|
 | `v5.5.1_build10` | 1,166,954 / 378,001 | 1,182,275 / 383,587 | 2,473,078 / 783,379 |
+| `v0.17.1` | 1,250,445 / 404,124 | 1,265,754 / 409,547 | 2,597,337 / 825,583 |
 
-That row is the baseline for the September numeric work: it is the last
-pin *before* a `numeric` feature exists, so the next row is what the
-feature costs. The threshold agreed with the other sessions is 500 KB
+The first row is the baseline for the September numeric work: the last pin
+*before* a `numeric` feature exists. **The second row is not what that
+feature costs**, because the kernel it measures does not carry it:
+v0.17.1's `libdiluvium_wasi.wasm` answers `dv_features()` with `regex`,
+`json`, `msgpack` and `snapshot`, and no `numeric`, though diluvium's
+changelog says the feature is on in release builds. Its +26 KB gzipped is
+the rest of 0.15 to 0.17 -- fourteen syntax forms, the vendored libm that
+makes `math` and `^` the same bits everywhere, and per-object identities.
+The row the feature costs is still to come, from a release whose WASI
+build carries it. The threshold agreed with the other sessions is 500 KB
 gzipped on the kernel module — past that the number gets recorded and
 flagged rather than quietly absorbed, and which profile carries `numeric`
 is not this repository's call to make.

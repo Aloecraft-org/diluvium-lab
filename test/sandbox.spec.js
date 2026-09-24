@@ -147,8 +147,9 @@ test.describe('the sandbox', () => {
 // kernel can -- so these drive the two halves separately: the predicate
 // over a real module's export surface with only its ABI answer varied, and
 // the stylesheet with the capability attribute set the way the app sets it
-// for such a build. Both halves were measured together against the real
-// v0.17.1 kernel, a dv-ABI-2 build, when these were written.
+// for such a build. Both halves were first measured together against the
+// real v0.17.1 kernel, back when it spoke an ABI this Lab did not; it speaks
+// 1 and 2 now, so the build that stands in for "too new" is ABI 3.
 test.describe('a build the Lab cannot host instances on', () => {
   test('is told which way the ABI is off, and "capable" agrees with the reasons', async ({ page }) => {
     await openLab(page);
@@ -165,6 +166,7 @@ test.describe('a build the Lab cannot host instances on', () => {
       return Object.entries({
         'ABI 1': surface({ dv_abi_version: () => 1 }),
         'ABI 2': surface({ dv_abi_version: () => 2 }),
+        'ABI 3': surface({ dv_abi_version: () => 3 }),
         'ABI 0': surface({ dv_abi_version: () => 0 }),
         'throws': surface({ dv_abi_version: () => { throw new Error('trap'); } }),
         'no dv_abi_version': without('dv_abi_version'),
@@ -176,14 +178,17 @@ test.describe('a build the Lab cannot host instances on', () => {
     // One source of truth: never "not capable" with nothing wrong.
     for (const c of cases) expect(c.capable, c.name).toBe(c.problems.length === 0);
     const byName = Object.fromEntries(cases.map((c) => [c.name, c]));
+    // Both ABIs this binding speaks: the Lua era's 1, and 2 from v0.16.0.
     expect(byName['ABI 1'].capable).toBe(true);
+    expect(byName['ABI 2'].capable).toBe(true);
 
-    // Newer is not older. The message this replaced told a dv-ABI-2 build
-    // it had no `dv_` ABI and needed 5.5.1_build3 or newer.
-    const newer = byName['ABI 2'].problems.join(' ');
-    expect(newer).toContain('dv ABI 2');
+    // Newer is not older. The message this replaced told a newer build it
+    // had no `dv_` ABI and needed 5.5.1_build3 or newer.
+    const newer = byName['ABI 3'].problems.join(' ');
+    expect(newer).toContain('dv ABI 3');
     expect(newer).toContain('newer');
     expect(newer).not.toContain('5.5.1_build3');
+    expect(byName['ABI 0'].problems.join(' ')).toContain('dv ABI 0');
     expect(byName['no dv_abi_version'].problems.join(' ')).toContain('5.5.1_build3');
     expect(byName['no dv_new'].problems.join(' ')).toContain('dv_new');
   });

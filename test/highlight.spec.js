@@ -401,15 +401,21 @@ test.describe('the keyword set comes from the kernel', () => {
     await openLab(page);
     const language = await page.evaluate(() => window.lab.language);
 
-    // The pinned 5.5.1 build: stock Lua's 22 reserved words plus the four
-    // contextual ones. Measured, not assumed -- and a count rather than a
-    // spot check, because the failure this guards against is a probe that
+    // The pinned v0.17.1: stock Lua's 22 reserved words plus eight
+    // contextual ones -- the four the Lua-era 5.5 builds had, and `continue`
+    // (0.15.1), `const`, `export` and `class` (0.16.0). Measured, not
+    // assumed: each of the new four was compiled in its own construct on
+    // this build, with snippets unlike the probe's. And a count rather than
+    // a spot check, because the failure this guards against is a probe that
     // quietly stops finding things.
     expect(language.keywords).toContain('local');
     expect(language.keywords).toContain('goto');
-    expect(language.keywords).toHaveLength(26);
+    expect(language.keywords).toHaveLength(30);
     for (const word of ['switch', 'defer', 'with', 'global']) {
       expect(language.keywords, `${word} should be a 5.5 keyword`).toContain(word);
+    }
+    for (const word of ['continue', 'const', 'export', 'class']) {
+      expect(language.keywords, `${word} should be a keyword since 0.16.0`).toContain(word);
     }
     // A word nothing reserves stays an identifier, which is what stops
     // the candidate list from simply colouring everything it asks about.
@@ -600,34 +606,41 @@ test.describe('a form is dark until the build has it', () => {
     await openLab(page);
     const syntax = await page.evaluate(() => window.lab.language.syntax);
 
-    // Measured against the pinned 5.5.1_build10, not assumed. These three
-    // are in it: `a?.b`, `n += 1` and `~function f() end` all compile.
-    expect(syntax).toEqual(expect.arrayContaining(['optional', 'compound', 'secure']));
+    // Measured against the pinned v0.17.1, not assumed: every name below
+    // was compiled on this build with a snippet unlike the probe's own, so
+    // the two agreeing is evidence rather than the probe checking itself.
+    // Six moved up a line with the pin, which is the move this test asks
+    // for -- regex literals from build13, the rest from 0.16.0's syntax.
+    expect(syntax).toEqual(expect.arrayContaining([
+      'optional', 'compound', 'secure',
+      'regex', 'separators', 'binary', 'spread', 'lambda', 'at-self',
+    ]));
 
-    // Everything else is not, and that is the point of the probe rather
-    // than a version check. Regex literals land in build13; the rest are
-    // session A's Tier A, B and C work. Each turns on here by the pin
-    // moving, with nothing in this repository edited. When one of these
-    // starts failing, the pin moved -- move the name up a line.
-    for (const form of ['regex', 'separators', 'binary', 'suffix', 'optional-call',
-      'spread', 'lambda', 'attribute', 'at-self']) {
-      expect(syntax, `${form} should not be in build10`).not.toContain(form);
+    // Still not in it, and that is the point of the probe rather than a
+    // version check. When one of these starts failing, the pin moved --
+    // move the name up a line.
+    for (const form of ['suffix', 'optional-call', 'attribute']) {
+      expect(syntax, `${form} should not be in v0.17.1`).not.toContain(form);
     }
     // `?.` and `?[` are in this build and `?:` and `?(` are not, which is
     // why they are two flags: one would paint a syntax error.
     expect(syntax).toContain('optional');
   });
 
-  test('the contextual keywords the proposals doc adds are not here yet', async ({ page }) => {
+  test('the contextual keywords the proposals doc added arrived with the pin', async ({ page }) => {
     await openLab(page);
     const keywords = await page.evaluate(() => window.lab.language.keywords);
-    // Each is still an ordinary identifier on build10, so it must read as
-    // one. These flip on with session A's Tier A, B and C milestones.
+    // Ordinary identifiers on build10, which this test used to insist on.
+    // They flipped with 0.15.1 and 0.16.0 and nothing here was edited to
+    // make them: the kernel was asked, and on v0.17.1 each one opens its
+    // own construct. They are contextual, not reserved -- `class = 1`
+    // still compiles -- which is the trade the Lua-era four already made:
+    // a tokenizer without a parser colours the word wherever it appears.
     for (const word of ['continue', 'const', 'export', 'class']) {
-      expect(keywords, `${word} is not a build10 keyword`).not.toContain(word);
-      expect(await typesIn(page, `${word} = 1`, word)).toEqual(['ident']);
+      expect(keywords, `${word} is a keyword on v0.17.1`).toContain(word);
     }
-    // The four this build does have are unaffected by the new probes.
+    expect(await typesIn(page, 'class Shape\n  sides = 0\nend', 'class')).toEqual(['keyword']);
+    // The four the Lua era had are unaffected.
     for (const word of ['switch', 'defer', 'with', 'global']) {
       expect(keywords).toContain(word);
     }
@@ -636,11 +649,17 @@ test.describe('a form is dark until the build has it', () => {
   test('a form this build lacks draws nothing in a cell', async ({ page }) => {
     await openLab(page);
     const cell = codeCell(page);
+    const attributed = 'function g(x) <deterministic> return x end';
+    await cell.locator('[data-editor]').fill(attributed);
+    await expect(cell.locator('.editor-highlight')).toHaveText(attributed);
+    // v0.17.1 has no function attributes, so nothing may claim to be one.
+    // This used to be the regex literal, until the pin moved and brought
+    // regex literals with it.
+    await expect(cell.locator('.editor-highlight .tok-attribute')).toHaveCount(0);
+    // and the forms it does have are painted -- including the one that
+    // used to stand here as the missing form
     await cell.locator('[data-editor]').fill('local re = `\\d+`');
-    await expect(cell.locator('.editor-highlight')).toHaveText('local re = `\\d+`');
-    // build10 has no regex literal, so nothing may claim to be one.
-    await expect(cell.locator('.editor-highlight .tok-regex')).toHaveCount(0);
-    // and the forms it does have are painted
+    await expect(cell.locator('.editor-highlight .tok-regex')).toHaveCount(1);
     await cell.locator('[data-editor]').fill('count += 1');
     await expect(cell.locator('.editor-highlight .tok-compound-assign')).toHaveText('+=');
   });
