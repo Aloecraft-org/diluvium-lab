@@ -3872,3 +3872,106 @@ for; BUILDINFO is already read as the authority over the filename; and §9's
 tag-matches-the-tree gate is now enforced on every push rather than at
 release time, because `check-version.mjs` compares `CHANGELOG.yaml`'s newest
 entry and its tag against the tree.
+
+## diluvium renumbered, and the dropdown had not heard
+
+diluvium left Lua's numbering on 2026-09-12: v5.5.1_build14 was the last of
+the Lua era and v0.15.0 the first of its own line (doc/Alignment.md §1). By
+2026-09-24 the mirror carried v0.15.1, v0.16.0, v0.16.1 and v0.17.1 beside
+fifteen Lua-era releases, and the runtime dropdown, sorting by semver, put
+every retired build above every current one. Measured against the real
+index in the real page:
+
+```
+ 1 v5.5.1_build12p1
+ 2 v5.5.1_build14
+ ...
+16 v0.17.1          <- the newest thing the mirror carries
+```
+
+Two bugs, both in `src/kernel/releases.js`.
+
+**The eras were compared by their digits.** 5.5.1 is Lua's number and
+0.17.1 is diluvium's, and no comparison of the two means anything. None is
+needed: the Lua era is closed, so all of it is older than any of the new
+line. `compareVersions` now decides the era before it reads a digit.
+`luaEra` recognises it by Lua's major version rather than by the `_build`
+spelling, because the index gives `v5.4.7_release` the version `5.4.7` and
+the spelling is gone by the time it arrives.
+
+**`build12p1` was never split.** `identifiers()` took one word then one
+number, `build12p1` fit neither, and it stayed whole as text -- where,
+against `build`, it is the longer string and wins. So the mirror's one
+patch release, a patch on build 12, sat at the top of the list. It is now
+split into runs, `build, 12, p, 1`, and lands between build 12 and 13.
+
+The fixed comparator orders all nineteen releases in exactly the order the
+index publishes them, which is by date -- a fact the comparator never sees.
+That agreement is now a test, over `test/fixtures/releases-renumbered.json`,
+the real index trimmed to the fields the Lab reads.
+
+### The test that could not have caught it
+
+At v0.13.0 this file recorded a test asserting the *inverted* order, on the
+theory that the day v0.15.0 was cut it would fail and announce the
+renumber. It could not have. It compared strings written into the test
+file; cutting a tag changes the mirror, and CI never touches the mirror. So
+v0.15.0 was cut and the test went on passing for twelve days, pinning the
+bug it was meant to announce. The lesson is narrow and worth keeping: a test
+of the code cannot notice a change in the world. What noticed was looking
+at the real index, which is what the new fixture now pins.
+
+### The index lost its word for prerelease
+
+Beyond the ordering, and found by the same measurement: the index is
+generated from diluvium's changelog now (`"source": "changelog"`), and it
+no longer carries GitHub's `prerelease` flag. It carries `stable`, which
+that changelog calls the truth. `MirrorSource.list` read only `prerelease`,
+so every entry showed as a release -- including v5.5.1_build4, the one
+`stable: false` build, which the index itself names `latest_prerelease`.
+That is the exact failure an earlier section fixed on purpose ("a
+prerelease sat in the dropdown looking exactly like a release"), undone by
+a schema change nobody here saw. Both spellings are read now.
+
+### What an ABI-2 build could and could not do, and now says
+
+Putting v0.17.1 at the top of the list raised the question the ordering
+alone could not answer: does it work when someone picks it? diluvium moved
+its core to dv ABI 2 at v0.16.0, and this Lab's instance tier and swarm
+host are written against 1. Measured against the real v0.17.1 artifacts in
+the real page:
+
+- **Cells** ran. `pcall` caught, `queue` and `msgpack` were there. The kernel
+  is not what moved.
+- **The sandbox** button was still offered, and pressing it said the build
+  had no `dv_` ABI and needed "5.5.1_build3 or newer" -- advice to upgrade,
+  given to a build already newer than the Lab.
+- **The swarm** did nothing. Start, then "No swarm is running", and no
+  error anywhere.
+
+Three causes, none of them about ABI 2 as such.
+
+`swarmCapable` checked the core's ABI and `swarmProblems` did not. They
+were written side by side and drifted, so on a dv-ABI-2 core under a
+swarm layer still at ABI 1 the module was *not capable* with *no problems*.
+`_swarmExports` gates on the problems, so Start went ahead and the core
+refused underneath. Each "capable" is now derived from its "problems", so
+they cannot disagree again, and the core's ABI is one shared function,
+`coreAbiProblems`, with words for which way the mismatch runs.
+
+The sandbox's hide rule lost on specificity to the quiet-toolbar reveal --
+the capability attribute was already `false`. It takes the extra `.cell
+.cell-tools` the read-only rules took for the same reason.
+
+None of the three had a test, because the only build this Lab bundles can
+do everything. The predicates are now tested over the real bundled
+modules' export surfaces with only the ABI answer varied, and the
+stylesheet with the attribute set as the app sets it.
+
+**Running instances and swarms on ABI 2 is not done** and is not a small
+change. ABI 2 adds `dv_features`, `dv_build` and `dv_array_adopt`, and a
+host built against ABI 1 is refused by `dv_new` by design. That is the
+re-pin to 0.17.1, which is its own piece of work.
+
+Released as **v0.13.1**, fixes only. The bundled runtime is unchanged, at
+5.5.1_build10.

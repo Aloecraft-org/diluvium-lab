@@ -37,7 +37,7 @@
 // its own bugs silently would be worse than one that crashed.
 
 import { decode, encode } from '../../vendor/msgpack.js';
-import { readLayout, readCString, EXPECTED_ABI } from './instance.js';
+import { readLayout, readCString, coreAbiProblems } from './instance.js';
 
 /** The queue names `doc/Host.md` fixes, so guests are portable between hosts. */
 export const HOSTCALL_QUEUE = 'host/calls';
@@ -91,17 +91,19 @@ const REQUIRED_SWARM = [
   'dvs_resident', 'dvs_cached_size', 'dvs_last_error', 'dvs_abi_version',
 ];
 
-/** Can this module be driven as a swarm? Asked of the module, never of a version string. */
+/**
+ * Can this module be driven as a swarm? Asked of the module, never of a
+ * version string.
+ *
+ * Derived from `swarmProblems`, and it used to be written beside it. The
+ * two drifted: this checked the core's `dv_` ABI and `swarmProblems` did
+ * not, so on a dv-ABI-2 build -- v0.16.0 onward -- the module was not
+ * capable and had no problems. `_swarmExports` gates on the problems, so
+ * Start went ahead, the core refused the swarm underneath, and the panel
+ * went back to "No swarm is running" with nothing said about why.
+ */
 export function swarmCapable(exports) {
-  if (!exports) return false;
-  if (!REQUIRED_SWARM.every((name) => typeof exports[name] === 'function')) return false;
-  try {
-    // A future ABI break is a refusal rather than a best effort: these are
-    // raw pointers into another language's structs.
-    return exports.dvs_abi_version() === 1 && exports.dv_abi_version() === EXPECTED_ABI;
-  } catch {
-    return false;
-  }
+  return swarmProblems(exports).length === 0;
 }
 
 /**
@@ -124,7 +126,9 @@ export function swarmProblems(exports) {
   } catch (err) {
     return [`asking for the swarm ABI version threw: ${err.message}`];
   }
-  return [];
+  // The swarm layer sits on the same `dv_` core, which has an ABI of its
+  // own, and v0.16.0 moved it while leaving the swarm layer's at 1.
+  return coreAbiProblems(exports);
 }
 
 /**

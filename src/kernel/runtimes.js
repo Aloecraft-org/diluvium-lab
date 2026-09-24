@@ -89,10 +89,10 @@ export class RuntimeRegistry {
       // the one that works with no network.
       .filter((r) => (r.version ?? r.tag) !== this.pinnedLabel)
       // Newest first, and sorted here rather than trusting the index --
-      // the order a mirror happens to write is not a promise, and the
-      // comparator understands both the current `_buildN` tags and the
-      // semver they are moving to, so this keeps working across that
-      // change without anyone timing the two.
+      // the order a mirror happens to write is not a promise. The
+      // comparator knows both of diluvium's numberings, the Lua era's
+      // `_buildN` and its own line from v0.15.0, and that every release of
+      // the second is newer than all of the first; see `luaEra`.
       .sort((a, b) => compareVersions(b.version ?? b.tag, a.version ?? a.tag))
       // `prerelease` was read off the index and then dropped here, so a
       // prerelease sat in the dropdown looking exactly like a release.

@@ -27,15 +27,16 @@
 #   date          ISO date published; null when unreleased.
 #   status        released | unreleased | tagged
 #                 `tagged` means the tag exists but no GitHub release was
-#                 published for it, which is where 0.13.0 lands: the Lab has
-#                 no release workflow yet (doc/Alignment.md §11), so the tag
-#                 is the whole of the release.
+#                 published for it, which is where every Lab release so far
+#                 lands: there is no release workflow yet (doc/Alignment.md
+#                 §11), so the tag is the whole of the release.
 #
-#                 It sat at `unreleased` until the tag was cut, because an
-#                 entry claiming a tag nobody can fetch is the file lying
-#                 about itself. This commit is the flip -- the same edit
-#                 technoproj's `release-check` tells you to make when
-#                 publishing, one status short of it.
+#                 An entry sits at `unreleased` while its work is reviewed,
+#                 because an entry claiming a tag nobody can fetch is the
+#                 file lying about itself. The last commit before the merge
+#                 the tag goes on flips it -- the same edit technoproj's
+#                 `release-check` tells you to make when publishing, one
+#                 status short of it.
 #   stable        A real release rather than a candidate. This field is the
 #                 truth; GitHub's `prerelease` flag is derived from it.
 #   latest        Optional. Exactly one entry carries `latest: true`; that is
@@ -101,6 +102,61 @@ schema: 1
 repo: Aloecraft-org/diluvium-lab
 
 releases:
+  - version: 0.13.1
+    tag: v0.13.1
+    date: 2026-09-24
+    status: tagged
+    stable: true
+    mirror: false
+    diluvium: 7dfe1d590488df950d8ccffd108b321b8c872844
+    diluvium_build: 10
+    nbformat: "4.5"
+    summary: |
+      **The runtime dropdown catches up with diluvium's renumber.** diluvium
+      left Lua's numbering on 2026-09-12 -- v5.5.1_build14 was the last of
+      the Lua era, v0.15.0 the first of its own line -- and the dropdown,
+      sorting by semver, had put every retired build above every current
+      one. v0.17.1, the newest build on the mirror, sat sixteenth of
+      nineteen. It is first now.
+
+      Two more things the renumber exposed, found by checking the new
+      builds in the real page rather than stopping at the order: the index
+      stopped saying which builds are prereleases in the word the Lab read,
+      and a build on diluvium's new dv ABI 2 had its swarm fail with nothing
+      said and its sandbox refused with advice to upgrade.
+
+      Fixes only, so a patch. The bundled runtime is unchanged.
+    fixed:
+      - |
+        **The dropdown orders diluvium's two numberings.** The Lua era is
+        closed, so all of it is older than any of the new line, and the era
+        is decided before any digit is compared. Recognised by Lua's major
+        version, because the index gives `v5.4.7_release` the version
+        `5.4.7` and the `_build` spelling is gone by then.
+      - |
+        **`v5.5.1_build12p1` sorts between build 12 and 13**, not above
+        build 14. It was never split into identifiers, stayed whole as text,
+        and beat `build` lexically.
+      - |
+        **Prereleases are labelled again.** The index is generated from
+        diluvium's changelog now and says `stable`, not `prerelease`; every
+        build showed as a release, including the one the index itself names
+        `latest_prerelease`.
+      - |
+        **A dv-ABI-2 build says what it cannot do.** On v0.16.0 onward,
+        Start on the swarm now raises an error saying the build speaks a
+        newer ABI than the Lab, instead of quietly doing nothing; the
+        sandbox button is hidden rather than offered and refused; and the
+        refusal no longer tells a newer build to upgrade.
+    known_issues:
+      - |
+        **Instances and swarms do not run on dv ABI 2**, which is every
+        diluvium from v0.16.0. Cells do. The instance tier and swarm host
+        are written against ABI 1, and `dv_new` refuses an ABI-1 host by
+        design; supporting 2 is the re-pin to 0.17.1, not a fix.
+      - |
+        **`scripts/fetch-runtime.sh` still defaults to the old mirror host.**
+        Carried from 0.13.0, unchanged.
   - version: 0.13.0
     tag: v0.13.0
     date: 2026-09-12

@@ -138,7 +138,13 @@ export class MirrorSource extends ReleaseSource {
         tag: r.tag,
         version: versionOf(r),
         published: r.published_at ?? r.published ?? null,
-        prerelease: r.prerelease === true,
+        // Two spellings of one fact. The index used to carry GitHub's
+        // `prerelease` flag; generated from diluvium's changelog, as it now
+        // is, it carries `stable` instead -- which that changelog calls the
+        // truth, and GitHub's flag is derived from. Reading only the old
+        // spelling showed every build as a release, including
+        // v5.5.1_build4, the one the index itself names `latest_prerelease`.
+        prerelease: r.prerelease === true || r.stable === false,
         // Kept so fetchKernel can cross-check the index against the
         // release's own checksum files rather than trusting either alone.
         assets: assetChecksums(r.assets),
@@ -250,20 +256,23 @@ export function versionOf(release) {
 /**
  * Take a version apart into something comparable.
  *
- * Two shapes have to work, and they have to work *together*, because a
- * mirror will carry both for as long as the old tags exist:
+ * Every shape a mirror has carried has to work, and they have to work
+ * *together*, because a mirror carries all of them for as long as the old
+ * tags exist -- and a published tag is never renamed:
  *
- *   v5.4.7_release      the current scheme: `_release` is the final one
+ *   v5.4.7_release      the Lua era: `_release` is the final one
  *   v5.5.1_build1       ...and `_buildN` is an iteration on it
- *   v5.5.1-rc.2         semver, which is where this is going
+ *   v5.5.1_build12p1    ...and `pN` is a patch on a build
+ *   v0.17.1             diluvium's own line, from v0.15.0 (Alignment §1)
+ *   v0.18.0-rc.1        semver pre-releases on that line
  *   1.4.0+lua.5.5.1     semver with build metadata, ignored for ordering
  *
- * The Lab is deliberately the tolerant end of this. Making the consumer
- * accept the new format *before* anything emits one means the day the
- * release job changes, nothing here has to change with it and no tag has
- * to be renamed — renaming a published tag would break its checksums, the
- * mirror, `vendor/PINNED_TAG` and the committed bytecode fixtures all at
- * once.
+ * The Lab is deliberately the tolerant end of this. It accepted semver
+ * before anything emitted it, and that part held: the renumber needed no
+ * change to parsing. What it did not anticipate is that the new line would
+ * start *below* the old one -- this used to say `v5.5.1-rc.2` was "where
+ * this is going" -- so the two eras also have to be ordered, which
+ * `compareVersions` does before it looks at a single digit.
  *
  * @returns {{core: number[], pre: Array<string|number>|null}} `pre` is
  *   null for a final release, which sorts *above* any pre-release of the
@@ -303,21 +312,59 @@ export function parseVersion(raw) {
  *
  * `build1` is split into `['build', 1]` rather than left as one string,
  * which is what makes `build10` sort after `build2` instead of before it
- * — the trap in the current scheme, since string order puts `10` first.
+ * — the trap in the old scheme, since string order puts `10` first.
+ *
+ * Split into *runs*, letters and digits alternating, not into one word and
+ * one number. `v5.5.1_build12p1` is a patch on build 12, and the pattern
+ * this replaced -- a word, then digits, then the end -- did not match it,
+ * so it stayed whole. As text, `build12p1` against `build` is the longer
+ * string with the same start, so it won: the mirror's one patch release
+ * sat at the top of the dropdown, above build 14. As runs it is
+ * `build, 12, p, 1`, which sorts after build 12 and before build 13.
+ *
+ * A part the runs do not spell out exactly is kept whole rather than
+ * guessed at.
  */
 function identifiers(pre) {
   return pre.split('.').flatMap((part) => {
-    const match = /^([A-Za-z-]*)(\d*)$/.exec(part);
-    if (!match) return [part];
-    const [, word, digits] = match;
-    return [...(word ? [word] : []), ...(digits ? [Number.parseInt(digits, 10)] : [])];
+    const runs = part.match(/[A-Za-z-]+|\d+/g);
+    if (!runs || runs.join('') !== part) return [part];
+    return runs.map((run) => (/^\d+$/.test(run) ? Number.parseInt(run, 10) : run));
   });
+}
+
+/**
+ * Whether a parsed version is from diluvium's Lua era.
+ *
+ * Until v5.5.1_build14 diluvium's version *was* Lua's, with a suffix; from
+ * v0.15.0 it has its own line (doc/Alignment.md §1). Those two cannot be
+ * compared by their digits -- 5.5.1 is Lua's number and 0.17.1 is
+ * diluvium's -- and ordering them as plain semver put every retired build
+ * above every current one: v0.17.1, the newest thing the mirror carries,
+ * sorted sixteenth of nineteen. They do not need comparing by digits
+ * either. The Lua era is closed; nothing will be published in it again,
+ * so all of it is older than any of the new line.
+ *
+ * Recognised by Lua's major version and not by the `_build` spelling,
+ * because the index gives `v5.4.7_release` the version `5.4.7`: the
+ * spelling is gone by the time a version gets here. Diluvium's own line
+ * will not reach 5 for a long time, and when it does its 5.x cannot be
+ * told from a Lua-era 5.x by digits at all -- by anything, if they share a
+ * number. That is a fact about the two numberings, not about this test.
+ */
+function luaEra({ core }) {
+  return core[0] === 5;
 }
 
 /** Newest first, for a dropdown. Returns <0, 0 or >0 like a comparator. */
 export function compareVersions(a, b) {
   const va = parseVersion(a);
   const vb = parseVersion(b);
+
+  // The era before any digit: all of the Lua era is older than any of the
+  // new line, whatever their numbers say. See `luaEra`.
+  const era = Number(!luaEra(va)) - Number(!luaEra(vb));
+  if (era !== 0) return era;
 
   const depth = Math.max(va.core.length, vb.core.length);
   for (let i = 0; i < depth; i++) {
