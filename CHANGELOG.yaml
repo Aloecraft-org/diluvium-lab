@@ -62,14 +62,23 @@
 #                   the coupling rather than encoding it. Deliberately the
 #                   same key name DRT uses for the same fact, so one `facts`
 #                   declaration in the shared engine serves both.
-#   diluvium_build  The N in 5.5.1_buildN, beside the revision. The revision
-#                   is exact but unordered -- two of them cannot be asked
-#                   which is newer -- and a range needs a number.
+#   diluvium_version  The bundled diluvium's own version, beside the
+#                   revision, from 0.14.0: the revision is exact but
+#                   unordered -- two of them cannot be asked which is newer --
+#                   and a range needs something ordered. DRT's key for the
+#                   same fact.
+#   diluvium_build  What that was before diluvium had a version of its own:
+#                   the N in 5.5.1_buildN. The 0.13.x entries keep it; nothing
+#                   published is rewritten.
+#   dv_abi          The `dv_` ABI of the bundled core, as DRT records it. Not
+#                   every ABI the Lab speaks -- from 0.14.0 that is 1 and 2,
+#                   so the older builds in the dropdown keep their instances
+#                   -- but the one the core it ships with speaks.
 #
-#                   Neither bounds what the Lab can RUN. The runtime dropdown
-#                   fetches and verifies any build the mirror carries, which
-#                   is the reason the Lab's own version could never have
-#                   named one of them.
+#                   None of these bounds what the Lab can RUN. The runtime
+#                   dropdown fetches and verifies any build the mirror
+#                   carries, which is the reason the Lab's own version could
+#                   never have named one of them.
 #   nbformat        The .ipynb format version written and read. A notebook
 #                   saved here has to open in Jupyter, so this is a
 #                   compatibility fact checked by name like any other, and a
@@ -102,6 +111,88 @@ schema: 1
 repo: Aloecraft-org/diluvium-lab
 
 releases:
+  - version: 0.14.0
+    tag: v0.14.0
+    date: null
+    status: unreleased
+    stable: true
+    mirror: false
+    diluvium: d8497b0dd917548c3e2bfa88ed539a6f527ba369
+    diluvium_version: "0.17.1"
+    dv_abi: 2
+    nbformat: "4.5"
+    summary: |
+      **The Lab runs the core DRT 0.8.0 runs.** The bundled runtime moves
+      from 5.5.1_build10 to diluvium v0.17.1 -- revision `d8497b0`, the one
+      DRT's v0.8.0-dev.6 records in its BUILDINFO -- and the Lab learns
+      diluvium's dv ABI 2, so sandboxed instances and swarms run on it.
+
+      The ABI port was small because the ABI change was: between the last
+      ABI-1 build and v0.17.1, `dv.h` gained 185 lines and lost only its
+      version define, and `dv_config` did not move. The Lab now declares to
+      `dv_new` whichever ABI the running build reports, so it hosts both --
+      the new builds gain instances and swarms, and the Lua-era builds in
+      the dropdown keep theirs.
+
+      What the new core brings a notebook: the fourteen syntax forms of
+      diluvium 0.15 to 0.17 -- lambdas, destructuring, `if` and `switch`
+      as expressions, slicing, classes, `const`, `export`, spread and the
+      rest -- coloured as they are typed, because the highlighter asks the
+      running kernel what it parses. Tables print as `table: #42`, `pairs`
+      visits objects in creation order, and `math` and `^` give the same
+      bits everywhere.
+
+      Minor: new capability, on the instance tier and in the language.
+    upgrading: |
+      - **Nothing to do for a notebook.** nbformat is still 4.5, and every
+        new form was a syntax error before, so no existing cell changes
+        meaning. Two results can differ: `tostring` of a table, function or
+        coroutine reads `table: #N` where it read an address, and a loop
+        over a table keyed by objects now sees creation order.
+      - **The numeric tier is not here.** diluvium's changelog says the
+        `numeric` feature is on in release builds, but v0.17.1's WASI kernel
+        reports `regex, json, msgpack, snapshot` and no `array` type. The
+        Lab consumes the artifact as published and does not build diluvium,
+        so it arrives when a release's WASI build carries it.
+    added:
+      - |
+        **Instances and swarms on dv ABI 2.** The binding speaks 1 and 2 and
+        declares the running build's own ABI to `dv_new`. A third is still
+        refused, with a message saying the build is newer than the Lab.
+      - |
+        **The 0.15 to 0.17 syntax, coloured.** Regex literals, numeral
+        separators, `0b` literals, spread, lambdas and `@name` in class
+        bodies light up, and `continue`, `const`, `export` and `class` join
+        the keywords -- each checked by compiling it on this build with a
+        snippet unlike the probe's own. Literal suffixes, `?:`/`?(` and
+        function attributes stay dark: this build does not parse them.
+    changed:
+      - |
+        **The bundled runtime is diluvium v0.17.1** (`d8497b0`), up from
+        5.5.1_build10. The kernel is 26 KB larger gzipped, the swarm module
+        likewise; README records the row, and says why it is not the
+        numeric tier's cost.
+    fixed:
+      - |
+        **The table nudge fires again.** It matched `table: 0x...` only, and
+        from 0.16.0 print writes `table: #42`; the tip simply stopped
+        appearing. Both spellings match now.
+      - |
+        **`scripts/fetch-runtime.sh` reads the mirror host from the page**,
+        and its default tag from `vendor/PINNED_TAG`. Its own copy of the
+        host was the old one, which 404s for every tag since the move --
+        v0.17.1 included. Closes the known issue carried since 0.13.0.
+    known_issues:
+      - |
+        **No numeric tier** -- see `upgrading`. An upstream ask, not a Lab
+        change.
+      - |
+        **`_DILUVIUM.version` reports `5.5.1` on this build**, and the string
+        `0.17.1` appears nowhere in the WASI kernel, though diluvium's
+        changelog says `_DILUVIUM.version` carries diluvium's own version
+        from 0.15.1. The Lab reads the version from the release, never from
+        the kernel, so nothing here is wrong; it is recorded for whoever
+        reads `_DILUVIUM` elsewhere.
   - version: 0.13.1
     tag: v0.13.1
     date: 2026-09-24

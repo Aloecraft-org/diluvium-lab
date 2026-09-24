@@ -14,8 +14,8 @@
 
   "TECHNO_VERSION": {
     "major": 0,
-    "minor": 13,
-    "patch": 1,
+    "minor": 14,
+    "patch": 0,
     "pre": null
   },
 
@@ -24,6 +24,16 @@
     "intro_extra": "\nThe Lab versions independently of Diluvium. The coupling is RECORDED,\nnot required: every entry names the Diluvium revision the page bundles\nin `vendor/`, so \"which Diluvium is inside\" is a fact you read off the\nrelease rather than a tag-naming convention. The Lab also *runs* builds\nit does not bundle, chosen from the release mirror at run time, so its\nown version could never have named one of them.\n",
 
     "facts": [
+      {
+        "id": "dv_abi",
+        "keys": ["dv_abi"],
+        "fmt": "dv ABI {dv_abi}"
+      },
+      {
+        "id": "dil",
+        "keys": ["diluvium", "diluvium_version"],
+        "fmt": "diluvium `{diluvium!s:.12}` (v{diluvium_version})"
+      },
       {
         "id": "dil",
         "keys": ["diluvium", "diluvium_build"],
