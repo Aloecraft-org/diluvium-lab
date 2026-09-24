@@ -3972,3 +3972,6 @@ stylesheet with the attribute set as the app sets it.
 change. ABI 2 adds `dv_features`, `dv_build` and `dv_array_adopt`, and a
 host built against ABI 1 is refused by `dv_new` by design. That is the
 re-pin to 0.17.1, which is its own piece of work.
+
+Released as **v0.13.1**, fixes only. The bundled runtime is unchanged, at
+5.5.1_build10.
