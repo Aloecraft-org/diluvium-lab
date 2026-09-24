@@ -473,6 +473,49 @@ test.describe('when the mirror is not there', () => {
 
 // ---------------------------------------------------------------------
 
+test.describe('the index after the renumber', () => {
+  // The real index, twelve days after v0.15.0. See the fixture's own
+  // `_comment` for what was trimmed and why nothing was edited.
+  const RENUMBERED = JSON.parse(
+    readFileSync(new URL('./fixtures/releases-renumbered.json', import.meta.url), 'utf8'));
+
+  // Written out rather than derived: the literal order *is* the claim.
+  const NEWEST_FIRST = [
+    'v0.17.1', 'v0.16.1', 'v0.16.0', 'v0.15.1',
+    'v5.5.1_build14', 'v5.5.1_build13', 'v5.5.1_build12p1', 'v5.5.1_build12',
+    'v5.5.1_build11', 'v5.5.1_build10', 'v5.5.1_build9', 'v5.5.1_build8',
+    'v5.5.1_build7', 'v5.5.1_build6', 'v5.5.1_build5', 'v5.5.1_build4',
+    'v5.5.1_build2', 'v5.5.1_build1', 'v5.4.7_release',
+  ];
+
+  test('the dropdown lists the new line first, then the Lua era, newest first in each', async ({ page }) => {
+    // The mirror's copy of whatever is bundled is left out of the list --
+    // the bundled entry is `pinned`, at the top. Read from vendor/ rather
+    // than written in, because a re-pin moves it, and the last time a pin
+    // moved under a test like this the failure looked like a sorting bug.
+    const { BUNDLED } = await import('../vendor/pinned.js');
+    await stubMirror(page, { releases: RENUMBERED.releases });
+    const problems = await openLab(page);
+    await checkVersions(page);
+
+    const listed = await select(page).locator('option').evaluateAll((os) => os.map((o) => o.value));
+    expect(listed).toEqual(['pinned', ...NEWEST_FIRST.filter((tag) => tag !== BUNDLED.tag)]);
+    expect(problems).toEqual([]);
+  });
+
+  test('is the same order the index was published in', async ({ page }) => {
+    // An independent check on the comparator: the index is written newest
+    // first by publish date, which the comparator never sees. Agreeing
+    // with it on all nineteen is agreeing with what actually happened.
+    await openLab(page);
+    const sorted = await page.evaluate(async (versions) => {
+      const { compareVersions } = await import('./src/kernel/releases.js');
+      return [...versions].sort((a, b) => compareVersions(b, a));
+    }, RENUMBERED.releases.map((r) => r.version));
+    expect(sorted).toEqual(RENUMBERED.releases.map((r) => r.version));
+  });
+});
+
 test.describe('the real mirror index', () => {
   const REAL = JSON.parse(
     readFileSync(new URL('./fixtures/releases-mirror.json', import.meta.url), 'utf8'));
@@ -548,6 +591,14 @@ test.describe('version ordering across the format change', () => {
     ['5.5.1-rc.10', '5.5.1-rc.9', 'semver numeric identifiers too'],
     ['5.5.1-build.2', '5.5.1_build1', 'the new shape against the old'],
     ['5.10.0', '5.9.0', 'ten is after nine'],
+    // The patch release. Kept whole as text, `build12p1` beat `build`
+    // lexically and sat above build14.
+    ['5.5.1_build12p1', '5.5.1_build12', 'a patch on a build is after the build'],
+    ['5.5.1_build13', '5.5.1_build12p1', 'and before the next build'],
+    // The two eras: all of diluvium's own line is newer than the Lua era.
+    ['0.15.1', '5.5.1_build14', 'the new line outranks the last of the Lua era'],
+    ['0.15.1', '5.4.7', 'including where the index has dropped `_release`'],
+    ['0.17.1', '0.16.1', 'and within itself orders as semver'],
     // doc/Alignment.md §1's scheme, which diluvium takes at v0.15.0. The
     // Lab has to rank these beside the `_buildN` tags above for as long as
     // both are on the mirror, which is forever -- a published tag is not
@@ -591,30 +642,25 @@ test.describe('version ordering across the format change', () => {
     expect(ignored).toBe(true);
   });
 
-  // Recorded, not endorsed.
+  // The renumber. diluvium's own line began at v0.15.0, below the Lua
+  // era's digits, so without an era rule every retired build outranked
+  // every current one.
   //
-  // doc/Alignment.md §1 settles diluvium's next version at v0.15.0, and §10
-  // says the Lab "needs no new code" for it. That is true of parsing and
-  // false of ordering: this comparator sorts by core version first, as
-  // semver requires, so every legacy `5.5.1_buildN` tag outranks every
-  // release of the new line and the dropdown -- which is newest-first --
-  // puts diluvium's actual newest build at the bottom, under tags from
-  // before the renumber.
-  //
-  // Nothing here is wrong as semver. The dropdown is wrong as a dropdown.
-  // This test states the behaviour so the day v0.15.0 is cut it is a
-  // failing expectation to update rather than a surprise, and so the claim
-  // in ROADMAP is measured rather than argued. The fix, when it is wanted,
-  // is an era rule: the `_buildN` tags are a closed set that sorts below
-  // everything, which is a special case this comparator does not have today.
-  test('after the renumber, the legacy era still outranks the new line', async ({ page }) => {
+  // This test used to assert that behaviour, on the theory that the day
+  // v0.15.0 was cut it would fail and say so. It could not have: it
+  // compares strings written into this file, and cutting a tag changes the
+  // mirror, not the file. v0.15.0 was cut on 2026-09-12 and this went on
+  // passing while the dropdown put v0.17.1 sixteenth of nineteen. What
+  // pins the real ordering now is the captured index below; this pins the
+  // rule.
+  test('after the renumber, the new line outranks the Lua era', async ({ page }) => {
     await openLab(page);
     const order = await page.evaluate(async () => {
       const { compareVersions } = await import('./src/kernel/releases.js');
       return ['v5.4.7_release', 'v5.5.1_build14', 'v0.15.0', 'v0.16.0-rc.1']
         .sort((a, b) => compareVersions(b, a));
     });
-    expect(order).toEqual(['v5.5.1_build14', 'v5.4.7_release', 'v0.16.0-rc.1', 'v0.15.0']);
+    expect(order).toEqual(['v0.16.0-rc.1', 'v0.15.0', 'v5.5.1_build14', 'v5.4.7_release']);
   });
 
   test('the dropdown is newest first, whatever order the mirror wrote', async ({ page }) => {

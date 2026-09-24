@@ -3872,3 +3872,51 @@ for; BUILDINFO is already read as the authority over the filename; and §9's
 tag-matches-the-tree gate is now enforced on every push rather than at
 release time, because `check-version.mjs` compares `CHANGELOG.yaml`'s newest
 entry and its tag against the tree.
+
+## diluvium renumbered, and the dropdown had not heard
+
+diluvium left Lua's numbering on 2026-09-12: v5.5.1_build14 was the last of
+the Lua era and v0.15.0 the first of its own line (doc/Alignment.md §1). By
+2026-09-24 the mirror carried v0.15.1, v0.16.0, v0.16.1 and v0.17.1 beside
+fifteen Lua-era releases, and the runtime dropdown, sorting by semver, put
+every retired build above every current one. Measured against the real
+index in the real page:
+
+```
+ 1 v5.5.1_build12p1
+ 2 v5.5.1_build14
+ ...
+16 v0.17.1          <- the newest thing the mirror carries
+```
+
+Two bugs, both in `src/kernel/releases.js`.
+
+**The eras were compared by their digits.** 5.5.1 is Lua's number and
+0.17.1 is diluvium's, and no comparison of the two means anything. None is
+needed: the Lua era is closed, so all of it is older than any of the new
+line. `compareVersions` now decides the era before it reads a digit.
+`luaEra` recognises it by Lua's major version rather than by the `_build`
+spelling, because the index gives `v5.4.7_release` the version `5.4.7` and
+the spelling is gone by the time it arrives.
+
+**`build12p1` was never split.** `identifiers()` took one word then one
+number, `build12p1` fit neither, and it stayed whole as text -- where,
+against `build`, it is the longer string and wins. So the mirror's one
+patch release, a patch on build 12, sat at the top of the list. It is now
+split into runs, `build, 12, p, 1`, and lands between build 12 and 13.
+
+The fixed comparator orders all nineteen releases in exactly the order the
+index publishes them, which is by date -- a fact the comparator never sees.
+That agreement is now a test, over `test/fixtures/releases-renumbered.json`,
+the real index trimmed to the fields the Lab reads.
+
+### The test that could not have caught it
+
+At v0.13.0 this file recorded a test asserting the *inverted* order, on the
+theory that the day v0.15.0 was cut it would fail and announce the
+renumber. It could not have. It compared strings written into the test
+file; cutting a tag changes the mirror, and CI never touches the mirror. So
+v0.15.0 was cut and the test went on passing for twelve days, pinning the
+bug it was meant to announce. The lesson is narrow and worth keeping: a test
+of the code cannot notice a change in the world. What noticed was looking
+at the real index, which is what the new fixture now pins.

@@ -1,0 +1,369 @@
+{
+  "_comment": [
+    "The real index from https://software.aloecraft.org/releases/diluvium/releases.json,",
+    "captured 2026-09-24, twelve days after diluvium left Lua's numbering for its",
+    "own: v5.5.1_build14 was the last of the Lua era and v0.15.1 the first of the",
+    "new line (doc/Alignment.md \u00a71). All nineteen releases are here, in the",
+    "index's own order, which is newest first by publish date.",
+    "",
+    "Trimmed, not edited. Each release keeps the fields the Lab reads -- tag,",
+    "name, version, published_at, stable -- and its assets are cut to the two",
+    "the Lab fetches. Dropped: notes, summary, upgrading, sums, facts and",
+    "verified_upstream, which are prose and a second copy of SHA256SUMS.txt,",
+    "and which took this file from 3 KB to 136 KB.",
+    "",
+    "It pins three things at once. The two eras order correctly against each",
+    "other and within themselves, including the one patch release, build12p1.",
+    "And `stable` is the only word this index has for a prerelease: it is",
+    "generated from diluvium's changelog now, and `prerelease` is gone."
+  ],
+  "repo": "Aloecraft-org/diluvium",
+  "latest": "v0.17.1",
+  "latest_prerelease": "v5.5.1_build4",
+  "source": "changelog",
+  "changelog_schema": 1,
+  "generated_at": "2026-09-24T12:20:08Z",
+  "releases": [
+    {
+      "tag": "v0.17.1",
+      "name": "Diluvium 0.17.1",
+      "version": "0.17.1",
+      "published_at": "2026-09-20T00:46:01Z",
+      "stable": true,
+      "assets": [
+        {
+          "name": "diluvium_swarm_wasi.wasm",
+          "size": 1265754,
+          "sha256": "7d83e2019890a662669ad2a1b3e4dd14f2dd044affbc18b5c8985cbe736685f5"
+        },
+        {
+          "name": "libdiluvium_wasi.wasm",
+          "size": 1250445,
+          "sha256": "ef376390f1886164e83f8d0eb7421be0c160fe44ec09ac449633be7d20068758"
+        }
+      ]
+    },
+    {
+      "tag": "v0.16.1",
+      "name": "Diluvium 0.16.1",
+      "version": "0.16.1",
+      "published_at": "2026-09-19T06:36:58Z",
+      "stable": true,
+      "assets": [
+        {
+          "name": "diluvium_swarm_wasi.wasm",
+          "size": 1265754,
+          "sha256": "7d83e2019890a662669ad2a1b3e4dd14f2dd044affbc18b5c8985cbe736685f5"
+        },
+        {
+          "name": "libdiluvium_wasi.wasm",
+          "size": 1250445,
+          "sha256": "ef376390f1886164e83f8d0eb7421be0c160fe44ec09ac449633be7d20068758"
+        }
+      ]
+    },
+    {
+      "tag": "v0.16.0",
+      "name": "Diluvium 0.16.0",
+      "version": "0.16.0",
+      "published_at": "2026-09-17T23:17:48Z",
+      "stable": true,
+      "assets": [
+        {
+          "name": "diluvium_swarm_wasi.wasm",
+          "size": 1265754,
+          "sha256": "7d83e2019890a662669ad2a1b3e4dd14f2dd044affbc18b5c8985cbe736685f5"
+        },
+        {
+          "name": "libdiluvium_wasi.wasm",
+          "size": 1250445,
+          "sha256": "ef376390f1886164e83f8d0eb7421be0c160fe44ec09ac449633be7d20068758"
+        }
+      ]
+    },
+    {
+      "tag": "v0.15.1",
+      "name": "Diluvium 0.15.1",
+      "version": "0.15.1",
+      "published_at": "2026-09-16T21:38:01Z",
+      "stable": true,
+      "assets": [
+        {
+          "name": "diluvium_swarm_wasi.wasm",
+          "size": 1231968,
+          "sha256": "856a25c2c4bb1ada2f5555c6becbdd00457c6499990b1e6fb2deb8d9a4e612d7"
+        },
+        {
+          "name": "libdiluvium_wasi.wasm",
+          "size": 1216663,
+          "sha256": "2735c3722f8e61160b03e84dde3a7228a4e665d5804df93ad14af052dd2cd136"
+        }
+      ]
+    },
+    {
+      "tag": "v5.5.1_build14",
+      "name": "Diluvium 5.5.1_build14",
+      "version": "5.5.1_build14",
+      "published_at": "2026-09-12T19:27:54Z",
+      "stable": true,
+      "assets": [
+        {
+          "name": "diluvium_swarm_wasi.wasm",
+          "size": 1230519,
+          "sha256": "012fb58437c765701a6dd7793c848c50f20609d8de2c8f3f770caab54c461bb5"
+        },
+        {
+          "name": "libdiluvium_wasi.wasm",
+          "size": 1215214,
+          "sha256": "8333a7e5166c6d5842cfa64ef4ba09055aee9e928ee6576c014eb1cc6bcf61bf"
+        }
+      ]
+    },
+    {
+      "tag": "v5.5.1_build13",
+      "name": "Diluvium 5.5.1_build13",
+      "version": "5.5.1_build13",
+      "published_at": "2026-09-06T05:01:40Z",
+      "stable": true,
+      "assets": [
+        {
+          "name": "diluvium_swarm_wasi.wasm",
+          "size": 1229226,
+          "sha256": "b7683d0d19d68df03f5404fd061eb85e912fbe2be6a114af5a1cd66fb24e0c95"
+        },
+        {
+          "name": "libdiluvium_wasi.wasm",
+          "size": 1213921,
+          "sha256": "8776585164dfc98899b538bf1e7b12499e574ffab283c4eb2b5528d182db19c0"
+        }
+      ]
+    },
+    {
+      "tag": "v5.5.1_build12p1",
+      "name": "Diluvium 5.5.1_build12p1",
+      "version": "5.5.1_build12p1",
+      "published_at": "2026-09-02T00:37:10Z",
+      "stable": true,
+      "assets": [
+        {
+          "name": "diluvium_swarm_wasi.wasm",
+          "size": 1192489,
+          "sha256": "ecd1bbf19e5175633d76bb6a3cce28dc599535c62d84146d301f58ec86b4a19a"
+        },
+        {
+          "name": "libdiluvium_wasi.wasm",
+          "size": 1177168,
+          "sha256": "750a447db31ad38f0777188511360451463d261016ba25ad4f39d9057fbe641e"
+        }
+      ]
+    },
+    {
+      "tag": "v5.5.1_build12",
+      "name": "Diluvium 5.5.1_build12",
+      "version": "5.5.1_build12",
+      "published_at": "2026-09-01T16:55:39Z",
+      "stable": true,
+      "assets": [
+        {
+          "name": "diluvium_swarm_wasi.wasm",
+          "size": 1192510,
+          "sha256": "bc4ca4d747f4977c5a303e6e1c84e017ca8486a4948207f67b6fbdfdcc489fc8"
+        },
+        {
+          "name": "libdiluvium_wasi.wasm",
+          "size": 1177189,
+          "sha256": "bd7cc4fd77326949e17532441da210141af562d378fee00b30ce6b4244d8fa6a"
+        }
+      ]
+    },
+    {
+      "tag": "v5.5.1_build11",
+      "name": "Diluvium 5.5.1_build11",
+      "version": "5.5.1_build11",
+      "published_at": "2026-08-24T15:59:08Z",
+      "stable": true,
+      "assets": [
+        {
+          "name": "diluvium_swarm_wasi.wasm",
+          "size": 1191956,
+          "sha256": "f8a116b36ce74323eed48d47fc0fceeeecdec394efb9a6884b378c510ba9f6d9"
+        },
+        {
+          "name": "libdiluvium_wasi.wasm",
+          "size": 1176635,
+          "sha256": "01fff37d13007417ac1ddd437960ca467f1066c58e6edb2c29eb36e778c36cbb"
+        }
+      ]
+    },
+    {
+      "tag": "v5.5.1_build10",
+      "name": "Diluvium 5.5.1_build10",
+      "version": "5.5.1_build10",
+      "published_at": "2026-08-18T23:38:24Z",
+      "stable": true,
+      "assets": [
+        {
+          "name": "diluvium_swarm_wasi.wasm",
+          "size": 1182275,
+          "sha256": "ee602717a892773f979a5354e4527aba04fd3440f4f8303b8c4b0f80e698f12b"
+        },
+        {
+          "name": "libdiluvium_wasi.wasm",
+          "size": 1166954,
+          "sha256": "561cd2f01bdae37b0f0d0b8ce979cbcf9b74fc5a0ed0aeccf918c20cd750ba0a"
+        }
+      ]
+    },
+    {
+      "tag": "v5.5.1_build9",
+      "name": "Diluvium 5.5.1_build9",
+      "version": "5.5.1_build9",
+      "published_at": "2026-08-15T16:16:09Z",
+      "stable": true,
+      "assets": [
+        {
+          "name": "diluvium_swarm_wasi.wasm",
+          "size": 1176973,
+          "sha256": "d31769289b22d6bcd9cffd598d78b688d26c0c436bef485f77891ac4eb96b0bc"
+        },
+        {
+          "name": "libdiluvium_wasi.wasm",
+          "size": 1161652,
+          "sha256": "3b69ad061c3460c967371b7d3e3e131386f54099711aefce8f93510c80ff2f83"
+        }
+      ]
+    },
+    {
+      "tag": "v5.5.1_build8",
+      "name": "Diluvium 5.5.1_build8",
+      "version": "5.5.1_build8",
+      "published_at": "2026-08-15T14:34:25Z",
+      "stable": true,
+      "assets": [
+        {
+          "name": "diluvium_swarm_wasi.wasm",
+          "size": 1176973,
+          "sha256": "d31769289b22d6bcd9cffd598d78b688d26c0c436bef485f77891ac4eb96b0bc"
+        },
+        {
+          "name": "libdiluvium_wasi.wasm",
+          "size": 1161652,
+          "sha256": "3b69ad061c3460c967371b7d3e3e131386f54099711aefce8f93510c80ff2f83"
+        }
+      ]
+    },
+    {
+      "tag": "v5.5.1_build7",
+      "name": "Diluvium 5.5.1_build7",
+      "version": "5.5.1_build7",
+      "published_at": "2026-08-13T15:13:16Z",
+      "stable": true,
+      "assets": [
+        {
+          "name": "diluvium_swarm_wasi.wasm",
+          "size": 1176172,
+          "sha256": "6bc668e59f0c6ac26cfcd3f90b0c4ac67e766f0bc564fa1e7e3956a1bd5479fc"
+        },
+        {
+          "name": "libdiluvium_wasi.wasm",
+          "size": 1160851,
+          "sha256": "771747c1d8219cb061e3cb6f746398b2786316ef45c5ce967fb22b528eea332f"
+        }
+      ]
+    },
+    {
+      "tag": "v5.5.1_build6",
+      "name": "Diluvium 5.5.1_build6",
+      "version": "5.5.1_build6",
+      "published_at": "2026-08-12T19:17:40Z",
+      "stable": true,
+      "assets": [
+        {
+          "name": "diluvium_swarm_wasi.wasm",
+          "size": 1168199,
+          "sha256": "c4c65d6d57b5dbc4085ae0710651934d36af939b24a758abffb8dbe51faed8b5"
+        },
+        {
+          "name": "libdiluvium_wasi.wasm",
+          "size": 1152878,
+          "sha256": "25ed150c0008c71d542b6c930d51fb46ffb76032ce9e102acadb04eb09bb7bc0"
+        }
+      ]
+    },
+    {
+      "tag": "v5.5.1_build5",
+      "name": "Diluvium 5.5.1_build5",
+      "version": "5.5.1_build5",
+      "published_at": "2026-08-12T07:43:17Z",
+      "stable": true,
+      "assets": [
+        {
+          "name": "diluvium_swarm_wasi.wasm",
+          "size": 1142986,
+          "sha256": "3f44cb160d840ca2477e5487e7fbd01cea7d2978a75ff26b1afcd0e68a0891a4"
+        },
+        {
+          "name": "libdiluvium_wasi.wasm",
+          "size": 1127709,
+          "sha256": "ce6980b803379fbf673d34d7defa4b897dc360ffe785ea76a200b0688538027b"
+        }
+      ]
+    },
+    {
+      "tag": "v5.5.1_build4",
+      "name": "Diluvium 5.5.1_build4",
+      "version": "5.5.1_build4",
+      "published_at": "2026-08-11T19:04:18Z",
+      "stable": false,
+      "assets": [
+        {
+          "name": "libdiluvium_wasi.wasm",
+          "size": 1122866,
+          "sha256": "866deeb4b10f76e0dbf3c64ad1b4998b145f4747d3f39cce5a29d84b33829d84"
+        }
+      ]
+    },
+    {
+      "tag": "v5.5.1_build2",
+      "name": "Diluvium 5.5.1_build2",
+      "version": "5.5.1_build2",
+      "published_at": "2026-08-08T09:44:54Z",
+      "stable": true,
+      "assets": [
+        {
+          "name": "libdiluvium_wasi.wasm",
+          "size": 947256,
+          "sha256": "053599d5b6d4ab50f5ec0adb54d9166fedb1d474b2dcde26d78ae54551561292"
+        }
+      ]
+    },
+    {
+      "tag": "v5.5.1_build1",
+      "name": "Diluvium 5.5.1_build1",
+      "version": "5.5.1_build1",
+      "published_at": "2026-08-07T18:14:33Z",
+      "stable": true,
+      "assets": [
+        {
+          "name": "libdiluvium_wasi.wasm",
+          "size": 945830,
+          "sha256": "15e5a20ca98e3fbfa600ff03bf60bfd5bd9b03d2d793810f27cbe645b6912426"
+        }
+      ]
+    },
+    {
+      "tag": "v5.4.7_release",
+      "name": "Diluvium 5.4.7",
+      "version": "5.4.7",
+      "published_at": "2026-08-05T22:53:58Z",
+      "stable": true,
+      "assets": [
+        {
+          "name": "libdiluvium_wasi.wasm",
+          "size": 895771,
+          "sha256": "c3da069ea47704d598291187296112969bab89253c10a2bb01bb04784ff047eb"
+        }
+      ]
+    }
+  ]
+}
