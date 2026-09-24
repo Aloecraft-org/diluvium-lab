@@ -2,7 +2,10 @@
 #
 # Pin a Diluvium runtime into vendor/.
 #
-#   scripts/fetch-runtime.sh [tag]        default: v5.5.1_build5
+#   scripts/fetch-runtime.sh [tag]        default: vendor/PINNED_TAG
+#
+# With no tag, it re-fetches and re-verifies the pin that is already here.
+# With one, it moves the pin.
 #
 # Downloads the kernel module plus the release's checksum and build
 # manifest, and verifies the module against the former. This is the
@@ -38,10 +41,20 @@
 
 set -euo pipefail
 
-TAG="${1:-v5.5.1_build10}"
-MIRROR="${DILUVIUM_RELEASE_BASE:-https://diluvium.aloecraft.org/release}"
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+DEST="$ROOT/vendor"
+
+# Both defaults are read from where they are decided rather than written
+# here a second time. The tag is the pin itself. The host is the page's own
+# DEFAULT_MIRROR: this line used to carry its own copy, and when the mirror
+# moved under software.aloecraft.org the page followed and this did not --
+# so the old host went on answering for the tags it already had, and the
+# first tag published after the move was a 404 here.
+TAG="${1:-$(cat "$DEST/PINNED_TAG")}"
+PAGE_MIRROR="$(cd "$ROOT" && node --input-type=module \
+  -e "const { DEFAULT_MIRROR } = await import('./src/kernel/releases.js'); process.stdout.write(DEFAULT_MIRROR);")"
+MIRROR="${DILUVIUM_RELEASE_BASE:-${PAGE_MIRROR%/}}"
 BASE="$MIRROR/$TAG"
-DEST="$(cd "$(dirname "$0")/.." && pwd)/vendor"
 
 mkdir -p "$DEST"
 
