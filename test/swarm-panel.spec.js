@@ -23,6 +23,27 @@ const openPanel = async (page) => {
   await expect(page.locator('[data-tool-panel]')).toBeVisible();
 };
 
+/**
+ * Press Run and wait for it to finish, for a test that acts on the panel
+ * afterwards.
+ *
+ * Run drives the swarm for a while and repaints the panel when it ends,
+ * which rebuilds the listener composer, and any action pressed while it is
+ * still going is dropped -- `_swarmAction` returns early when busy. A test
+ * that filled the composer or pressed Send straight after Run was racing
+ * both: it sent `GET /` with `/hello` typed, or sent nothing at all, a few
+ * runs in a hundred, and more often on the v0.17.1 core, whose timing is
+ * different. `_swarmAction` marks itself busy and repaints before its first
+ * `await`, so Run is already disabled when `click()` returns and its coming
+ * back is exactly "finished". A test that only asserts after Run does not
+ * need this: an assertion waits for itself.
+ */
+async function runToCompletion(page) {
+  const run = page.locator('[data-swarm="swarm-run"]');
+  await run.click();
+  await expect(run).toBeEnabled({ timeout: 15_000 });
+}
+
 test('the rail offers the instances tool and it opens', async ({ page }) => {
   const problems = await openLab(page);
   await openPanel(page);
@@ -109,7 +130,7 @@ test('the listener composer drives a request through the program and back', asyn
   await openPanel(page);
   await page.locator('[data-swarm-program]').selectOption('service');
   await page.locator('[data-swarm="swarm-start"]').click();
-  await page.locator('[data-swarm="swarm-run"]').click();
+  await runToCompletion(page);
 
   const listener = page.locator('[data-swarm-listener]');
   await expect(listener).toBeVisible({ timeout: 15_000 });
@@ -218,7 +239,7 @@ test('the topology counts traffic in both directions and invents no edges', asyn
   await openPanel(page);
   await page.locator('[data-swarm-program]').selectOption('service');
   await page.locator('[data-swarm="swarm-start"]').click();
-  await page.locator('[data-swarm="swarm-run"]').click();
+  await runToCompletion(page);
   await expect(page.locator('[data-swarm-graph]')).toBeVisible({ timeout: 15_000 });
 
   await page.locator('[data-listener-path]').fill('/hello');
@@ -280,7 +301,7 @@ test('a database can be uploaded before Start and downloaded after', async ({ pa
   await expect(page.locator('[data-swarm-dbname]')).toHaveValue('visits.db');
 
   await page.locator('[data-swarm="swarm-start"]').click();
-  await page.locator('[data-swarm="swarm-run"]').click();
+  await runToCompletion(page);
 
   // The uploaded table is in the running database, beside the one the
   // program made for itself.

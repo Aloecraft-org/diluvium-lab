@@ -4040,3 +4040,22 @@ after the move -- v0.17.1 included -- so the known issue carried since
 0.13.0 became a blocker the moment a pin needed a new tag. A bare run now
 re-fetches and re-verifies the current pin; it reproduced build10 byte for
 byte before this move.
+
+### Two panel tests raced their own Run
+
+On the new pin, `the topology counts traffic in both directions` failed one
+run in five. It pressed Run and then filled the listener composer and
+pressed Send as soon as the graph was visible -- which it already was, from
+Start -- while Run was still driving the swarm. `_swarmAction` drops any
+action pressed while busy, and Run's closing repaint rebuilds the composer,
+so the request went out as `GET /` or not at all. The listener composer
+test had the same shape and failed that way once on CI during 0.13.1, on a
+commit whose other run passed; the diagnosis and the fix were posted on that
+pull request, and the new core's timing is what brought it into this one.
+
+`runToCompletion` presses Run and waits for it to be enabled again, which is
+exactly "finished": the busy repaint happens before `_swarmAction`'s first
+`await`, so there is no gap between the click and the disabled button. The
+three tests that act on the panel after Run use it; the six that only assert
+do not need it, because an assertion waits for itself. Thirty runs of the
+three, ten each, all pass.
