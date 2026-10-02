@@ -104,8 +104,8 @@ repo: Aloecraft-org/diluvium-lab
 releases:
   - version: 0.14.0
     tag: v0.14.0
-    date: null
-    status: unreleased
+    date: 2026-10-02
+    status: tagged
     stable: true
     mirror: false
     diluvium: 7dfe1d590488df950d8ccffd108b321b8c872844
@@ -134,6 +134,14 @@ releases:
         first-run step), the Outline panel beside the notebook, and Ctrl
         Enter / Shift Enter / Ctrl S through the launcher's shortcut registry.
       - "`storage.js`: `saveNotebook`, `loadNotebook` and `clearNotebook` over named slots; `saveAutosave` and friends are the `autosave` slot of those."
+      - |
+        Views and parity in the plugin: Lab › Instances (the swarm panel with
+        its topology, listener and databases), Lab › Edit ▸ and View ▸ (undo,
+        the cell clipboard across notebooks, clear outputs, rename, duplicate;
+        hide code, read-only, fold all, show source, the diagram renderer),
+        and About as the plugin's page. The page's notebook, undo, worker,
+        ipynb and display specs run against the launcher, ported by
+        `scripts/port-spec.mjs`.
     changed:
       - "`WorkerKernel` takes a `createWorker` option, so a bundler that inlines the worker script can supply the constructor; the default is unchanged. `RuntimeRegistry` takes the same and hands it to every kernel it starts."
   - version: 0.13.1
