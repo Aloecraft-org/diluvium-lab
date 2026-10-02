@@ -102,6 +102,31 @@ schema: 1
 repo: Aloecraft-org/diluvium-lab
 
 releases:
+  - version: 0.14.0
+    tag: v0.14.0
+    date: null
+    status: unreleased
+    stable: true
+    mirror: false
+    diluvium: 7dfe1d590488df950d8ccffd108b321b8c872844
+    diluvium_build: 10
+    nbformat: "4.5"
+    summary: |
+      **The Lab is a DiRT Launcher plugin.** `plugin/` is a thin TypeScript
+      layer over the same `src/` modules the page runs: the kernel as a shared
+      service, Notebook and Console panels, a Lab menu of commands, and the
+      launcher's one-file build carrying the kernel worker and the vendored
+      wasm inline. The page itself is unchanged.
+    added:
+      - |
+        `plugin/`: the DiRT Launcher plugin. `ILabKernel` (`plugin/api.ts`) is
+        provided by `diluvium-lab:kernel` over one `WorkerKernel`; the
+        Notebook and Console panels share it. The Lab menu: New notebook,
+        Open .ipynb…, Save .ipynb, Notebook, Console, Run all, Stop, Restart,
+        + Code, + Markdown. See README "In DiRT Launcher".
+      - "`npm run check` type-checks the plugin; `npm run test:launcher` drives it inside the launcher's dev server (test/launcher/)."
+    changed:
+      - "`WorkerKernel` takes a `createWorker` option, so a bundler that inlines the worker script can supply the constructor; the default is unchanged."
   - version: 0.13.1
     tag: v0.13.1
     date: 2026-09-24

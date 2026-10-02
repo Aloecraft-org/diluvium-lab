@@ -3975,3 +3975,84 @@ re-pin to 0.17.1, which is its own piece of work.
 
 Released as **v0.13.1**, fixes only. The bundled runtime is unchanged, at
 5.5.1_build10.
+
+## In DiRT Launcher: the plugin, turn 1
+
+The next iteration of the Lab *is* a [DiRT Launcher](https://github.com/Aloecraft-org/dirt-launcher)
+plugin, and it lives here: the launcher plugs this repo in as `../diluvium-lab`
+(`package.json` exports `plugin/index.ts`) and its `core` and `lab` sets carry
+it. The plain modules under `src/` stay exactly what the page runs; `plugin/`
+is a thin TypeScript layer that gives them panels, commands and a menu. No
+rewrite of the notebook internals, and nothing the page does stops working.
+
+### What landed
+
+- **The kernel as a service.** `plugin/kernel.ts` runs one `WorkerKernel`
+  per launcher and provides it under a Token, `ILabKernel` (`plugin/api.ts`),
+  from its own Lumino plugin, `diluvium-lab:kernel`. Every notebook and the
+  console require the Token, which is what makes "cells and the console share
+  one kernel" true in the launcher the way it is in the page. The Token is
+  local to this package until a second plugin needs it; moving it into
+  `@dirt-launcher/api` is a one-line change the launcher's README asks for at
+  that point.
+- **The worker and the wasm, inlined.** Vite bundles `kernel-worker.js`
+  through `?worker&inline` (a constructor over a blob) and the two vendored
+  modules through `?url` (data: URLs in the one-file build). The launcher's
+  `lab` set packs to one 7.5 MB file that runs cells from a static server with
+  no request for anything. For that, `WorkerKernel` gained one option,
+  `createWorker`, defaulting to the `new Worker(WORKER_URL)` the page uses;
+  the alternative was copying the sixty-line handshake into the plugin, and
+  two copies of a handshake drift.
+- **Notebook and Console panels** (`plugin/notebook.ts`, `plugin/console.ts`),
+  Lumino widgets over `NotebookView` and `ConsoleView`. The notebook ports
+  what `app.js` did between the view and the kernel -- run a cell, run all,
+  controls' callbacks, autosave, stash-before-replace -- and nothing else.
+  Styling is `plugin/lab.css`: the page's cell, output and console rules drawn
+  with the launcher theme's tokens by name (`--line`, `--surface-deep`,
+  `--text-dim`, `--mirror` for machine text), with the syntax palette per
+  theme.
+- **A Lab menu**: New notebook, Open .ipynb…, Save .ipynb, Notebook, Console,
+  Run all, Stop, Restart, + Code, + Markdown. Each is a command with JSON
+  args (`lab:add-cell { type }`), so the command list runs them, a layout can
+  replay them, and the notebook's tab bar carries +, Run all and Stop. File ›
+  New lists both panels; the Dashboard gets a tile.
+- **Persistence is the page's.** The notebook panel is a singleton over the
+  page's autosave slot, so a notebook started in the page is the one the
+  launcher opens on the same origin, and New and Open stash the outgoing
+  notebook into recents exactly as the page does.
+- **The proof** is `test/launcher/lab.spec.js`, run by
+  `npm run test:launcher` against the launcher's dev server: open the
+  launcher, open the notebook, run a cell, read its variable from the
+  console, save the `.ipynb`, open a blank one, reopen the file and see the
+  outputs back; then Run all, a runaway cell that leaves the page usable,
+  Stop marking what ran stale, Restart emptying the state. Chromium only,
+  like the rest of the suite.
+
+### What is deliberately not here yet
+
+In the order the launcher plan lists them, each its own turn:
+
+- **The rest of the toolbar**: the runtime dropdown and the mirror, examples
+  and recents, the outline as a tool panel beside the notebook, the Lab's
+  shortcuts registered through the launcher's keyboard registry (so
+  Preferences › Keyboard lists them), first-run and dashboard tiles, and a
+  `lab` workspace section for the open notebooks and the runtime pin. Until
+  then one notebook panel, in the page's autosave slot; Ctrl+Enter and friends
+  still work inside a cell because the cell list owns them.
+- **Views and parity**: the swarm and topology views, read-only and report
+  mode, this suite's specs ported to run against the launcher build, and a
+  tag.
+
+### Things found on the way
+
+- `?worker&inline` rather than the `new Worker(new URL(..., import.meta.url))`
+  form the plan named: the launcher's single-file plugin deletes every JS
+  chunk it inlines into the page, and a worker emitted as its own chunk is
+  one of them, so the URL form would point at a file that is not there.
+  Inline is the form that survives the one-file build.
+- The notebook restores its autosave asynchronously, and a menu command that
+  replaces the document (New, Open) could land before the restore and then
+  be overwritten by it. The panel exposes `ready`, and every command that
+  replaces the document waits for it.
+- The lab's `npm test` ignores `test/launcher/`, which runs against a
+  different server; `npm run test:launcher` is its own entry point.

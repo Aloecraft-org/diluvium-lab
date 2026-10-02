@@ -63,6 +63,41 @@ context, so `crypto.subtle` is unavailable, so downloaded runtimes cannot
 be checksummed — and the baked build therefore refuses to fetch them at
 all and says so. It carries the one runtime it was baked with.
 
+### In DiRT Launcher
+
+The Lab is also a [DiRT Launcher](https://github.com/Aloecraft-org/dirt-launcher)
+plugin. The launcher plugs this repo in as `../diluvium-lab` (its `package.json`
+exports `plugin/index.ts`), and its `core` and `lab` sets carry it:
+
+```sh
+git clone https://github.com/Aloecraft-org/dirt-launcher ../dirt-launcher
+(cd ../dirt-launcher && npm install && DIRT_SET=lab npm run serve-dev)
+```
+
+Nothing to install here for that: the plugin is a thin TypeScript layer in
+`plugin/` over the same `src/` modules the page uses, and the launcher's Vite
+compiles it, inlining the kernel worker and the vendored wasm into the
+launcher's one-file build. What it gives the launcher:
+
+- **Lab › Notebook** and **Lab › Console**, two panels over one kernel, so a
+  console line reads what a cell just defined. The notebook autosaves to the
+  same IndexedDB slot the page uses, so a notebook started in one carries to
+  the other on the same origin.
+- A **Lab** menu: New notebook, Open .ipynb…, Save .ipynb, Run all, Stop,
+  Restart, + Code, + Markdown. Every entry is a launcher command, so the
+  command list (Ctrl K) runs them too, and the notebook's tab bar carries +,
+  Run all and Stop.
+- A Dashboard tile that opens the notebook.
+
+`npm run test:launcher` drives the launcher's dev server with this plugin and
+proves the round trip: open the notebook, run a cell, read its state from the
+console, save the `.ipynb`, reopen it. `DIRT_SET=lab npm run test:launcher`
+uses the smallest set that carries the Lab.
+
+Not in the plugin yet: the runtime dropdown and mirror, examples and recents,
+the outline and instances panels, the shortcut registry, read-only and report
+mode. ROADMAP.md says what comes in which order.
+
 ## Development
 
 ```sh
@@ -70,6 +105,8 @@ npm install          # @playwright/test only; Chromium is expected to exist
 npm start            # serve the page at http://localhost:8080
 npm test             # drive the real page in a real browser
 npm run bake         # emit dist/diluvium-lab.html, a single double-click file
+npm run check        # type-check the DiRT Launcher plugin in plugin/
+npm run test:launcher   # drive the plugin inside the launcher (needs ../dirt-launcher)
 ```
 
 Other scripts:
@@ -913,6 +950,9 @@ notebooks/          the Start here gallery, bundled into the page by
 vendor/             the pinned Diluvium runtime, both modules, plus the
                     msgpack codec and SQLite (verbatim copies — see the
                     matching *.SOURCE.txt beside each)
+plugin/             the DiRT Launcher plugin: a TypeScript layer that gives
+                    src/ panels, commands and a menu (see In DiRT Launcher)
+test/launcher/      the plugin's proof, run inside the launcher's dev server
 ```
 
 Everything reaches the kernel through `src/kernel/kernel.js`. That is the

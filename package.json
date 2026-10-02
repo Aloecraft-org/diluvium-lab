@@ -9,9 +9,28 @@
     "bake": "node scripts/bake.mjs",
     "stamp": "node scripts/stamp-imports.mjs",
     "bundle-examples": "node scripts/bundle-examples.mjs",
-    "release": "node scripts/bundle-examples.mjs && node scripts/stamp-imports.mjs && node scripts/check-version.mjs"
+    "release": "node scripts/bundle-examples.mjs && node scripts/stamp-imports.mjs && node scripts/check-version.mjs",
+    "check": "tsc",
+    "test:launcher": "playwright test -c playwright.launcher.config.js"
   },
   "devDependencies": {
-    "@playwright/test": "~1.56.0"
+    "@dirt-launcher/api": "file:../dirt-launcher/packages/api",
+    "@lumino/application": "^2.4.10",
+    "@lumino/commands": "^2.3.4",
+    "@lumino/coreutils": "^2.2.3",
+    "@lumino/disposable": "^2.1.6",
+    "@lumino/signaling": "^2.1.6",
+    "@lumino/widgets": "^2.9.0",
+    "@playwright/test": "~1.56.0",
+    "typescript": "^5.9.3"
+  },
+  "description": "A notebook front end for Diluvium, and the DiRT Launcher plugin that carries it.",
+  "license": "Apache-2.0",
+  "exports": "./plugin/index.ts",
+  "peerDependencies": {
+    "@dirt-launcher/api": "*",
+    "@lumino/coreutils": "^2.2.0",
+    "@lumino/signaling": "^2.1.0",
+    "@lumino/widgets": "^2.9.0"
   }
 }
