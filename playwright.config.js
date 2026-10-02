@@ -10,6 +10,9 @@ import { defineConfig, devices } from '@playwright/test';
 // because it wants a browser this image does not have.
 export default defineConfig({
   testDir: './test',
+  // test/launcher/ drives the lab inside DiRT Launcher, against the
+  // launcher's dev server: `npm run test:launcher` (playwright.launcher.config.js).
+  testIgnore: 'test/launcher/**',
   fullyParallel: true,
   forbidOnly: !!process.env.CI,
   retries: 0,
