@@ -4056,3 +4056,61 @@ In the order the launcher plan lists them, each its own turn:
   replaces the document waits for it.
 - The lab's `npm test` ignores `test/launcher/`, which runs against a
   different server; `npm run test:launcher` is its own entry point.
+
+## In DiRT Launcher: turn 2, the rest of the toolbar
+
+What the page's toolbars and menus did, given homes in the launcher's own
+furniture. Verified by `npm run test:launcher` on the launcher's `core` and
+`lab` sets, and the launcher's `npm run check` building every set.
+
+### What landed
+
+- **Several notebooks.** `lab:open { slot }` names a storage slot; `storage.js`
+  gained `saveNotebook` / `loadNotebook` / `clearNotebook` over the same
+  store, with the page's `saveAutosave` now the `autosave` slot of those. New
+  notebook, Open .ipynb…, Open from URL…, an example or a recent each open a
+  new panel over a fresh slot. Closing a panel stashes the notebook into the
+  recents list and drops its slot, so closing is never how work disappears; a
+  layout restore disposes panels without a close request and leaves their
+  slots for the replay. The commands that act on "the notebook" -- Save, Run
+  all, Run all above / below, Run cell -- follow the notebook last opened,
+  clicked or focused.
+- **Runtime ▸.** The lab's `RuntimeRegistry` behind the kernel service:
+  `ILabKernel` grew `runtime`, `runtimes`, `runtimesChanged`, `canSwitch`,
+  `switchUnavailableReason`, `checkRuntimes()` and `selectRuntime(id)`, and
+  `KernelReset` a `switch`. Fetch, verify, probe, then swap: a failure leaves
+  the running kernel where it was, and a success tells every notebook to mark
+  its outputs stale and the console to say every variable is gone. The
+  registry gained a `createWorker` option so the kernels it starts use the
+  inlined worker, as the first one does. The pick is the `lab` workspace
+  section; a remembered build comes back from the cache only, and a notice
+  says so when it is not there. The notebook footer shows the running build
+  and opens the same list.
+- **Examples ▸, Recent ▸, Open from URL…, Start here….** The bundled
+  notebooks as commands with args (listed in the command list too), the
+  recents submenu rebuilt from `listRecent` whenever a notebook opens or
+  closes, with Forget all behind a confirmation; the URL dialog over
+  `remote.js`; and Start here as a dialog of the examples plus a blank
+  notebook, which is also a dashboard tile and the fourth first-run step the
+  launcher's dashboard shows when `lab:start-here` exists.
+- **Outline.** `plugin/outline.ts` over `outline.js`, following the active
+  notebook (its heading goes with it), opened to the left of the notebook at
+  about a fifth of the width, through the dock's own layout so a saved
+  layout keeps the arrangement.
+- **Shortcuts.** Ctrl Enter, Shift Enter and Ctrl S are the launcher's key
+  bindings now, scoped to a notebook (`selector: '.lab-notebook'`) and listed
+  under Preferences › Keyboard. Lumino takes keys on the document in the
+  capture phase and stops them, so the cell list's own Ctrl Enter handler no
+  longer sees them: the command runs the current cell instead, which is why
+  the shortcuts can be rebound at all. Tab, Ctrl Space and Ctrl / stay in the
+  editor, where they belong to the textarea.
+
+### What is deliberately not here yet
+
+- The instances (swarm) and topology views, read-only and report mode, the
+  Edit menu (undo, the cell clipboard, clear all outputs), the diagram
+  renderer, and the About panel: turn 3, with this suite's specs ported to
+  run against the launcher build and a tag.
+- Notebooks live in the browser's storage, not in the workspace file: a
+  workspace export carries the runtime pin and the layout (which names the
+  slots), and the notebooks themselves stay where the page keeps them.

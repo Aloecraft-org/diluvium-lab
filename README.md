@@ -79,24 +79,35 @@ Nothing to install here for that: the plugin is a thin TypeScript layer in
 compiles it, inlining the kernel worker and the vendored wasm into the
 launcher's one-file build. What it gives the launcher:
 
-- **Lab › Notebook** and **Lab › Console**, two panels over one kernel, so a
-  console line reads what a cell just defined. The notebook autosaves to the
-  same IndexedDB slot the page uses, so a notebook started in one carries to
-  the other on the same origin.
-- A **Lab** menu: New notebook, Open .ipynb…, Save .ipynb, Run all, Stop,
-  Restart, + Code, + Markdown. Every entry is a launcher command, so the
-  command list (Ctrl K) runs them too, and the notebook's tab bar carries +,
-  Run all and Stop.
-- A Dashboard tile that opens the notebook.
+- **Notebooks**, as many as you open, each a panel in its own storage slot;
+  the first is the page's own autosave slot, so a notebook started in the
+  page is the one the launcher opens. Closing one keeps it under Lab › Recent.
+- **Lab › Console** shares the kernel, so a console line reads what a cell
+  just defined. **Lab › Outline** follows whichever notebook is active and
+  opens beside it.
+- A **Lab** menu: Start here…, New notebook, Open .ipynb…, Open from URL…,
+  Examples ▸, Recent ▸, Save .ipynb, Run all, Run all above / below, Stop,
+  Restart, Runtime ▸, + Code, + Markdown. Every entry is a launcher command,
+  so the command list (Ctrl K) runs them too, and the notebook's tab bar
+  carries +, Run all and Stop.
+- **Runtime ▸** lists the bundled build, any build cached in the browser, and
+  the mirror's builds once *Check the mirror* has been pressed (nothing is
+  fetched at load). The pick travels with the workspace as the `lab` section,
+  and comes back from the cache only. The notebook's footer shows it.
+- The page's shortcuts through the launcher's registry: Ctrl Enter, Shift
+  Enter and Ctrl S, listed and rebindable under Preferences › Keyboard.
+  Tab, Ctrl Space and Ctrl / stay the editor's own.
+- Dashboard tiles for Start here and the notebook, and a fourth first-run
+  step when the lab is in the build.
 
 `npm run test:launcher` drives the launcher's dev server with this plugin and
 proves the round trip: open the notebook, run a cell, read its state from the
 console, save the `.ipynb`, reopen it. `DIRT_SET=lab npm run test:launcher`
 uses the smallest set that carries the Lab.
 
-Not in the plugin yet: the runtime dropdown and mirror, examples and recents,
-the outline and instances panels, the shortcut registry, read-only and report
-mode. ROADMAP.md says what comes in which order.
+Not in the plugin yet: the instances (swarm) and topology views, read-only
+and report mode, undo and the cell clipboard from the Edit menu, the diagram
+renderer. ROADMAP.md says what comes in which order.
 
 ## Development
 

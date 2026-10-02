@@ -26,8 +26,11 @@ export class RuntimeRegistry {
    * @param {string} [options.mirrorUrl]
    * @param {string} [options.pinnedLabel] e.g. "5.4.7"
    * @param {Uint8Array} [options.bundledBytes] set in the baked single file
+   * @param {() => Worker} [options.createWorker] handed to every kernel
+   *   this registry starts; see WorkerKernel
    */
   constructor(options = {}) {
+    this.createWorker = options.createWorker;
     this.source = options.source ?? new MirrorSource(options.mirrorUrl ?? DEFAULT_MIRROR);
     this.pinnedLabel = options.pinnedLabel ?? 'pinned';
     this.pinnedIsPrerelease = options.pinnedIsPrerelease === true;
@@ -230,6 +233,7 @@ export class RuntimeRegistry {
       // the worker has no business with either. Only verified bytes cross.
       swarmUrl: null,
       label: `On-page WASM (${entry?.label ?? id})`,
+      createWorker: this.createWorker,
     });
     await kernel.start();
     return { kernel, fromCache };

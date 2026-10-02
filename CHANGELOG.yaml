@@ -126,8 +126,16 @@ releases:
         Open .ipynb…, Save .ipynb, Notebook, Console, Run all, Stop, Restart,
         + Code, + Markdown. See README "In DiRT Launcher".
       - "`npm run check` type-checks the plugin; `npm run test:launcher` drives it inside the launcher's dev server (test/launcher/)."
+      - |
+        The rest of the toolbar in the plugin: several notebooks (one per
+        storage slot; closing one keeps it under Recent), Runtime ▸ over the
+        registry with the pick as the `lab` workspace section, Examples ▸,
+        Recent ▸, Open from URL…, Start here… (also a dashboard tile and a
+        first-run step), the Outline panel beside the notebook, and Ctrl
+        Enter / Shift Enter / Ctrl S through the launcher's shortcut registry.
+      - "`storage.js`: `saveNotebook`, `loadNotebook` and `clearNotebook` over named slots; `saveAutosave` and friends are the `autosave` slot of those."
     changed:
-      - "`WorkerKernel` takes a `createWorker` option, so a bundler that inlines the worker script can supply the constructor; the default is unchanged."
+      - "`WorkerKernel` takes a `createWorker` option, so a bundler that inlines the worker script can supply the constructor; the default is unchanged. `RuntimeRegistry` takes the same and hands it to every kernel it starts."
   - version: 0.13.1
     tag: v0.13.1
     date: 2026-09-24

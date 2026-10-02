@@ -7,6 +7,7 @@ import type { ILabKernel, KernelReset } from '@dirt-launcher/api';
 export const RESET_NOTES: Record<KernelReset, string> = {
   restart: 'Kernel restarted. Every variable is gone.',
   stop: 'Stopped. The kernel restarted, so every variable is gone.',
+  switch: 'Switched runtimes. Every variable is gone.',
 };
 
 export class ConsolePanel extends Widget {
@@ -57,6 +58,6 @@ export class ConsolePanel extends Widget {
   }
 
   private note(_: unknown, why: KernelReset): void {
-    this.console.note(RESET_NOTES[why]);
+    this.console.note(why === 'switch' ? `Switched to ${this.kernel.label}. Every variable is gone.` : RESET_NOTES[why]);
   }
 }

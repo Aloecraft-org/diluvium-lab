@@ -68,15 +68,33 @@ async function withDb(fn) {
 }
 
 export function saveAutosave(record) {
-  return withDb((db) => transact(db, STORE, 'readwrite', (s) => s.put(record, AUTOSAVE_KEY)));
+  return saveNotebook(AUTOSAVE_KEY, record);
 }
 
 export async function loadAutosave() {
-  return (await withDb((db) => transact(db, STORE, 'readonly', (s) => s.get(AUTOSAVE_KEY)))) ?? null;
+  return loadNotebook(AUTOSAVE_KEY);
 }
 
 export function clearAutosave() {
-  return withDb((db) => transact(db, STORE, 'readwrite', (s) => s.delete(AUTOSAVE_KEY)));
+  return clearNotebook(AUTOSAVE_KEY);
+}
+
+/**
+ * The autosave slot, generalised: a host with several notebooks open at
+ * once (the DiRT Launcher plugin) keeps each in its own slot of the same
+ * store. The page's one notebook is the slot named `autosave`, so a
+ * notebook started in the page is the one the launcher opens first.
+ */
+export function saveNotebook(slot, record) {
+  return withDb((db) => transact(db, STORE, 'readwrite', (s) => s.put(record, slot)));
+}
+
+export async function loadNotebook(slot) {
+  return (await withDb((db) => transact(db, STORE, 'readonly', (s) => s.get(slot)))) ?? null;
+}
+
+export function clearNotebook(slot) {
+  return withDb((db) => transact(db, STORE, 'readwrite', (s) => s.delete(slot)));
 }
 
 /**

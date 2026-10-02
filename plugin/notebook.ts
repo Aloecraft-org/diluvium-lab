@@ -1,22 +1,29 @@
 // The Notebook panel: the lab's cell list (`src/notebook/ui.js`) over its
 // model, inside a Lumino widget. The kernel is the shared service; what
-// `src/app.js` did between the two is ported here, nothing more.
+// `src/app.js` did between the two is ported here, nothing more. Each panel
+// is one notebook in one storage slot; the page's own notebook is the slot
+// named `autosave`.
 import type { ReadonlyPartialJSONObject } from '@lumino/coreutils';
 import { Signal } from '@lumino/signaling';
 import { Widget } from '@lumino/widgets';
-import type { IShell } from '@dirt-launcher/api';
+import type { ILabKernel, KernelMessage, KernelStatus } from '@dirt-launcher/api';
 import { STATUS } from '../src/kernel/kernel.js';
 import { NotebookModel, EXPECT, expectationOf } from '../src/notebook/model.js';
 import { toIpynb, fromIpynb, messageToOutput } from '../src/notebook/ipynb.js';
 import { NotebookView, renderOutputs } from '../src/notebook/ui.js';
-import { saveAutosave, loadAutosave, debounceSave, rememberRecent } from '../src/notebook/storage.js';
-import type { ILabKernel, KernelMessage, KernelStatus } from '@dirt-launcher/api';
+import { saveNotebook, loadNotebook, clearNotebook, debounceSave, rememberRecent } from '../src/notebook/storage.js';
 
-// Surface: the notebook a first visit gets, and the names a file takes.
+// Surface: the panel's args, the notebook a first visit gets, and the names a file takes.
 
-/** The panel's args: none yet; one notebook, in the lab's own autosave slot. */
-export type NotebookArgs = ReadonlyPartialJSONObject;
-/** What a notebook made with New is saved as until it is renamed. */
+/** `lab:open` args: the storage slot; the page's own notebook when absent. */
+export interface NotebookArgs extends ReadonlyPartialJSONObject {
+  slot?: string;
+}
+/** The page's autosave slot: a notebook started in the page is the one the launcher opens first. */
+export const PAGE_SLOT = 'autosave';
+/** A fresh slot for a notebook opened beside the others. */
+export const newSlot = (): string => `nb-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
+/** What a notebook opened from nothing is saved as until it is renamed. */
 export const NEW_FILENAME = 'untitled.ipynb';
 export const DEFAULT_FILENAME = 'notebook.ipynb';
 /** Autosave waits this long after the last edit before writing. */
@@ -47,6 +54,24 @@ export const DEFAULT_NOTEBOOK = {
   nbformat_minor: 5,
 };
 
+/** A notebook to put in a new panel: its text, and where it came from for the recents list. */
+export interface NotebookSource {
+  text: string;
+  name: string;
+  origin: 'file' | 'url' | 'example' | 'replaced';
+  url?: string | null;
+}
+
+export interface NotebookOptions {
+  kernel: ILabKernel;
+  slot: string;
+  /** Opened with this document; otherwise the slot's saved notebook, or the seed for the page's slot. */
+  initial?: NotebookSource;
+  /** The footer's runtime button was pressed; opens the runtime menu over it. */
+  onRuntimeMenu?: (anchor: HTMLElement) => void;
+  notify: (message: string) => void;
+}
+
 type Cell = { id: string; cell_type: string; source: string };
 type Output = Record<string, unknown>;
 
@@ -54,7 +79,7 @@ type Output = Record<string, unknown>;
  * The lab's model and view, as this panel uses them. Declared here because
  * the JS defaults (`afterId = null`) type those parameters as `null` alone.
  */
-interface LabModel {
+export interface LabModel {
   cells: Cell[];
   readonly title: string;
   get(cellId: string): Cell | null;
@@ -83,17 +108,26 @@ interface LabView {
 
 /** A notebook with one blank code cell. */
 const blankModel = (): LabModel => new NotebookModel() as unknown as LabModel;
+const parse = (text: unknown): LabModel => fromIpynb(text) as unknown as LabModel;
 
 export class NotebookPanel extends Widget {
+  readonly slot: string;
   model: LabModel = blankModel();
   readonly view: LabView;
   filename = DEFAULT_FILENAME;
-  /** Fires when the document is replaced, renamed, or its save state changes. */
+  /** Fires when the document is replaced or renamed. */
   readonly changed = new Signal<this, void>(this);
-  /** Resolves once the autosaved notebook (or the seed) is on screen; commands that replace the document wait for it. */
+  /** Fires on every model change with its type: structure, source, outputs, title. */
+  readonly edited = new Signal<this, string>(this);
+  /** The current cell changed. */
+  readonly selected = new Signal<this, string | null>(this);
+  /** Resolves once the slot's notebook (or the seed) is on screen; commands that touch the document wait for it. */
   readonly ready: Promise<void>;
+  private readonly kernel: ILabKernel;
+  private readonly notify: (message: string) => void;
   private readonly cells: HTMLElement;
   private readonly statusNode: HTMLElement;
+  private readonly runtimeNode: HTMLButtonElement;
   private readonly fileNode: HTMLElement;
   private readonly saveNode: HTMLElement;
   private readonly autosave: ReturnType<typeof debounceSave>;
@@ -103,8 +137,11 @@ export class NotebookPanel extends Widget {
   private widgetTouched = new Set<string>();
   private widgetBusy = false;
 
-  constructor(private readonly kernel: ILabKernel, private readonly shell: IShell) {
+  constructor({ kernel, slot, initial, onRuntimeMenu, notify }: NotebookOptions) {
     super();
+    this.kernel = kernel;
+    this.slot = slot;
+    this.notify = notify;
     this.addClass('lab-notebook');
     this.title.label = 'Notebook';
     this.title.caption = 'A Diluvium notebook';
@@ -113,17 +150,20 @@ export class NotebookPanel extends Widget {
       <div class="lab-foot">
         <span class="lab-dot"></span>
         <span class="lab-foot-info">kernel · <span data-kernel-status>starting</span></span>
+        <button type="button" class="lab-foot-runtime" data-runtime title="The Diluvium build this notebook runs on; press to pick another"></button>
         <span class="lab-foot-file" data-filename></span>
         <span class="lab-foot-save" data-save-status></span>
       </div>`;
     this.cells = this.node.querySelector('[data-cells]')!;
     this.statusNode = this.node.querySelector('[data-kernel-status]')!;
+    this.runtimeNode = this.node.querySelector('[data-runtime]')!;
     this.fileNode = this.node.querySelector('[data-filename]')!;
     this.saveNode = this.node.querySelector('[data-save-status]')!;
+    this.runtimeNode.onclick = () => onRuntimeMenu?.(this.runtimeNode);
     this.autosave = debounceSave(async (record: unknown) => {
       this.setSaveStatus('saving');
       try {
-        await saveAutosave(record);
+        await saveNotebook(this.slot, record);
         this.setSaveStatus('saved');
       } catch (err) {
         this.setSaveStatus('failed');
@@ -140,18 +180,21 @@ export class NotebookPanel extends Widget {
       runInstance: (code: string, options: Record<string, unknown>) => kernel.kernel.runInstance(code, options),
       instancesEnabled: () => kernel.capabilities.instances === true,
       widgetsEnabled: () => kernel.capabilities.widgets === true && kernel.status !== STATUS.DEAD,
+      onSelect: (cellId: string | null) => this.selected.emit(cellId),
       readOnly: () => false,
     }) as unknown as LabView;
     kernel.statusChanged.connect(this.renderStatus, this);
+    kernel.runtimesChanged.connect(this.renderStatus, this);
     kernel.languageChanged.connect(this.repaint, this);
     kernel.reset.connect(this.markStale, this);
-    this.ready = this.restore();
+    this.ready = initial ? this.open(initial) : this.restore();
     void this.ready.then(() => this.startKernel());
   }
 
   dispose(): void {
     if (this.isDisposed) return;
     this.kernel.statusChanged.disconnect(this.renderStatus, this);
+    this.kernel.runtimesChanged.disconnect(this.renderStatus, this);
     this.kernel.languageChanged.disconnect(this.repaint, this);
     this.kernel.reset.disconnect(this.markStale, this);
     this.unbindModel?.();
@@ -160,42 +203,35 @@ export class NotebookPanel extends Widget {
     super.dispose();
   }
 
+  /**
+   * Closed by its tab: the notebook leaves its slot for the recents list,
+   * so closing is never how work disappears. A layout restore disposes
+   * panels without a close request, and their slots stay for the replay.
+   */
+  protected onCloseRequest(): void {
+    if (this.slot !== PAGE_SLOT) {
+      void this.autosave.flush()
+        .then(() => this.stash('replaced'))
+        .then(() => clearNotebook(this.slot))
+        .catch(() => {});
+    }
+    this.dispose();
+  }
+
   protected onActivateRequest(): void {
     this.view.focusEditor(this.view.selectedId);
   }
 
   // --- the document ---------------------------------------------------
 
-  /** A blank notebook in place of this one; the old one goes to the lab's recents first. */
-  newNotebook(): void {
-    void this.stashReplaced();
-    this.filename = NEW_FILENAME;
-    this.setModel(blankModel());
-    this.scheduleAutosave();
-    this.view.focusEditor();
-  }
-
-  /** Reads a `.ipynb`; a bad file replaces nothing and the error is the notice. */
-  async openFile(file: File): Promise<void> {
-    let model: LabModel;
-    try {
-      model = fromIpynb(await file.text()) as unknown as LabModel;
-    } catch (err) {
-      return void this.shell.notify(`Could not open ${file.name}: ${(err as Error).message}`);
-    }
-    await this.stashReplaced();
-    this.filename = file.name || DEFAULT_FILENAME;
-    this.setModel(model);
-    this.scheduleAutosave();
-    this.shell.notify(`Opened ${this.filename}`);
-    try {
-      await rememberRecent({ name: this.filename, title: model.title, origin: 'file', url: null, ipynb: toIpynb(model) });
-    } catch { /* a recents list is a convenience */ }
+  /** The nbformat document as a save would write it. */
+  get ipynb(): object {
+    return toIpynb(this.model);
   }
 
   /** Downloads the notebook as nbformat 4. */
   saveFile(): void {
-    const json = JSON.stringify(toIpynb(this.model), null, 1);
+    const json = JSON.stringify(this.ipynb, null, 1);
     const url = URL.createObjectURL(new Blob([json], { type: 'application/json' }));
     const link = document.createElement('a');
     link.href = url;
@@ -212,33 +248,30 @@ export class NotebookPanel extends Widget {
     this.view.focusEditor(cell.id);
   }
 
+  /** The current cell, as Ctrl+Enter runs it; `advance` is Shift+Enter. */
+  runSelected({ advance = false } = {}): Promise<KernelMessage | undefined> {
+    const id = this.view.selectedId ?? this.model.cells[0]?.id;
+    return id ? this.runCell(id, { advance }) : Promise.resolve(undefined);
+  }
+
   /** Every code cell, top to bottom, stopping at the first error that was not declared. */
   async runAll(): Promise<void> {
-    if (this.running) return;
-    this.running = true;
-    this.node.dataset.running = 'true';
-    let skipped = 0;
-    try {
-      for (const [index, cell] of [...this.model.cells].entries()) {
-        if (cell.cell_type !== 'code' || cell.source.trim() === '') continue;
-        if (expectationOf(cell) === EXPECT.NEVER_RETURNS) { skipped += 1; continue; }
-        const reply = await this.runCell(cell.id);
-        if (reply?.content.status === 'error') {
-          if (expectationOf(cell) === EXPECT.ERROR) {
-            if (this.kernel.status === STATUS.DEAD) break;
-            continue;
-          }
-          this.view.cellNode(cell.id)?.scrollIntoView({ block: 'center' });
-          this.shell.notify(`Run all stopped at cell ${index + 1} — the first error.`);
-          break;
-        }
-        if (this.kernel.status === STATUS.DEAD) break;
-      }
-      if (skipped) this.shell.notify(`Run all stepped over ${skipped} cell${skipped === 1 ? '' : 's'} that never returns on purpose — run those yourself.`);
-    } finally {
-      this.running = false;
-      this.node.dataset.running = 'false';
-    }
+    await this.runCells(this.model.cells, { notice: true });
+  }
+
+  /** The cells above the current one, or from it down. */
+  async runRange(which: 'above' | 'below'): Promise<void> {
+    const at = this.model.indexOf(this.view.selectedId ?? '');
+    if (at === -1) return;
+    await this.runCells(which === 'above' ? this.model.cells.slice(0, at) : this.model.cells.slice(at));
+  }
+
+  /** Select a cell and bring it into view: what an outline entry does. */
+  jumpTo(cellId: string): void {
+    const node = this.view.cellNode(cellId);
+    if (!node) return;
+    this.view.select(cellId);
+    node.scrollIntoView({ block: 'start' });
   }
 
   // depth: boot and the model binding
@@ -246,24 +279,43 @@ export class NotebookPanel extends Widget {
   private async restore(): Promise<void> {
     let restored: LabModel | null = null;
     try {
-      const record = await loadAutosave();
+      const record = await loadNotebook(this.slot);
       if (record?.ipynb) {
-        restored = fromIpynb(record.ipynb) as unknown as LabModel;
+        restored = parse(record.ipynb);
         if (record.filename) this.filename = record.filename;
       }
     } catch (err) {
-      console.warn('diluvium-lab: could not restore the autosaved notebook', err);
+      console.warn('diluvium-lab: could not restore the saved notebook', err);
     }
     if (this.isDisposed) return;
-    this.setModel(restored ?? (fromIpynb(DEFAULT_NOTEBOOK) as unknown as LabModel));
+    if (restored) this.setModel(restored);
+    else if (this.slot === PAGE_SLOT) this.setModel(parse(DEFAULT_NOTEBOOK));
+    else {
+      this.filename = NEW_FILENAME;
+      this.setModel(blankModel());
+      this.scheduleAutosave();
+    }
     this.renderStatus();
+  }
+
+  /** Parse, adopt, autosave, remember; a bad document throws before anything changes. */
+  private async open({ text, name, origin, url }: NotebookSource): Promise<void> {
+    const model = parse(text);
+    if (this.isDisposed) return;
+    this.filename = name || DEFAULT_FILENAME;
+    this.setModel(model);
+    this.scheduleAutosave();
+    this.renderStatus();
+    try {
+      await rememberRecent({ name: this.filename, title: model.title, origin, url: url ?? null, ipynb: toIpynb(model) });
+    } catch { /* a recents list is a convenience */ }
   }
 
   private async startKernel(): Promise<void> {
     try {
       await this.kernel.start();
     } catch (err) {
-      this.shell.notify(`The kernel did not start: ${(err as Error).message}`);
+      this.notify(`The kernel did not start: ${(err as Error).message}`);
     }
     if (!this.isDisposed) this.renderStatus();
   }
@@ -277,8 +329,10 @@ export class NotebookPanel extends Widget {
       else if (change.type === 'outputs') this.view.updateOutputs(change.cellId);
       else if (change.type === 'title') this.renderTitle();
       this.scheduleAutosave();
+      this.edited.emit(change.type);
     });
     this.renderTitle();
+    this.edited.emit('structure');
   }
 
   private renderTitle(): void {
@@ -297,25 +351,49 @@ export class NotebookPanel extends Widget {
     this.saveNode.textContent = { pending: 'unsaved changes', saving: 'saving…', saved: 'autosaved', failed: 'autosave failed' }[state];
   }
 
-  /**
-   * The outgoing notebook goes to the lab's recents before it is replaced,
-   * unless it is the seed notebook or already there, so New and Open are
-   * never how work disappears.
-   */
-  private async stashReplaced(): Promise<void> {
-    const outgoing = this.model;
-    if (!outgoing.cells.some(cell => cell.source.trim() !== '')) return;
-    const sources = JSON.stringify(outgoing.cells.map(cell => cell.source));
-    if (sources === JSON.stringify((fromIpynb(DEFAULT_NOTEBOOK) as unknown as LabModel).cells.map(cell => cell.source))) return;
+  /** The notebook goes to the lab's recents, unless it is empty, the seed, or already there. */
+  private async stash(origin: NotebookSource['origin']): Promise<void> {
+    const { model } = this;
+    if (!model.cells.some(cell => cell.source.trim() !== '')) return;
+    const sources = JSON.stringify(model.cells.map(cell => cell.source));
+    if (sources === JSON.stringify(parse(DEFAULT_NOTEBOOK).cells.map(cell => cell.source))) return;
     try {
       await rememberRecent({
-        name: this.filename, title: outgoing.title, origin: 'replaced', url: null, ipynb: toIpynb(outgoing),
-        source: `replaced:${Date.now().toString(36)}:${this.filename}`,
+        name: this.filename, title: model.title, origin, url: null, ipynb: toIpynb(model),
+        source: `${origin}:${Date.now().toString(36)}:${this.filename}`,
       });
     } catch { /* recents are a convenience */ }
   }
 
-  // depth: running a cell, and a control's callback
+  // depth: running cells, and a control's callback
+
+  private async runCells(cells: readonly Cell[], { notice = false } = {}): Promise<void> {
+    if (this.running) return;
+    this.running = true;
+    this.node.dataset.running = 'true';
+    let skipped = 0;
+    try {
+      for (const [index, cell] of [...cells].entries()) {
+        if (cell.cell_type !== 'code' || cell.source.trim() === '') continue;
+        if (expectationOf(cell) === EXPECT.NEVER_RETURNS) { skipped += 1; continue; }
+        const reply = await this.runCell(cell.id);
+        if (reply?.content.status === 'error') {
+          if (expectationOf(cell) === EXPECT.ERROR) {
+            if (this.kernel.status === STATUS.DEAD) break;
+            continue;
+          }
+          this.view.cellNode(cell.id)?.scrollIntoView({ block: 'center' });
+          if (notice) this.notify(`Run all stopped at cell ${index + 1} — the first error.`);
+          break;
+        }
+        if (this.kernel.status === STATUS.DEAD) break;
+      }
+      if (skipped && notice) this.notify(`Run all stepped over ${skipped} cell${skipped === 1 ? '' : 's'} that never returns on purpose — run those yourself.`);
+    } finally {
+      this.running = false;
+      this.node.dataset.running = 'false';
+    }
+  }
 
   private async runCell(cellId: string, { advance = false }: { advance?: boolean } = {}): Promise<KernelMessage | undefined> {
     const cell = this.model.get(cellId);
@@ -326,7 +404,7 @@ export class NotebookPanel extends Widget {
       return;
     }
     if (this.kernel.status === STATUS.DEAD) {
-      this.shell.notify('The kernel is not running. Restart it from the Lab menu.');
+      this.notify('The kernel is not running. Restart it from the Lab menu.');
       return;
     }
     this.view.select(cellId);
@@ -411,6 +489,8 @@ export class NotebookPanel extends Widget {
     this.node.dataset.instances = this.kernel.capabilities.instances === true ? 'true' : 'false';
     // The ⋯ menu in ui.js reads this from the body; one kernel, so one answer.
     document.body.dataset.instances = this.node.dataset.instances;
+    const entry = this.kernel.runtimes.find(r => r.id === this.kernel.runtime);
+    this.runtimeNode.textContent = entry?.label ?? this.kernel.runtime;
   }
 
   private repaint(): void {
