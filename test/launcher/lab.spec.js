@@ -1,5 +1,6 @@
 import { readFile } from 'node:fs/promises';
 import { test, expect } from '@playwright/test';
+import { viaSubmenu, submenuItem } from './chrome.js';
 
 // The lab as a launcher plugin, driven through the launcher's own menus.
 // Nothing is mocked: every run goes to the worker kernel over the vendored
@@ -22,6 +23,7 @@ async function viaMenu(page, top, label) {
   const exact = new RegExp(`^${label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`);
   await page.locator('.lm-Menu-item:visible').filter({ has: page.locator('.lm-Menu-itemLabel', { hasText: exact }) }).first().click();
 }
+
 
 const notebook = (page) => page.locator('.lab-notebook');
 const cells = (page) => page.locator('.lab-notebook .cell');
@@ -192,4 +194,93 @@ test('the runtime menu lists the bundled build and asks the mirror only when tol
   await page.keyboard.press('Escape');
   // Nothing left the page: the mirror is asked only from that last item.
   expect(requests).toEqual([]);
+});
+
+test('Edit and View: undo, the clipboard across notebooks, read-only, hide code, rename, source', async ({ page }) => {
+  const problems = await openLauncher(page);
+  await openNotebook(page);
+  const first = notebook(page).first();
+  const sub = (top, label) => viaSubmenu(page, top, label);
+
+  // Undo brings back a deleted cell, outputs and all; the shortcut registry's Ctrl+Enter ran it.
+  const last = first.locator('.cell').last();
+  await last.locator('[data-editor]').fill('print("precious")');
+  await last.locator('[data-editor]').press('Control+Enter');
+  await expect(last.locator('[data-outputs]')).toContainText('precious');
+  const before = await first.locator('.cell').count();
+  await last.locator('[data-action="delete"]').click();
+  await expect(first.locator('.cell')).toHaveCount(before - 1);
+  await sub('Edit', 'Undo');
+  await expect(first.locator('.cell')).toHaveCount(before);
+  await expect(first.locator('.cell').last().locator('[data-outputs]')).toContainText('precious');
+
+  // Copy a cell here, paste it into a new notebook: one clipboard for every notebook.
+  await first.locator('.cell').last().locator('[data-editor]').focus();
+  await sub('Edit', 'Copy cell');
+  await viaMenu(page, 'Lab', 'New notebook');
+  const second = notebook(page).last();
+  await second.locator('.cell [data-editor]').focus();
+  await sub('Edit', 'Paste cell below');
+  await expect(second.locator('.cell')).toHaveCount(2);
+  await expect(second.locator('.cell').last().locator('[data-editor]')).toHaveValue('print("precious")');
+
+  // Rename sets the tab's title from the notebook's own metadata.
+  await sub('Edit', 'Rename notebook…');
+  await page.locator('.dirt-dialog [data-title-input]').fill('Scratch');
+  await page.locator('.dirt-dialog .btn-primary').click();
+  await expect(page.locator('.lm-TabBar-tab', { hasText: 'Scratch' })).toBeVisible();
+
+  // Read-only hides the structural buttons and refuses a paste; hide code shows outputs only.
+  await sub('View', 'Read-only');
+  await expect(second).toHaveAttribute('data-read-only', 'true');
+  await expect(second.locator('.cell').first().locator('[data-action="delete"]')).toBeHidden();
+  await expect(await submenuItem(page, 'Edit', 'Paste cell below')).toHaveClass(/lm-mod-disabled/);
+  await page.keyboard.press('Escape');
+  await page.keyboard.press('Escape');
+  await expect(second.locator('.cell')).toHaveCount(2);
+  await sub('View', 'Read-only');
+  await expect(second).toHaveAttribute('data-read-only', 'false');
+  await sub('View', 'Hide code');
+  await expect(second).toHaveAttribute('data-hide-code', 'true');
+  await expect(second.locator('.cell').first().locator('[data-editor]')).toBeHidden();
+  await sub('View', 'Hide code');
+  await expect(second.locator('.cell').first().locator('[data-editor]')).toBeVisible();
+
+  // Show source is the .ipynb a save would write.
+  await sub('View', 'Show source');
+  const source = await page.locator('.dirt-dialog [data-source-text]').inputValue();
+  expect(JSON.parse(source).metadata.title).toBe('Scratch');
+  await page.locator('.dirt-dialog .btn-primary').click();
+  expect(problems).toEqual([]);
+});
+
+test('the Instances panel hosts a swarm, and About states the build', async ({ page }) => {
+  const problems = await openLauncher(page);
+  await openNotebook(page);
+  await viaMenu(page, 'Lab', 'Instances');
+  const panel = page.locator('.lab-instances');
+  await expect(panel).toBeVisible();
+  await expect(panel.locator('[data-swarm-program]')).toBeVisible();
+  await panel.locator('[data-swarm="swarm-start"]').click();
+  await expect(panel.locator('[data-swarm-summary]')).toBeVisible({ timeout: 60_000 });
+  await panel.locator('[data-swarm="swarm-run"]').click();
+  await expect(panel.locator('.swarm-roster tbody tr').first()).toBeVisible();
+  await expect(panel.locator('[data-swarm-topology] .swarm-graph')).toBeVisible();
+  await expect(panel.locator('[data-swarm-mermaid]')).toContainText('flowchart TD');
+  await panel.locator('[data-swarm="swarm-stop"]').click();
+  await expect(panel.locator('.swarm-idle')).toContainText('stopped');
+
+  // Restart drops the swarm with the kernel that hosted it.
+  await viaMenu(page, 'Lab', 'Restart');
+  await expect(notebook(page).locator('[data-kernel-status]')).toHaveText('idle', { timeout: 60_000 });
+  await expect(panel.locator('.swarm-idle')).toContainText('No swarm is running');
+
+  // About, from the Lab menu, is the plugin's page with the facts a bug report carries.
+  await viaMenu(page, 'Lab', 'About Diluvium Lab');
+  const about = page.locator('.lab-about');
+  await expect(about).toBeVisible();
+  await expect(about.locator('[data-about-report]')).toContainText('Lab: ');
+  await expect(about.locator('[data-about-report]')).toContainText('Execution: in a worker');
+  await expect(about.locator('[data-about-report]')).toContainText('Release tag: v5.5.1_build10');
+  expect(problems).toEqual([]);
 });

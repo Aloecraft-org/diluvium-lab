@@ -58,7 +58,7 @@ export const DEFAULT_NOTEBOOK = {
 export interface NotebookSource {
   text: string;
   name: string;
-  origin: 'file' | 'url' | 'example' | 'replaced';
+  origin: 'file' | 'url' | 'example' | 'replaced' | 'duplicate';
   url?: string | null;
 }
 
@@ -82,15 +82,27 @@ type Output = Record<string, unknown>;
 export interface LabModel {
   cells: Cell[];
   readonly title: string;
+  readonly canUndo: boolean;
+  readonly canRedo: boolean;
   get(cellId: string): Cell | null;
   indexOf(cellId: string): number;
   addCell(cellType: string, afterId: string | null): Cell;
+  insertCell(data: object, afterId: string | null): Cell;
+  deleteCell(cellId: string): void;
   setOutputs(cellId: string, outputs: Output[]): void;
   setExecutionCount(cellId: string, count: number | null): void;
   setExecutionTiming(cellId: string, startedAt: string, endedAt: string): void;
+  setFolded(cellId: string, folded: boolean): void;
+  setTitle(title: string): boolean;
+  clearAllOutputs(): void;
+  clearHistory(): void;
+  undo(): boolean;
+  redo(): boolean;
   markAllStale(): void;
   onChange(listener: (change: { type: string; cellId?: string }) => void): () => void;
 }
+/** A cell's data without its id, as the cell clipboard holds it. */
+export type CellData = Omit<Cell, 'id'> & Record<string, unknown>;
 interface LabView {
   selectedId: string | null;
   readonly displayCtx: object;
@@ -121,6 +133,12 @@ export class NotebookPanel extends Widget {
   readonly edited = new Signal<this, string>(this);
   /** The current cell changed. */
   readonly selected = new Signal<this, string | null>(this);
+  /** A code cell finished running (whatever the outcome), with its id. */
+  readonly ran = new Signal<this, string>(this);
+  /** The document cannot change; running still can. A session toggle, as the page's. */
+  private _readOnly = false;
+  /** Markdown and outputs only: the notebook read as a report. */
+  private _hideCode = false;
   /** Resolves once the slot's notebook (or the seed) is on screen; commands that touch the document wait for it. */
   readonly ready: Promise<void>;
   private readonly kernel: ILabKernel;
@@ -181,7 +199,7 @@ export class NotebookPanel extends Widget {
       instancesEnabled: () => kernel.capabilities.instances === true,
       widgetsEnabled: () => kernel.capabilities.widgets === true && kernel.status !== STATUS.DEAD,
       onSelect: (cellId: string | null) => this.selected.emit(cellId),
-      readOnly: () => false,
+      readOnly: () => this._readOnly,
     }) as unknown as LabView;
     kernel.statusChanged.connect(this.renderStatus, this);
     kernel.runtimesChanged.connect(this.renderStatus, this);
@@ -264,6 +282,95 @@ export class NotebookPanel extends Widget {
     const at = this.model.indexOf(this.view.selectedId ?? '');
     if (at === -1) return;
     await this.runCells(which === 'above' ? this.model.cells.slice(0, at) : this.model.cells.slice(at));
+  }
+
+  get readOnly(): boolean {
+    return this._readOnly;
+  }
+
+  set readOnly(readOnly: boolean) {
+    if (this._readOnly === readOnly) return;
+    this._readOnly = readOnly;
+    this.node.dataset.readOnly = readOnly ? 'true' : 'false';
+    // Editors carry their own readOnly attribute, set at render.
+    this.view.render();
+    this.changed.emit();
+  }
+
+  get hideCode(): boolean {
+    return this._hideCode;
+  }
+
+  set hideCode(hide: boolean) {
+    if (this._hideCode === hide) return;
+    this._hideCode = hide;
+    this.node.dataset.hideCode = hide ? 'true' : 'false';
+    // Cells added while code was hidden were never measured; a render sizes their editors.
+    if (!hide) this.view.render();
+    this.changed.emit();
+  }
+
+  /** The current cell's data, for the clipboard; null when none. */
+  copyCell(): CellData | null {
+    const cell = this.model.get(this.view.selectedId ?? '');
+    if (!cell) return null;
+    const { id, stale, ...data } = cell as Cell & { stale?: boolean };
+    return JSON.parse(JSON.stringify(data));
+  }
+
+  cutCell(): CellData | null {
+    if (this._readOnly) return null;
+    const data = this.copyCell();
+    if (data && this.view.selectedId) this.model.deleteCell(this.view.selectedId);
+    return data;
+  }
+
+  pasteCell(data: CellData): void {
+    if (this._readOnly) return;
+    const cell = this.model.insertCell(data, this.view.selectedId);
+    this.view.select(cell.id);
+  }
+
+  /** True when there was something to undo. */
+  undo(): boolean {
+    return !this._readOnly && this.model.undo();
+  }
+
+  redo(): boolean {
+    return !this._readOnly && this.model.redo();
+  }
+
+  clearAllOutputs(): void {
+    if (!this._readOnly) this.model.clearAllOutputs();
+  }
+
+  /** Fold or unfold every code cell; folding writes cell metadata, so it is an edit. */
+  foldAll(folded: boolean): void {
+    if (this._readOnly) return;
+    for (const cell of this.model.cells) if (cell.cell_type === 'code') this.model.setFolded(cell.id, folded);
+  }
+
+  rename(title: string): void {
+    if (!this._readOnly) this.model.setTitle(title);
+  }
+
+  /** An editable copy of what is on screen, as a document for a new panel. */
+  duplicate(): NotebookSource {
+    const copy = parse(JSON.stringify(toIpynb(this.model)));
+    copy.setTitle(copy.title ? `Copy of ${copy.title}` : 'Untitled copy');
+    copy.clearHistory();
+    return { text: JSON.stringify(toIpynb(copy)), name: `copy-of-${this.filename}`, origin: 'duplicate' };
+  }
+
+  /** Writes the pending autosave now; a test, or anything about to navigate, waits on it. */
+  flushAutosave(): Promise<void> {
+    return this.autosave.flush();
+  }
+
+  /** Adopts a model built elsewhere, as the page's tests do through `_setModel`. */
+  adopt(model: LabModel): void {
+    this.setModel(model);
+    this.scheduleAutosave();
   }
 
   /** Select a cell and bring it into view: what an outline entry does. */
@@ -428,14 +535,18 @@ export class NotebookPanel extends Widget {
     this.model.setOutputs(cellId, outputs);
     this.model.setExecutionCount(cellId, reply.content.execution_count);
     this.model.setExecutionTiming(cellId, startedAt, new Date().toISOString());
+    this.ran.emit(cellId);
     if (advance) this.focusNext(cellId);
     return reply;
   }
 
   private focusNext(cellId: string): void {
     const at = this.model.indexOf(cellId);
-    const next = this.model.cells[at + 1] ?? this.model.addCell('code', cellId);
-    this.view.cellNode(next.id)?.querySelector<HTMLElement>('[data-editor]')?.focus();
+    // Read-only allows running, not the structural edit of appending a cell.
+    const next = this.model.cells[at + 1] ?? (this._readOnly ? undefined : this.model.addCell('code', cellId));
+    if (!next) return;
+    if (this._readOnly) this.view.select(next.id);
+    else this.view.cellNode(next.id)?.querySelector<HTMLElement>('[data-editor]')?.focus();
   }
 
   /** A control moved: at most one callback in flight, the newest value replacing any older one waiting. */

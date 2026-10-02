@@ -356,3 +356,101 @@
 .lab-start .example-summary { display: block; font-size: 12.5px; color: var(--text-dim); line-height: 1.4; margin-top: 1px; }
 .lab-url-field { width: min(40rem, 80vw); font-family: var(--font-mono); }
 .lab-url-note { font-size: 12px; color: var(--text-dim); margin: 6px 0 0; }
+
+/* depth: read-only and report mode (the page's body rules, on the panel) */
+
+.lab-notebook[data-read-only='true'] .cell .cell-tools :is([data-action='to-code'], [data-action='to-markdown'], [data-action='move-up'], [data-action='move-down'], [data-action='insert-below'], [data-action='delete']) { display: none; }
+.lab-notebook[data-read-only='true'] .fold-toggle { display: none; }
+.lab-notebook[data-read-only='true'] .fold-preview { pointer-events: none; }
+.lab-notebook[data-read-only='true'] .cell[data-cell-type='markdown'] .cell-more { display: none; }
+.lab-notebook[data-hide-code='true'] .cell[data-cell-type='code'] :is(.cell-head, .editor-wrap, textarea[data-editor], .fold-preview, .bytecode, .sandbox) { display: none; }
+.lab-notebook[data-hide-code='true'] .cell[data-cell-type='code'] .outputs { margin-left: 0; }
+.lab-notebook[data-hide-code='true'] .cell[data-cell-type='code'] { border-left-color: transparent; }
+
+/* depth: the Instances panel: the swarm view and the topology drawing */
+
+.lab-instances { display: flex; flex-direction: column; overflow: hidden; min-width: 0; background: var(--surface); color: var(--text); font-size: 13px;
+  --edge: var(--line); --sunk: var(--surface-deep); --quiet: var(--text-dim); --ink: var(--text); --bad: var(--down); --warn: var(--warning); --ok: var(--ok); --mono: var(--font-mono); }
+.lab-instances-body { flex: 1; min-height: 0; overflow: auto; padding: 8px var(--gutter, 16px) 16px; }
+.lab-instances .swarm-unavailable, .lab-instances .swarm-idle { font-size: 12.5px; padding: 6px 0; }
+.lab-instances .muted { color: var(--quiet); }
+.lab-instances .swarm-controls { display: flex; gap: 6px; padding: 6px 0; flex-wrap: wrap; align-items: center; }
+.lab-instances :is(.swarm-controls, .swarm-request, .swarm-actions, .swarm-dbactions) button {
+  font: inherit; font-size: 12px; height: 24px; padding: 0 9px; cursor: pointer; border: 1px solid var(--edge); border-radius: var(--radius-control, 6px); background: transparent; color: inherit;
+}
+.lab-instances :is(.swarm-controls, .swarm-request, .swarm-actions, .swarm-dbactions) button:hover:not(:disabled) { background: var(--sunk); }
+.lab-instances button:disabled { opacity: .5; cursor: default; }
+.lab-instances :is(.swarm-controls select, .swarm-request select, .swarm-request input) { font: inherit; font-size: 12px; height: 24px; padding: 0 6px; border: 1px solid var(--edge); border-radius: var(--radius-control, 6px); background: var(--sunk); color: inherit; }
+.lab-instances .swarm-note { margin: 5px 0; padding: 5px 8px; font-size: 12px; border: 1px solid color-mix(in srgb, var(--bad) 35%, transparent); border-radius: 6px; }
+.lab-instances .swarm-note summary { cursor: pointer; }
+.lab-instances .swarm-note p { margin: 6px 0 0; color: var(--quiet); }
+.lab-instances .swarm-summary { display: grid; grid-template-columns: auto 1fr; gap: 0 8px; margin: 3px 0 8px; font-size: 12px; }
+.lab-instances .swarm-summary dt { color: var(--quiet); }
+.lab-instances .swarm-summary dd { margin: 0; }
+.lab-instances .swarm-roster { width: 100%; border-collapse: collapse; font-size: 12px; }
+.lab-instances .swarm-roster th { text-align: left; font-weight: 600; color: var(--quiet); border-bottom: 1px solid var(--edge); padding: 4px 6px; }
+.lab-instances .swarm-roster td { padding: 4px 6px; border-bottom: 1px solid var(--sunk); vertical-align: top; }
+.lab-instances :is(.swarm-num, .swarm-id) { font-family: var(--mono); white-space: nowrap; }
+.lab-instances .swarm-caps { font-family: var(--mono); font-size: 11px; color: var(--quiet); word-break: normal; overflow-wrap: break-word; min-width: 8rem; }
+.lab-instances .swarm-detail td { color: var(--bad); font-size: 11.5px; padding-top: 0; }
+.lab-instances .swarm-queues td { padding-top: 0; }
+.lab-instances .swarm-queue { display: inline-block; font-family: var(--mono); font-size: 10.5px; color: var(--quiet); border: 1px solid var(--edge); border-radius: 4px; padding: 0 4px; margin: 0 4px 2px 0; white-space: nowrap; }
+.lab-instances .swarm-queue-full { color: var(--ink); border-color: color-mix(in srgb, var(--warn) 60%, transparent); }
+.lab-instances .swarm-state { padding: 1px 6px; border-radius: 999px; border: 1px solid var(--edge); }
+.lab-instances .swarm-state-running { border-color: color-mix(in srgb, var(--accent) 50%, transparent); }
+.lab-instances .swarm-state-parked { color: var(--quiet); }
+.lab-instances .swarm-state-gone { color: var(--quiet); text-decoration: line-through; }
+.lab-instances .swarm-state-hibernated { border-color: color-mix(in srgb, var(--accent) 35%, transparent); }
+.lab-instances .swarm-graph { width: 100%; height: auto; display: block; margin: 5px 0 8px; }
+.lab-instances .topo-shape { fill: var(--sunk); stroke: var(--edge); stroke-width: 1.2; }
+.lab-instances .topo-host .topo-shape { fill: transparent; stroke-dasharray: 3 2; }
+.lab-instances .topo-label { font-family: var(--mono); font-size: 11px; fill: var(--ink); }
+.lab-instances .topo-caption { font-size: 10px; fill: var(--quiet); }
+.lab-instances .topo-state-running .topo-shape { stroke: color-mix(in srgb, var(--accent) 60%, var(--edge)); }
+.lab-instances .topo-state-parked .topo-shape { stroke: var(--edge); fill: transparent; }
+.lab-instances .topo-state-hibernated .topo-shape { stroke-dasharray: 2 2; fill: transparent; }
+.lab-instances .topo-state-gone .topo-shape { stroke: var(--quiet); fill: transparent; opacity: .5; }
+.lab-instances .topo-state-gone :is(.topo-label, .topo-caption) { opacity: .5; }
+.lab-instances .topo-edge { stroke: var(--edge); stroke-width: 1.1; fill: none; }
+.lab-instances .topo-edge-spawn { stroke: color-mix(in srgb, var(--accent) 45%, var(--edge)); }
+.lab-instances .topo-edge-idle { stroke-dasharray: 3 3; opacity: .55; }
+.lab-instances .topo-edge-label { font-size: 9.5px; fill: var(--quiet); font-family: var(--mono); }
+.lab-instances .topo-arrowhead { fill: var(--edge); }
+.lab-instances .swarm-dbfile { display: inline-flex; align-items: center; gap: 5px; font-size: 11.5px; color: var(--quiet); }
+.lab-instances .swarm-dbfile input[type='file'] { width: 0; height: 0; opacity: 0; position: absolute; }
+.lab-instances .swarm-dbfile span { cursor: pointer; text-decoration: underline dotted; }
+.lab-instances .swarm-dbactions { margin: 6px 0 0; }
+.lab-instances .swarm-mermaid-drawn { margin-top: 6px; }
+.lab-instances .swarm-mermaid-drawn svg { max-width: 100%; height: auto; }
+.lab-instances .swarm-mermaid pre { font-size: 10.5px; overflow-x: auto; margin: 5px 0 0; padding: 6px; background: var(--sunk); border-radius: 5px; font-family: var(--mono); }
+.lab-instances :is(.swarm-listener, .swarm-database, .swarm-faults, .swarm-events, .swarm-topology) { margin: 12px 0 0; }
+.lab-instances :is(.swarm-listener, .swarm-database, .swarm-faults, .swarm-events, .swarm-topology) h3 { font-size: 11px; margin: 0 0 5px; text-transform: uppercase; letter-spacing: .06em; color: var(--quiet); font-weight: 600; }
+.lab-instances :is(.swarm-listener, .swarm-database, .swarm-topology) p { font-size: 12px; margin: 3px 0; }
+.lab-instances .swarm-db { margin: 8px 0 0; }
+.lab-instances .swarm-db h4 { font-size: 12px; margin: 0; font-family: var(--mono); font-weight: 600; }
+.lab-instances .swarm-dbname { font-family: var(--mono); font-size: 11.5px; }
+.lab-instances .swarm-request { display: flex; gap: 5px; margin: 6px 0; }
+.lab-instances .swarm-request input[data-listener-path] { width: 7rem; }
+.lab-instances .swarm-request input[data-listener-body] { flex: 1; min-width: 4rem; }
+.lab-instances :is(.swarm-exchanges, .swarm-tables, .swarm-faults ul) { margin: 5px 0; padding-left: 1.2rem; font-size: 12px; }
+.lab-instances .swarm-faults ul { color: var(--bad); }
+.lab-instances .swarm-event-list { list-style: none; margin: 0; padding: 0; font-size: 12px; }
+.lab-instances .swarm-event { display: grid; grid-template-columns: 1.6rem 5.2rem 2.2rem 1fr; gap: 5px; padding: 2px 3px; border-left: 2px solid transparent; }
+.lab-instances :is(.swarm-event-step, .swarm-event-id) { color: var(--quiet); font-family: var(--mono); }
+.lab-instances .swarm-event-kind { font-family: var(--mono); }
+.lab-instances .swarm-event-detail { word-break: break-word; }
+.lab-instances .swarm-good { border-left-color: color-mix(in srgb, var(--ok) 55%, transparent); }
+.lab-instances .swarm-warn { border-left-color: color-mix(in srgb, var(--warn) 55%, transparent); }
+.lab-instances .swarm-bad { border-left-color: color-mix(in srgb, var(--bad) 60%, transparent); }
+.lab-instances .swarm-bad .swarm-event-kind { color: var(--bad); }
+
+/* depth: the About page */
+
+.lab-about { padding: 16px var(--gutter, 16px); overflow: auto; font-size: 13px; color: var(--text); }
+.lab-about-head h2 { font-size: 20px; font-weight: 600; margin: 0 0 4px; }
+.lab-about-head p { color: var(--text-dim); max-width: 60ch; margin: 0 0 12px; }
+.lab-about-facts { display: grid; grid-template-columns: auto 1fr; gap: 3px 14px; margin: 0 0 12px; font-size: 12.5px; }
+.lab-about-facts dt { color: var(--text-dim); white-space: pre; }
+.lab-about-facts dd { margin: 0; font-family: var(--font-mono); overflow-wrap: anywhere; }
+.lab-about-report { font-family: var(--font-mono); font-size: 11.5px; margin: 0 0 10px; background: var(--surface-deep); border: 1px solid var(--line); border-radius: 6px; padding: 8px 10px; max-height: 14rem; overflow: auto; white-space: pre-wrap; }
+.lab-source-text { width: min(56rem, 80vw); min-height: 20rem; font-family: var(--font-mono); font-size: 12px; white-space: pre; }

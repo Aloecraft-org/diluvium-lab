@@ -9,10 +9,21 @@ import { ILabKernel, IShell, IShortcuts, IWorkspaceConfig, type DirtPlugin, type
 import { EXAMPLES, exampleById } from '../src/notebook/examples.js';
 import { fetchNotebook, describeOpenError, hostOf } from '../src/notebook/remote.js';
 import { listRecent, clearRecent } from '../src/notebook/storage.js';
+import { loadMermaid, mermaidLoaded, mermaidCached, MERMAID_VERSION, MERMAID_MB } from '../src/notebook/mermaid.js';
+import { LAB_VERSION } from '../src/version.js';
+import { topologyOf, mermaidOf, layoutOf } from '../src/kernel/topology.js';
+import { looksLikeSqlite, stripLiterals, loadSqlite } from '../src/kernel/sqlite.js';
+import { buildConnectors } from '../src/kernel/connectors.js';
+import * as kernelModule from '../src/kernel/kernel.js';
+import * as ipynbModule from '../src/notebook/ipynb.js';
+import * as storageModule from '../src/notebook/storage.js';
+import * as luacModule from '../src/analysis/luac.js';
 import { KernelService } from './kernel';
 import { ConsolePanel } from './console';
 import { OutlinePanel } from './outline';
-import { NotebookPanel, PAGE_SLOT, newSlot, type NotebookArgs, type NotebookSource } from './notebook';
+import { InstancesPanel } from './swarm';
+import { AboutPage } from './about';
+import { NotebookPanel, PAGE_SLOT, newSlot, type CellData, type NotebookArgs, type NotebookSource } from './notebook';
 import './lab.css';
 
 // Surface: every command, the Lab menu's place, and the shortcuts.
@@ -23,6 +34,27 @@ export const OPEN_COMMAND = 'lab:open';
 export const CONSOLE_COMMAND = 'lab:console';
 /** The Outline panel, following the active notebook; opened beside it. */
 export const OUTLINE_COMMAND = 'lab:outline';
+/** The Instances panel: a swarm while it runs, with its topology. */
+export const INSTANCES_COMMAND = 'lab:instances';
+/** The Lab's front page under Plugins, with the facts a bug report needs. */
+export const ABOUT_COMMAND = 'lab:about';
+/** Edit: the structural undo stack, the cell clipboard (shared by every notebook), and the rest of the page's Edit menu. */
+export const UNDO_COMMAND = 'lab:undo';
+export const REDO_COMMAND = 'lab:redo';
+export const CUT_CELL_COMMAND = 'lab:cut-cell';
+export const COPY_CELL_COMMAND = 'lab:copy-cell';
+export const PASTE_CELL_COMMAND = 'lab:paste-cell';
+export const CLEAR_OUTPUTS_COMMAND = 'lab:clear-outputs';
+export const RENAME_COMMAND = 'lab:rename';
+export const DUPLICATE_COMMAND = 'lab:duplicate';
+/** View: toggles on the active notebook, and the one download the page offers from a menu. */
+export const READ_ONLY_COMMAND = 'lab:read-only';
+export const HIDE_CODE_COMMAND = 'lab:hide-code';
+/** `lab:fold-all { folded }` folds or unfolds every code cell. */
+export const FOLD_ALL_COMMAND = 'lab:fold-all';
+export const SHOW_SOURCE_COMMAND = 'lab:show-source';
+/** Fetches Mermaid once (3.4 MB), verifies it and keeps it; the only download that is not a Diluvium release or a notebook. */
+export const DIAGRAM_COMMAND = 'lab:diagram-renderer';
 /** A blank notebook in a new panel. */
 export const NEW_COMMAND = 'lab:new';
 /** Open .ipynb…: a file picker, then a new panel. */
@@ -56,16 +88,25 @@ export const RUNTIME_CHECK_COMMAND = 'lab:runtime-check';
 export const LAB_MENU_RANK = 40;
 /** The kernel says what it can do only after it starts, so these are re-read on every status change. */
 export const KERNEL_COMMANDS = [STOP_COMMAND, RESTART_COMMAND, RUN_ALL_COMMAND, RUN_RANGE_COMMAND, RUNTIME_COMMAND, RUNTIME_CHECK_COMMAND];
+/** Read whenever the active notebook or its document changes. */
+export const NOTEBOOK_COMMANDS = [SAVE_COMMAND, RUN_ALL_COMMAND, RUN_RANGE_COMMAND, UNDO_COMMAND, REDO_COMMAND, CUT_CELL_COMMAND, COPY_CELL_COMMAND, PASTE_CELL_COMMAND, CLEAR_OUTPUTS_COMMAND, RENAME_COMMAND, DUPLICATE_COMMAND, READ_ONLY_COMMAND, HIDE_CODE_COMMAND, FOLD_ALL_COMMAND, SHOW_SOURCE_COMMAND];
+/** Matches the page only while no text field has focus. Chained rather than a list: Lumino refuses commas in a selector. */
+export const OUTSIDE_FIELDS = 'body:not(:has(textarea:focus)):not(:has(input:focus)):not(:has(select:focus)):not(:has([contenteditable]:focus))';
 /** The page's shortcuts, as the launcher's registry: the user may change them under Preferences > Keyboard. */
 export const KEY_BINDINGS: readonly KeyBinding[] = [
   { keys: ['Ctrl Enter'], command: RUN_CELL_COMMAND, args: { advance: false }, selector: '.lab-notebook' },
   { keys: ['Shift Enter'], command: RUN_CELL_COMMAND, args: { advance: true }, selector: '.lab-notebook' },
   { keys: ['Accel S'], command: SAVE_COMMAND, selector: '.lab-notebook' },
+  // Outside a field the structural stack owns undo; inside one the field's own undo does, so the binding steps aside.
+  { keys: ['Accel Z'], command: UNDO_COMMAND, selector: OUTSIDE_FIELDS },
+  { keys: ['Accel Shift Z'], command: REDO_COMMAND, selector: OUTSIDE_FIELDS },
+  { keys: ['Accel Y'], command: REDO_COMMAND, selector: OUTSIDE_FIELDS },
 ];
 /** The `lab` workspace section: the runtime pin. Open notebooks are the layout's, by slot. */
 export const SECTION_ID = 'lab';
-/** How wide the outline opens beside a notebook, as a share of the pair. */
+/** How wide the outline opens beside a notebook, and how tall the console under it, as shares of the pair. */
 export const OUTLINE_SHARE = 0.22;
+export const CONSOLE_SHARE = 0.3;
 
 const kernelPlugin: DirtPlugin<ILabKernel> = {
   id: 'diluvium-lab:kernel',
@@ -94,12 +135,16 @@ const lab: DirtPlugin = {
     let console_: ConsolePanel | undefined;
     let outline: OutlinePanel | undefined;
     const cellType = (args: ReadonlyPartialJSONObject) => (args.type === 'markdown' ? 'markdown' : 'code');
+    const notebookChanged = () => NOTEBOOK_COMMANDS.forEach(id => commands.notifyCommandChanged(id));
     const setActive = (panel: NotebookPanel | undefined) => {
       if (panel === active) return;
       active = panel;
       activeChanged.emit();
-      [SAVE_COMMAND, RUN_ALL_COMMAND, RUN_RANGE_COMMAND].forEach(id => commands.notifyCommandChanged(id));
+      notebookChanged();
     };
+    /** One cell clipboard for every notebook, so a cell can move between them. */
+    let clipboard: CellData | null = null;
+    let instances: InstancesPanel | undefined;
 
     // The panels.
     shell.addPanel(OPEN_COMMAND, {
@@ -125,7 +170,9 @@ const lab: DirtPlugin = {
           if (active === panel) setActive([...notebooks].at(-1));
           void refreshRecent();
         });
-        panel.changed.connect(() => commands.notifyCommandChanged(SAVE_COMMAND));
+        panel.changed.connect(notebookChanged);
+        panel.edited.connect(notebookChanged);
+        panel.ran.connect(() => instances?.sync());
         setActive(panel);
         void panel.ready.then(refreshRecent);
         return panel;
@@ -155,6 +202,8 @@ const lab: DirtPlugin = {
       create: () => {
         console_ = new ConsolePanel(kernel);
         console_.disposed.connect(() => (console_ = undefined));
+        // Under the notebook, as the page lays it out, once the dock holds both.
+        requestAnimationFrame(() => console_ && placeBeside(console_, active, 'split-bottom', CONSOLE_SHARE));
         return console_;
       },
     });
@@ -167,11 +216,37 @@ const lab: DirtPlugin = {
         outline.setNotebook(active);
         outline.disposed.connect(() => (outline = undefined));
         // Beside the notebook rather than in its tab bar, once the dock holds both.
-        requestAnimationFrame(() => outline && placeBeside(outline, active));
+        requestAnimationFrame(() => outline && placeBeside(outline, active, 'split-left', OUTLINE_SHARE));
         return outline;
       },
     });
     activeChanged.connect(() => outline?.setNotebook(active));
+    shell.addPanel(INSTANCES_COMMAND, {
+      label: 'Instances',
+      caption: 'A swarm, while it is running: roster, topology, listener, databases',
+      singleton: true,
+      create: () => {
+        instances = new InstancesPanel({
+          kernel,
+          notify: m => shell.notify(m),
+          selectedCellSource: () => {
+            const cell = active?.model.get(active.view.selectedId ?? '');
+            if (!cell || cell.cell_type !== 'code') throw new Error('select a code cell first \u2014 that cell becomes the swarm\u2019s root program');
+            const source = String(cell.source ?? '').trim();
+            if (!source) throw new Error('the selected cell is empty, so there is no root program to run');
+            return source;
+          },
+        });
+        instances.disposed.connect(() => (instances = undefined));
+        return instances;
+      },
+    });
+    shell.setPluginPage(lab.id, () => new AboutPage(kernel, m => shell.notify(m)));
+    commands.addCommand(ABOUT_COMMAND, {
+      label: 'About Diluvium Lab',
+      isEnabled: () => commands.hasCommand('workspace:plugin-page'),
+      execute: () => commands.execute('workspace:plugin-page', { id: lab.id }),
+    });
 
     // Opening notebooks.
     commands.addCommand(NEW_COMMAND, { label: 'New notebook', execute: () => openNew() });
@@ -240,9 +315,10 @@ const lab: DirtPlugin = {
       caption: 'The guided notebooks, or a blank one',
       execute: () => startHere(shell, commands),
     });
-    /** A document into a new panel; a bad one is a notice and opens nothing. */
+    /** A document into a new panel; a bad one is a notice and opens nothing, so it is parsed before any panel exists. */
     const openSource = async (source: NotebookSource) => {
       try {
+        ipynbModule.fromIpynb(source.text);
         await openNew(source);
       } catch (err) {
         shell.notify(`Could not open ${source.name}: ${describeOpenError(err)}`);
@@ -292,6 +368,115 @@ const lab: DirtPlugin = {
       caption: args => `Add a ${cellType(args)} cell below the current one`,
       isVisible: args => args.type === 'code' || args.type === 'markdown',
       execute: async args => (await withNotebook()).addCell(cellType(args)),
+    });
+
+    // Edit and View, on the active notebook.
+    const editable = () => !!active && !active.readOnly;
+    const nudge = () => shell.notify('This notebook is read-only. Lab > Edit > Duplicate notebook to change a copy.');
+    commands.addCommand(UNDO_COMMAND, {
+      label: 'Undo',
+      caption: 'Undo the last structural change: a cell added, deleted, moved, retyped, or a run of typing',
+      isEnabled: () => editable() && active!.model.canUndo,
+      execute: () => (active?.readOnly ? nudge() : active?.undo() || shell.notify('Nothing to undo.')),
+    });
+    commands.addCommand(REDO_COMMAND, {
+      label: 'Redo',
+      isEnabled: () => editable() && active!.model.canRedo,
+      execute: () => (active?.readOnly ? nudge() : active?.redo() || shell.notify('Nothing to redo.')),
+    });
+    commands.addCommand(CUT_CELL_COMMAND, {
+      label: 'Cut cell',
+      isEnabled: editable,
+      execute: () => {
+        const data = active?.cutCell();
+        if (data) clipboard = data;
+        notebookChanged();
+      },
+    });
+    commands.addCommand(COPY_CELL_COMMAND, {
+      label: 'Copy cell',
+      isEnabled: () => !!active,
+      execute: () => {
+        const data = active?.copyCell();
+        if (!data) return;
+        clipboard = data;
+        shell.notify('Cell copied.');
+        notebookChanged();
+      },
+    });
+    commands.addCommand(PASTE_CELL_COMMAND, {
+      label: 'Paste cell below',
+      isEnabled: () => editable() && clipboard !== null,
+      execute: () => clipboard && active?.pasteCell(clipboard),
+    });
+    commands.addCommand(CLEAR_OUTPUTS_COMMAND, {
+      label: 'Clear all outputs',
+      isEnabled: editable,
+      execute: () => active?.clearAllOutputs(),
+    });
+    commands.addCommand(RENAME_COMMAND, {
+      label: 'Rename notebook\u2026',
+      isEnabled: editable,
+      execute: async () => {
+        if (!active) return;
+        const title = await askTitle(shell, active.model.title);
+        if (title !== undefined) active.rename(title);
+      },
+    });
+    commands.addCommand(DUPLICATE_COMMAND, {
+      label: 'Duplicate notebook',
+      caption: 'Open an editable copy of this notebook beside it',
+      isEnabled: () => !!active,
+      execute: async () => active && void (await openSource(active.duplicate())),
+    });
+    commands.addCommand(READ_ONLY_COMMAND, {
+      label: 'Read-only',
+      caption: 'The document cannot change; running is still allowed',
+      isEnabled: () => !!active,
+      isToggled: () => !!active?.readOnly,
+      execute: () => {
+        if (!active) return;
+        active.readOnly = !active.readOnly;
+        if (active.readOnly) shell.notify('Read-only. Lab > Edit > Duplicate notebook to work on a copy.');
+      },
+    });
+    commands.addCommand(HIDE_CODE_COMMAND, {
+      label: 'Hide code',
+      caption: 'Markdown and outputs only \u2014 the notebook read as a report',
+      isEnabled: () => !!active,
+      isToggled: () => !!active?.hideCode,
+      execute: () => active && void (active.hideCode = !active.hideCode),
+    });
+    commands.addCommand(FOLD_ALL_COMMAND, {
+      label: args => (args.folded ? 'Collapse all code' : 'Expand all code'),
+      isVisible: args => typeof args.folded === 'boolean',
+      isEnabled: editable,
+      execute: args => active?.foldAll(args.folded === true),
+    });
+    commands.addCommand(SHOW_SOURCE_COMMAND, {
+      label: 'Show source',
+      caption: 'The raw .ipynb JSON a save would write',
+      isEnabled: () => !!active,
+      execute: () => active && showSource(shell, JSON.stringify(active.ipynb, null, 1)),
+    });
+    commands.addCommand(DIAGRAM_COMMAND, {
+      label: () => (mermaidLoaded() ? `Diagram renderer ${MERMAID_VERSION}` : `Diagram renderer\u2026 (${MERMAID_MB} MB, once)`),
+      caption: () => (mermaidLoaded() ? 'Loaded. Diagrams in the Instances panel are drawn by Mermaid.' : `Downloads Mermaid ${MERMAID_VERSION} (~${MERMAID_MB} MB) once, verifies it and keeps it`),
+      isToggled: () => mermaidLoaded(),
+      isEnabled: () => !mermaidLoaded(),
+      execute: async () => {
+        if (mermaidLoaded()) return;
+        const cached = await mermaidCached().catch(() => false);
+        shell.notify(cached ? 'Starting the diagram renderer\u2026' : `Downloading Mermaid ${MERMAID_VERSION} (~${MERMAID_MB} MB)\u2026`);
+        try {
+          await loadMermaid({ onProgress: (stage: string) => shell.notify(stage) });
+          shell.notify(`Mermaid ${MERMAID_VERSION} is ready`);
+          instances?.refresh();
+          commands.notifyCommandChanged(DIAGRAM_COMMAND);
+        } catch (err) {
+          shell.notify((err as Error).message);
+        }
+      },
     });
 
     // Runtimes: the bundled build, cached ones, and the mirror's once asked.
@@ -377,9 +562,28 @@ const lab: DirtPlugin = {
     const recent = shell.menu(['Lab', 'Recent']);
     menu.addItem({ command: SAVE_COMMAND });
     menu.addItem({ type: 'separator' });
+    const edit = shell.menu(['Lab', 'Edit']);
+    for (const id of [UNDO_COMMAND, REDO_COMMAND]) edit.addItem({ command: id });
+    edit.addItem({ type: 'separator' });
+    for (const id of [CUT_CELL_COMMAND, COPY_CELL_COMMAND, PASTE_CELL_COMMAND]) edit.addItem({ command: id });
+    edit.addItem({ type: 'separator' });
+    edit.addItem({ command: CLEAR_OUTPUTS_COMMAND });
+    edit.addItem({ type: 'separator' });
+    edit.addItem({ command: RENAME_COMMAND });
+    edit.addItem({ command: DUPLICATE_COMMAND });
+    const view = shell.menu(['Lab', 'View']);
+    view.addItem({ command: HIDE_CODE_COMMAND });
+    view.addItem({ command: READ_ONLY_COMMAND });
+    view.addItem({ command: FOLD_ALL_COMMAND, args: { folded: true } });
+    view.addItem({ command: FOLD_ALL_COMMAND, args: { folded: false } });
+    view.addItem({ type: 'separator' });
+    view.addItem({ command: SHOW_SOURCE_COMMAND });
+    view.addItem({ command: DIAGRAM_COMMAND });
+    menu.addItem({ type: 'separator' });
     menu.addItem({ command: OPEN_COMMAND });
     menu.addItem({ command: CONSOLE_COMMAND });
     menu.addItem({ command: OUTLINE_COMMAND });
+    menu.addItem({ command: INSTANCES_COMMAND });
     menu.addItem({ type: 'separator' });
     menu.addItem({ command: RUN_ALL_COMMAND });
     menu.addItem({ command: RUN_RANGE_COMMAND, args: { which: 'above' } });
@@ -390,6 +594,8 @@ const lab: DirtPlugin = {
     menu.addItem({ type: 'separator' });
     menu.addItem({ command: ADD_CELL_COMMAND, args: { type: 'code' } });
     menu.addItem({ command: ADD_CELL_COMMAND, args: { type: 'markdown' } });
+    menu.addItem({ type: 'separator' });
+    menu.addItem({ command: ABOUT_COMMAND });
     shell.menu(['File', 'New']).addItem({ command: OPEN_COMMAND });
     shell.menu(['File', 'New']).addItem({ command: CONSOLE_COMMAND });
     const fill = (target: Menu, items: Menu.IItemOptions[]) => {
@@ -402,6 +608,8 @@ const lab: DirtPlugin = {
     // The command list hides a command that needs args; both cell kinds and every example are listed with theirs.
     shell.addPaletteItem({ command: ADD_CELL_COMMAND, args: { type: 'code' }, category: 'Lab' });
     shell.addPaletteItem({ command: ADD_CELL_COMMAND, args: { type: 'markdown' }, category: 'Lab' });
+    shell.addPaletteItem({ command: FOLD_ALL_COMMAND, args: { folded: true }, category: 'Lab' });
+    shell.addPaletteItem({ command: FOLD_ALL_COMMAND, args: { folded: false }, category: 'Lab' });
     for (const { id } of EXAMPLES) shell.addPaletteItem({ command: OPEN_EXAMPLE_COMMAND, args: { id }, category: 'Lab examples' });
     for (const binding of KEY_BINDINGS) shell.addKeyBinding(binding);
     shortcuts?.add({ command: START_COMMAND, label: 'Start here' });
@@ -431,6 +639,33 @@ const lab: DirtPlugin = {
       ]);
     };
     void refreshRecent();
+
+    const closeOtherNotebooks = () => {
+      for (const panel of [...notebooks]) if (panel !== active) panel.close();
+    };
+    // The page exposes `window.lab` for its Playwright suite; the plugin exposes the same name over the
+    // active notebook, so the suite's specs port with their evaluate() calls intact (test/launcher/).
+    (window as unknown as { lab: unknown }).lab = {
+      get kernel() { return kernel.kernel; },
+      get service() { return kernel; },
+      get model() { return active?.model; },
+      get view() { return active?.view; },
+      get notebook() { return active; },
+      get language() { return kernel.language; },
+      get filename() { return active?.filename; },
+      get runtimeId() { return kernel.runtime; },
+      get console() { return console_?.console; },
+      get autosave() { return { flush: () => active?.flushAutosave() ?? Promise.resolve() }; },
+      _setModel: (model: unknown) => active?.adopt(model as NotebookPanel['model']),
+      labVersion: LAB_VERSION,
+      executeCollectMessages: (code: string) => kernel.collect(code),
+      /** The page's open replaced its one notebook; here the others close once the new panel is up. */
+      openExample: async (id: string) => { await commands.execute(OPEN_EXAMPLE_COMMAND, { id }); closeOtherNotebooks(); },
+      closeOtherNotebooks,
+      topologyOf, mermaidOf, layoutOf, looksLikeSqlite, stripLiterals, loadSqlite, buildConnectors,
+      /** The page's specs import these at runtime; the bundle has them already. */
+      modules: { 'kernel/kernel': kernelModule, 'notebook/ipynb': ipynbModule, 'notebook/storage': storageModule, 'analysis/luac': luacModule },
+    };
   },
 };
 
@@ -479,6 +714,29 @@ async function startHere(shell: IShell, commands: CommandRegistry): Promise<void
   await picked?.();
 }
 
+async function askTitle(shell: IShell, current: string): Promise<string | undefined> {
+  const body = new Widget();
+  const input = document.createElement('input');
+  input.className = 'form-control form-control-sm';
+  input.placeholder = 'Untitled notebook';
+  input.value = current;
+  input.setAttribute('data-title-input', '');
+  body.node.append(input);
+  const ok = await shell.dialog({ title: 'Rename notebook', body, buttons: [{ label: 'Cancel', value: false }, { label: 'Rename', value: true, primary: true }] });
+  return ok ? input.value : undefined;
+}
+
+function showSource(shell: IShell, text: string): void {
+  const body = new Widget();
+  const area = document.createElement('textarea');
+  area.className = 'form-control form-control-sm lab-source-text';
+  area.readOnly = true;
+  area.value = text;
+  area.setAttribute('data-source-text', '');
+  body.node.append(area);
+  void shell.dialog({ title: 'Notebook source', body, buttons: [{ label: 'Close', value: true, primary: true }] });
+}
+
 async function askUrl(shell: IShell): Promise<string | undefined> {
   const body = new Widget();
   const input = document.createElement('input');
@@ -493,16 +751,16 @@ async function askUrl(shell: IShell): Promise<string | undefined> {
   return ok && input.value.trim() ? input.value.trim() : undefined;
 }
 
-/** Moves a tool panel to the left of a notebook it follows, narrow, when both are in the same dock. */
-function placeBeside(panel: Widget, notebook: Widget | undefined): void {
+/** Moves a panel beside the notebook it serves, taking `share` of the pair, when both are in the same dock. */
+function placeBeside(panel: Widget, notebook: Widget | undefined, mode: 'split-left' | 'split-bottom', share: number): void {
   const dock = panel.parent;
   if (!(dock instanceof DockPanel) || !notebook || notebook.parent !== dock) return;
-  dock.addWidget(panel, { mode: 'split-left', ref: notebook });
+  dock.addWidget(panel, { mode, ref: notebook });
   const layout = dock.saveLayout();
   const shrink = (area: DockPanelArea | null): void => {
     if (!area || area.type !== 'split-area') return;
     const i = area.children.findIndex(c => c.type === 'tab-area' && c.widgets.includes(panel));
-    if (i !== -1 && area.children.length === 2) area.sizes = i === 0 ? [OUTLINE_SHARE, 1 - OUTLINE_SHARE] : [1 - OUTLINE_SHARE, OUTLINE_SHARE];
+    if (i !== -1 && area.children.length === 2) area.sizes = i === 0 ? [share, 1 - share] : [1 - share, share];
     else area.children.forEach(shrink);
   };
   shrink(layout.main);

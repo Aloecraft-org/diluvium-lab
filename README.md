@@ -99,15 +99,26 @@ launcher's one-file build. What it gives the launcher:
   Tab, Ctrl Space and Ctrl / stay the editor's own.
 - Dashboard tiles for Start here and the notebook, and a fourth first-run
   step when the lab is in the build.
+- **Lab › Instances**: the swarm panel with its topology drawing, listener
+  composer and databases, over the shared kernel; a swarm a cell starts shows
+  up there after the cell runs, and dies with the kernel on Stop or Restart.
+- **Lab › Edit ▸** (undo, redo, cut, copy and paste cell between notebooks,
+  clear all outputs, rename, duplicate) and **Lab › View ▸** (hide code,
+  read-only, collapse and expand all code, show source, the diagram renderer
+  that fetches Mermaid once and says what it costs).
+- **Lab › About Diluvium Lab** is the plugin's page under Plugins: the facts a
+  bug report should carry, read from the running kernel, with a copy button.
 
 `npm run test:launcher` drives the launcher's dev server with this plugin and
 proves the round trip: open the notebook, run a cell, read its state from the
 console, save the `.ipynb`, reopen it. `DIRT_SET=lab npm run test:launcher`
 uses the smallest set that carries the Lab.
 
-Not in the plugin yet: the instances (swarm) and topology views, read-only
-and report mode, undo and the cell clipboard from the Edit menu, the diagram
-renderer. ROADMAP.md says what comes in which order.
+`test/launcher/ported/` carries the page's own specs rewritten for the
+launcher by `scripts/port-spec.mjs`; `npm run test:launcher` runs them with the
+proof. What the plugin does not carry: the page's theme and masthead
+preferences (the launcher has its own), the `?open=` link banner, and the
+`?mirror=` override. ROADMAP.md keeps the account.
 
 ## Development
 

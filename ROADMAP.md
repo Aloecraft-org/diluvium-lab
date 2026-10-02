@@ -4114,3 +4114,46 @@ furniture. Verified by `npm run test:launcher` on the launcher's `core` and
 - Notebooks live in the browser's storage, not in the workspace file: a
   workspace export carries the runtime pin and the layout (which names the
   slots), and the notebooks themselves stay where the page keeps them.
+
+## In DiRT Launcher: turn 3, views and parity
+
+### What landed
+
+- **Instances.** `plugin/swarm.ts` over `swarm-view.js`, which draws the
+  topology through `topology-view.js`; the panel holds the state the view
+  repaints from (report, program, draft, staged database), serialises
+  actions through `busy` as `app.js` did, and takes a snapshot after every
+  cell run so a swarm started from Lua shows up. `LabKernelObject` in the
+  API names the swarm host's calls and `SwarmReport`. The swarm dies with
+  the kernel on Stop, Restart or a runtime switch, and the panel says so.
+- **Edit ▸ and View ▸.** The page's Edit and View menus as commands on the
+  active notebook: structural undo and redo, one cell clipboard shared by
+  every notebook (a cell cut here pastes there), clear all outputs, rename,
+  duplicate into a new panel; hide code (report mode), read-only (the
+  structural buttons go, running stays), collapse and expand all code, show
+  source, and the diagram renderer with its price on the label. Read-only
+  and hide code are attributes on the panel, where the page kept them on
+  the body.
+- **About.** `plugin/about.ts` is the plugin's front page under Plugins and
+  Lab › About: the page's facts, read from the running kernel and the
+  bundled build, with the copy-for-a-bug-report block.
+- **The suite, ported.** `scripts/port-spec.mjs` rewrites one of the page's
+  specs for the launcher: the chrome helpers become `test/launcher/chrome.js`
+  (which maps every `data-toolbar` name onto a Lab menu entry), the page's
+  boot becomes "open the launcher with a notebook", the store is dropped by
+  database rather than through the page's modules, and the controls that were
+  toolbar buttons become menu entries. The plugin exposes `window.lab` over
+  the active notebook so `evaluate()` calls port intact. The notebook, undo,
+  worker, ipynb and display specs are ported under `test/launcher/ported/`;
+  the ones that stay the page's are its chrome (menus, mobile, theme,
+  startup, title, polish, about), the bake, and the ones that drive the
+  page's own launcher and link banner.
+- **v0.14.0.** The first release that carries the plugin.
+
+### Things found on the way
+
+- Playwright refuses to click a Lumino menu item that is disabled (it reads
+  `aria-disabled`), and waits the whole timeout; a proof that wants to show a
+  refusal asserts the item's state instead.
+- A menubar click that lands while a dialog's backdrop is on its way out
+  toggles the menu shut rather than open; the harness retries once.
