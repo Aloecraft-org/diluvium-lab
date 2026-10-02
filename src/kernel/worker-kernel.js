@@ -58,6 +58,10 @@ export class WorkerKernel extends Kernel {
    * @param {boolean} [options.allowFallback] run in the page if the worker
    *   cannot start. True by default; tests set it false to assert that the
    *   worker path is really the one being exercised.
+   * @param {() => Worker} [options.createWorker] how the worker is made.
+   *   The page's default is `new Worker(WORKER_URL, { type: 'module' })`;
+   *   a bundler that inlines the worker script (the DiRT Launcher plugin,
+   *   where Vite hands back a constructor over a blob) supplies its own.
    */
   constructor(options = {}) {
     super();
@@ -68,6 +72,7 @@ export class WorkerKernel extends Kernel {
     this.allowFallback = options.allowFallback ?? true;
     this.swarmUrl = options.swarmUrl === undefined ? DEFAULT_SWARM_URL : options.swarmUrl;
     this.swarmBytes = options.swarmBytes ?? null;
+    this.createWorker = options.createWorker ?? (() => new Worker(WORKER_URL, { type: 'module' }));
 
     this._worker = null;
     this._pending = new Map();
@@ -136,7 +141,7 @@ export class WorkerKernel extends Kernel {
   async _startWorker() {
     let worker;
     try {
-      worker = new Worker(WORKER_URL, { type: 'module' });
+      worker = this.createWorker();
     } catch (cause) {
       throw new Error(`this browser would not start a module worker: ${cause.message}`);
     }
