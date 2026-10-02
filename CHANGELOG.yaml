@@ -119,8 +119,9 @@ releases:
       wasm inline. The page itself is unchanged.
     added:
       - |
-        `plugin/`: the DiRT Launcher plugin. `ILabKernel` (`plugin/api.ts`) is
-        provided by `diluvium-lab:kernel` over one `WorkerKernel`; the
+        `plugin/`: the DiRT Launcher plugin. `ILabKernel` (a Token in
+        `@dirt-launcher/api`) is provided by `diluvium-lab:kernel` over one
+        `WorkerKernel`; the
         Notebook and Console panels share it. The Lab menu: New notebook,
         Open .ipynb…, Save .ipynb, Notebook, Console, Run all, Stop, Restart,
         + Code, + Markdown. See README "In DiRT Launcher".

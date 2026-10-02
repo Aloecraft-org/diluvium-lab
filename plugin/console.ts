@@ -1,7 +1,7 @@
 // The Console panel: `src/notebook/console.js` over the shared kernel.
 import { Widget } from '@lumino/widgets';
 import { ConsoleView } from '../src/notebook/console.js';
-import type { ILabKernel, KernelReset } from './api';
+import type { ILabKernel, KernelReset } from '@dirt-launcher/api';
 
 /** What the console says when the state it was poking at is gone. */
 export const RESET_NOTES: Record<KernelReset, string> = {

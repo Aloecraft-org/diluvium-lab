@@ -3988,13 +3988,13 @@ rewrite of the notebook internals, and nothing the page does stops working.
 ### What landed
 
 - **The kernel as a service.** `plugin/kernel.ts` runs one `WorkerKernel`
-  per launcher and provides it under a Token, `ILabKernel` (`plugin/api.ts`),
-  from its own Lumino plugin, `diluvium-lab:kernel`. Every notebook and the
-  console require the Token, which is what makes "cells and the console share
-  one kernel" true in the launcher the way it is in the page. The Token is
-  local to this package until a second plugin needs it; moving it into
-  `@dirt-launcher/api` is a one-line change the launcher's README asks for at
-  that point.
+  per launcher and provides it under a Token, `ILabKernel`, from its own
+  Lumino plugin, `diluvium-lab:kernel`. Every notebook and the console require
+  the Token, which is what makes "cells and the console share one kernel"
+  true in the launcher the way it is in the page. The Token and its
+  interfaces (`ILabKernel`, `LabKernelObject`, `KernelMessage`,
+  `LanguageInfo`) live in `@dirt-launcher/api`, as the launcher asks of every
+  service, so any plugin in the build can run Lua on the same kernel.
 - **The worker and the wasm, inlined.** Vite bundles `kernel-worker.js`
   through `?worker&inline` (a constructor over a blob) and the two vendored
   modules through `?url` (data: URLs in the one-file build). The launcher's

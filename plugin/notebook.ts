@@ -10,7 +10,7 @@ import { NotebookModel, EXPECT, expectationOf } from '../src/notebook/model.js';
 import { toIpynb, fromIpynb, messageToOutput } from '../src/notebook/ipynb.js';
 import { NotebookView, renderOutputs } from '../src/notebook/ui.js';
 import { saveAutosave, loadAutosave, debounceSave, rememberRecent } from '../src/notebook/storage.js';
-import type { ILabKernel, KernelMessage, KernelStatus } from './api';
+import type { ILabKernel, KernelMessage, KernelStatus } from '@dirt-launcher/api';
 
 // Surface: the notebook a first visit gets, and the names a file takes.
 
@@ -378,7 +378,7 @@ export class NotebookPanel extends Widget {
         }
         const messages: KernelMessage[] = [];
         try {
-          const reply = await this.kernel.kernel.callWidget(next, latest as string, ((msg: KernelMessage) => void messages.push(msg)) as () => void);
+          const reply = await this.kernel.kernel.callWidget(next, latest, msg => void messages.push(msg));
           const stale = reply?.content?.stale === true;
           if (stale && wasAuto) continue;
           this.renderWidgetOutput(slot, messages, stale ? 'This control came from a kernel that has since restarted. Run its cell again.' : null);

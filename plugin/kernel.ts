@@ -13,7 +13,7 @@ import { WorkerKernel } from '../src/kernel/worker-kernel.js';
 import { STATUS } from '../src/kernel/kernel.js';
 import { MSG } from '../src/kernel/protocol.js';
 import { FALLBACK_KEYWORDS, FALLBACK_GLOBALS, FALLBACK_SYNTAX } from '../src/notebook/highlight.js';
-import type { ILabKernel, KernelMessage, KernelReset, KernelStatus, LanguageInfo } from './api';
+import type { ILabKernel, KernelMessage, KernelReset, KernelStatus, LabKernelObject, LanguageInfo } from '@dirt-launcher/api';
 
 // Surface: what a human might change.
 
@@ -23,7 +23,9 @@ export const START_TIMEOUT_MS = 30_000;
 export const KERNEL_LABEL = 'On-page WASM';
 
 export class KernelService implements ILabKernel {
-  readonly kernel: WorkerKernel;
+  readonly kernel: LabKernelObject;
+  /** The same object as `kernel`, typed as the lab's class for what only a worker kernel has. */
+  private readonly worker: WorkerKernel;
   readonly statusChanged = new Signal<this, KernelStatus>(this);
   readonly languageChanged = new Signal<this, void>(this);
   readonly reset = new Signal<this, KernelReset>(this);
@@ -39,8 +41,9 @@ export class KernelService implements ILabKernel {
       label: KERNEL_LABEL,
       createWorker: () => new KernelWorker(),
     };
-    this.kernel = new WorkerKernel(options);
-    this.kernel.onMessage((msg: KernelMessage) => {
+    this.worker = new WorkerKernel(options);
+    this.kernel = this.worker as unknown as LabKernelObject;
+    this.worker.onMessage((msg: KernelMessage) => {
       if (msg.msg_type === MSG.STATUS) this.statusChanged.emit(msg.content.execution_state);
     });
   }
@@ -71,7 +74,7 @@ export class KernelService implements ILabKernel {
   }
 
   execute(code: string, onMessage: (msg: KernelMessage) => void = () => {}): Promise<KernelMessage> {
-    return this.kernel.execute(code, onMessage as () => void);
+    return this.kernel.execute(code, onMessage);
   }
 
   async collect(code: string): Promise<KernelMessage[]> {
@@ -79,13 +82,13 @@ export class KernelService implements ILabKernel {
       return [{ msg_type: MSG.ERROR, content: { ename: 'KernelError', evalue: 'the kernel is not running', traceback: [] } }];
     }
     const messages: KernelMessage[] = [];
-    await this.kernel.execute(code, ((msg: KernelMessage) => void messages.push(msg)) as () => void);
+    await this.kernel.execute(code, msg => void messages.push(msg));
     return messages;
   }
 
   async complete(code: string, cursor: number): Promise<{ matches: string[] }> {
     if (this.status === STATUS.DEAD || !this.capabilities.complete) return { matches: [] };
-    return (await this.kernel.complete(code, cursor)).content;
+    return (await this.kernel.complete(code, cursor)).content as { matches: string[] };
   }
 
   async isComplete(code: string): Promise<string> {
@@ -101,8 +104,8 @@ export class KernelService implements ILabKernel {
 
   async stop(): Promise<void> {
     if (!this.capabilities.interrupt) {
-      throw new Error(this.kernel.fallbackReason
-        ? `This kernel runs in the page and cannot be stopped (${this.kernel.fallbackReason}).`
+      throw new Error(this.worker.fallbackReason
+        ? `This kernel runs in the page and cannot be stopped (${this.worker.fallbackReason}).`
         : 'This kernel cannot be stopped.');
     }
     await this.kernel.interrupt();

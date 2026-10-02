@@ -2,8 +2,7 @@
 // and Console panels, and the Lab menu. The notebook internals stay the
 // lab's plain-JS modules under ../src; this package only gives them a home.
 import type { ReadonlyPartialJSONObject } from '@lumino/coreutils';
-import { IShell, IShortcuts, type DirtPlugin } from '@dirt-launcher/api';
-import { ILabKernel } from './api';
+import { ILabKernel, IShell, IShortcuts, type DirtPlugin } from '@dirt-launcher/api';
 import { KernelService } from './kernel';
 import { NotebookPanel } from './notebook';
 import { ConsolePanel } from './console';
